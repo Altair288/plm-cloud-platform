@@ -1,0 +1,6 @@
+{
+  // Hide build output directories from VS Code explorer
+  "files.exclude": {
+    "**/target": true
+  }
+}

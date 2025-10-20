@@ -1,0 +1,133 @@
+# ==== Core Build Artifacts ====
+# Maven target directories (multi-module)
+**/target/
+target/
+
+# Maven wrapper files (keep if you add wrapper later)
+# Uncomment if using mvnw and want to ignore downloaded binaries
+# .mvn/wrapper/maven-wrapper.jar
+
+# ==== Java / JVM ====
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+*.zip
+*.tar.gz
+*.log
+hs_err_pid*
+replay_pid*
+*.hprof
+*.jfr
+
+# ==== Spring Boot ==== 
+# Exclude generated dependency reports if enabled
+*/build-info.properties
+
+# ==== IDE / Tooling ====
+# IntelliJ IDEA
+.idea/
+*.iml
+out/
+
+# Eclipse
+.project
+.classpath
+.settings/
+.apt_generated/
+.factorypath
+
+# VS Code
+.vscode/
+
+# NetBeans
+nbproject/private/
+build/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# ==== OS / Misc ==== 
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux temp files
+*~
+
+# ==== Logs & Temp ==== 
+logs/
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+
+# ==== Dependency Caches (keep local only) ==== 
+# Avoid committing local Maven repository if ever created inside project
+.m2/
+
+# ==== Packaging / Distribution ==== 
+release/
+
+# ==== Coverage / Reports ==== 
+coverage/
+**/surefire-reports/
+**/failsafe-reports/
+**/jacoco.exec
+jacoco-report/
+**/jacoco-report/
+
+# ==== Generated Sources ==== 
+**/generated-sources/
+**/generated-test-sources/
+
+# ==== Kubernetes / Helm runtime generated ==== 
+# Usually manifests are source; ignore any rendered output directories
+helm/**/charts/*/templates/*.bak
+helm/**/charts/*/charts/*.tgz
+
+# ==== Docker ==== 
+# Ignore intermediate build context artifacts
+*.tar
+
+# ==== Node / Frontend (in case future admin UI adds it) ==== 
+node_modules/
+*.tsbuildinfo
+
+# ==== Encryption / Secrets (ensure real secrets not committed) ====
+*.key
+*.pem
+*.crt
+*.p12
+*.jks
+.env
+.env.*
+
+# ==== Misc Temporary ==== 
+.tmp/
+.cache/
+.idea_modules/
+
+# ==== JetBrains Fleet ==== 
+.fleet/
+
+# ==== Git / Merge ==== 
+*.orig
+*.rej
+
+# ==== Profiles / Local Config ==== 
+application-local.yml
+application-local.properties
+
+# ==== Custom Project Specific ==== 
+Structure Document/
