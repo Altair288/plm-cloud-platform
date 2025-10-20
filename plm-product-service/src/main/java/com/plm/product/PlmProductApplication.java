@@ -1,4 +1,4 @@
-package main.java.com.plm.product;
+package com.plm.product;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

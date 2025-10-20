@@ -1,3 +1,3 @@
-package main.java.com.plm.infrastructure.config;
+package com.plm.infrastructure.config;
 
 public class PlaceholderConfig { }

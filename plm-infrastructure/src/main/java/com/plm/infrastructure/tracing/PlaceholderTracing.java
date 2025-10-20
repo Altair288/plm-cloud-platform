@@ -1,3 +1,3 @@
-package main.java.com.plm.infrastructure.tracing;
+package com.plm.infrastructure.tracing;
 
 public class PlaceholderTracing { }

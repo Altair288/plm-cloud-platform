@@ -1,3 +1,3 @@
-package main.java.com.plm.infrastructure.search;
+package com.plm.infrastructure.search;
 
 public class PlaceholderSearch { }

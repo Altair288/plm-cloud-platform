@@ -17,7 +17,7 @@
       <version>4.1.5</version>
     </dependency>
     <dependency>
-      <groupId>plm-cloud-platform</groupId>
+      <groupId>com.altair288</groupId>
       <artifactId>plm-common</artifactId>
       <version>1.0-SNAPSHOT</version>
     </dependency>

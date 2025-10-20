@@ -1,4 +1,4 @@
-package main.java.com.plm.auth.controller;
+package com.plm.auth.controller;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;

@@ -1,3 +1,3 @@
-package main.java.com.plm.infrastructure.storage;
+package com.plm.infrastructure.storage;
 
 public class PlaceholderStorage { }

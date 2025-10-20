@@ -1,4 +1,4 @@
-package main.java.com.plm.search;
+package com.plm.search;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

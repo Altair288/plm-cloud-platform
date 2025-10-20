@@ -1,0 +1,7 @@
+com\plm\infrastructure\search\PlaceholderSearch.class
+com\plm\infrastructure\cache\PlaceholderCache.class
+com\plm\infrastructure\mq\PlaceholderMq.class
+com\plm\infrastructure\tracing\PlaceholderTracing.class
+com\plm\infrastructure\config\PlaceholderConfig.class
+com\plm\infrastructure\security\PlaceholderSecurity.class
+com\plm\infrastructure\storage\PlaceholderStorage.class

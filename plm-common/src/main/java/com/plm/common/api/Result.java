@@ -1,4 +1,4 @@
-package main.java.com.plm.common.api;
+package com.plm.common.api;
 
 public class Result<T> {
     private int code;

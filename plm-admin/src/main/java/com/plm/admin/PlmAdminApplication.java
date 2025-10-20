@@ -1,4 +1,4 @@
-package main.java.com.plm.admin;
+package com.plm.admin;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

@@ -12,7 +12,7 @@
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
     <dependency>
-      <groupId>plm-cloud-platform</groupId>
+      <groupId>com.altair288</groupId>
       <artifactId>plm-common</artifactId>
       <version>1.0-SNAPSHOT</version>
     </dependency>
