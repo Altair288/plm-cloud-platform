@@ -1,0 +1,43 @@
+# Dev profile database configuration for Flyway migrations
+# 使用环境变量可覆盖下方值 (SPRING_DATASOURCE_URL 等)
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/plm
+    username: admin
+    password: p@ssw0rd@2025
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      idle-timeout: 30000
+      connection-timeout: 30000
+  flyway:
+    enabled: true
+    # 默认读取 src/main/resources/db/migration
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    table: flyway_schema_history
+    # 可选：指定 schema，如不需要可注释
+    # schemas: public
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    root: info
+    org.flywaydb: info
+    org.springframework.jdbc.core: debug
+
+# 可以通过 -Dspring.profiles.active=dev 或环境变量 SPRING_PROFILES_ACTIVE=dev 激活
+
+---
+# 可选：在 CI 中只做结构校验的 profile 示例 (按需扩展)
+# spring:
+#   flyway:
+#     validate-on-migrate: true

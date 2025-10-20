@@ -16,7 +16,7 @@
         <java.version>23</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
-    <spring.boot.version>3.3.13</spring.boot.version>
+    <spring.boot.version>3.5.6</spring.boot.version>
     </properties>
 
     <modules>
@@ -32,6 +32,7 @@
         <module>plm-gateway</module>
         <module>plm-admin</module>
         <module>plm-deployment</module>
+        <module>plm-db-migration</module>
     </modules>
 
     <dependencyManagement>
