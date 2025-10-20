@@ -1,0 +1,2 @@
+# Placeholder Dockerfile for auth service
+FROM eclipse-temurin:17-jre

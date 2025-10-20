@@ -7,10 +7,55 @@
     <groupId>com.altair288</groupId>
     <artifactId>plm-cloud-platform</artifactId>
     <version>1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>plm-cloud-platform</name>
+    <description>PLM Cloud Platform - Parent Aggregator</description>
 
     <properties>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
+        <java.version>17</java.version>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <spring.boot.version>3.3.3</spring.boot.version>
     </properties>
+
+    <modules>
+        <module>plm-common</module>
+        <module>plm-infrastructure</module>
+        <module>plm-auth-service</module>
+        <module>plm-attribute-service</module>
+        <module>plm-product-service</module>
+        <module>plm-bom-service</module>
+        <module>plm-document-service</module>
+        <module>plm-workflow-service</module>
+        <module>plm-search-service</module>
+        <module>plm-gateway</module>
+        <module>plm-admin</module>
+        <module>plm-deployment</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring.boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring.boot.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 
 </project>

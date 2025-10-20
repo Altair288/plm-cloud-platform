@@ -1,0 +1,5 @@
+# Placeholder Helm values
+replicaCount: 1
+image:
+  repository: example/repo
+  tag: latest
