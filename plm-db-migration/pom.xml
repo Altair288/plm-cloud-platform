@@ -9,23 +9,22 @@
   <artifactId>plm-db-migration</artifactId>
   <name>plm-db-migration</name>
   <description>Database schema versioning using Flyway</description>
-
-  <properties>
-    <flyway.version>10.18.0</flyway.version>
-  </properties>
-
   <dependencies>
     <dependency>
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-core</artifactId>
       <version>${flyway.version}</version>
     </dependency>
-    <!-- Add driver as needed; example for PostgreSQL -->
-    <!-- <dependency>
-      <groupId>org.postgresql</groupId>
-      <artifactId>postgresql</artifactId>
-      <version>42.7.4</version>
-    </dependency> -->
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+      <version>${flyway.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <version>42.7.4</version>
+    </dependency>
   </dependencies>
 
   <build>

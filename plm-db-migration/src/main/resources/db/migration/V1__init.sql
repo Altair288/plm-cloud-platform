@@ -1,7 +1,0 @@
--- V1__init.sql
--- 初始化数据库结构占位文件
--- 在此添加第一版建库/DDL，例如：
--- CREATE TABLE example (
---   id BIGSERIAL PRIMARY KEY,
---   name VARCHAR(100) NOT NULL
--- );

@@ -1,0 +1,41 @@
+# Dev profile database configuration for Flyway migrations
+# 使用环境变量可覆盖下方值 (SPRING_DATASOURCE_URL 等)
+
+plm:
+  datasource:
+    meta:
+      url: jdbc:postgresql://localhost:5432/plm_meta
+      username: admin
+      password: p@ssw0rd@2025
+      driver-class-name: org.postgresql.Driver
+    runtime:
+      url: jdbc:postgresql://localhost:5432/plm
+      username: admin
+      password: p@ssw0rd@2025
+      driver-class-name: org.postgresql.Driver
+  flyway:
+    meta:
+      enabled: true
+    runtime:
+      enabled: true
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    root: info
+
+# 可以通过 -Dspring.profiles.active=dev 或环境变量 SPRING_PROFILES_ACTIVE=dev 激活
+
+---
+# 可选：在 CI 中只做结构校验的 profile 示例 (按需扩展)
+# spring:
+#   flyway:
+#     validate-on-migrate: true
