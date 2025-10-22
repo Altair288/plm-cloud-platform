@@ -16,7 +16,9 @@
         <java.version>23</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
-    <spring.boot.version>3.5.6</spring.boot.version>
+        <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+        <maven.compiler.proc>full</maven.compiler.proc>
+        <spring.boot.version>3.5.6</spring.boot.version>
         <sa-token.version>1.44.0</sa-token.version>
         <flyway.version>11.14.0</flyway.version>
     </properties>
@@ -57,8 +59,38 @@
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring.boot.version}</version>
                 </plugin>
+                <plugin>
+		        	<groupId>org.apache.maven.plugins</groupId>
+		        	<artifactId>maven-compiler-plugin</artifactId>
+		        	<version>${maven-compiler-plugin.version}</version>
+		        	<configuration>
+		        		<source>${java.version}</source>
+			        	<target>${java.version}</target>
+			        </configuration>
+		        </plugin>
             </plugins>
         </pluginManagement>
     </build>
-
+    <profiles>
+        <profile>
+            <id>no-exec</id>
+    <activation>
+      <activeByDefault>true</activeByDefault>
+    </activation>
+        <build>
+          <plugins>
+            <plugin>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-maven-plugin</artifactId>
+              <executions>
+                <execution>
+                  <id>skip-parent-run</id>
+                  <phase>none</phase>
+                </execution>
+              </executions>
+            </plugin>
+          </plugins>
+        </build>
+      </profile>
+    </profiles>
 </project>
