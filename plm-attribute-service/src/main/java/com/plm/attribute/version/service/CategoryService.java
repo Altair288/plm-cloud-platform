@@ -28,8 +28,8 @@ public class CategoryService {
         c.setId(UUID.randomUUID());
         c.setName(name);
         c.setDescription(description);
-        // 通过规则生成 code（示例使用固定 ruleCode，可后续按类型映射）
-        String code = codeRuleGenerator.generate("CATEGORY");
+    // 生成分类编码：使用 CATEGORY 规则 (CAT-{SEQ})
+    String code = codeRuleGenerator.generate("CATEGORY");
         c.setCode(code);
         return categoryRepository.save(c);
     }
