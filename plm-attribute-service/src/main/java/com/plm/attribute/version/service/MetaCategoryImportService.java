@@ -15,16 +15,22 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.*;
+import org.springframework.jdbc.core.JdbcTemplate;
+import javax.sql.DataSource;
 
 @Service
 public class MetaCategoryImportService {
 
     private final MetaCategoryDefRepository defRepository;
     private final MetaCategoryVersionRepository versionRepository;
+    private final JdbcTemplate jdbcTemplate;
 
-    public MetaCategoryImportService(MetaCategoryDefRepository defRepository, MetaCategoryVersionRepository versionRepository) {
+    public MetaCategoryImportService(MetaCategoryDefRepository defRepository,
+                                     MetaCategoryVersionRepository versionRepository,
+                                     DataSource dataSource) {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
+        this.jdbcTemplate = new JdbcTemplate(dataSource);
     }
 
     /**
@@ -103,6 +109,9 @@ public class MetaCategoryImportService {
                 // 更新定义（path/fullPathName/isLeaf 等）
                 defRepository.save(def);
 
+                // 闭包表插入（祖先-后代关系）
+                insertClosureRows(def);
+
                 sessionNewCodes.add(code);
                 createdDefCount++;
                 createdVersionCount++;
@@ -118,6 +127,25 @@ public class MetaCategoryImportService {
         summary.setErrors(errors);
         summary.setCreatedDefs(createdDefs);
         return summary;
+    }
+
+    /**
+     * 为新定义节点插入闭包表行：
+     * (self,self,0) 以及 (ancestor,self,distance)
+     * 使用 ON CONFLICT DO NOTHING 保证幂等。
+     */
+    private void insertClosureRows(MetaCategoryDef def) {
+        // self
+        jdbcTemplate.update("INSERT INTO plm_meta.category_hierarchy(ancestor_def_id, descendant_def_id, distance) VALUES (?,?,0) ON CONFLICT DO NOTHING",
+                def.getId(), def.getId());
+        int distance = 1;
+        MetaCategoryDef cursor = def.getParent();
+        while (cursor != null) {
+            jdbcTemplate.update("INSERT INTO plm_meta.category_hierarchy(ancestor_def_id, descendant_def_id, distance) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+                    cursor.getId(), def.getId(), distance);
+            cursor = cursor.getParent();
+            distance++;
+        }
     }
 
     private String parentCode(String code) {
