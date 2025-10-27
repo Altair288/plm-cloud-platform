@@ -18,6 +18,10 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        '[jdbc.batch_size]': 500
+        '[order_inserts]': true
+        '[order_updates]': true
+        '[generate_statistics]': false
 
 logging:
   level:
