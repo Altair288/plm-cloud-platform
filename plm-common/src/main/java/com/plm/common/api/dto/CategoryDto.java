@@ -11,4 +11,6 @@ public class CategoryDto {
     private String name;
     private String description;
     private OffsetDateTime createdAt;
+    // 可选：导入时标记是否新创建
+    private Boolean importedNew;
 }

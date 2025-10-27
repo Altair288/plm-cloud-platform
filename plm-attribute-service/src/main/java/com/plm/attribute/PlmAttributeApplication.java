@@ -9,8 +9,8 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 @SpringBootApplication
 @ComponentScan(basePackages = {"com.plm.attribute", "com.plm.infrastructure", "com.plm.common"})
-@EnableJpaRepositories(basePackages = "com.plm.infrastructure.repository")
-@EntityScan(basePackages = "com.plm.common.domain")
+@EnableJpaRepositories(basePackages = {"com.plm.infrastructure.repository", "com.plm.infrastructure.version.repository"})
+@EntityScan(basePackages = {"com.plm.common.domain", "com.plm.common.version.domain"})
 @EnableTransactionManagement
 public class PlmAttributeApplication {
     public static void main(String[] args) {

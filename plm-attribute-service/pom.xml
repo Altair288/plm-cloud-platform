@@ -25,6 +25,12 @@
       <artifactId>plm-infrastructure</artifactId>
       <version>1.0-SNAPSHOT</version>
     </dependency>
+    <!-- Excel 解析：支持多级分类导入 -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>5.2.5</version>
+    </dependency>
   </dependencies>
 
   <build>

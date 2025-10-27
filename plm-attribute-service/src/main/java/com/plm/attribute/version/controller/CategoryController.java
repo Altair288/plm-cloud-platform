@@ -27,6 +27,7 @@ public class CategoryController {
         return categoryService.list();
     }
 
+
     public static class CreateCategoryRequest {
         private String name;
         private String description;

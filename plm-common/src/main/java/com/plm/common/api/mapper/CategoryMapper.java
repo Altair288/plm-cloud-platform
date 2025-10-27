@@ -12,6 +12,7 @@ public class CategoryMapper {
         d.setName(e.getName());
         d.setDescription(e.getDescription());
         d.setCreatedAt(e.getCreatedAt());
+        // importedNew 由调用方在导入场景下填充
         return d;
     }
 }
