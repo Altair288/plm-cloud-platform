@@ -35,7 +35,7 @@ public class MetaAttributeQueryController {
 
     // 2. 详情（含最新版本 + 所有历史版本摘要）
     @GetMapping("/{attrKey}")
-    public MetaAttributeDefDetailDto detail(@PathVariable String attrKey) {
+    public MetaAttributeDefDetailDto detail(@PathVariable("attrKey") String attrKey) {
         MetaAttributeDefDetailDto dto = queryService.detail(attrKey);
         if (dto == null)
             throw new IllegalArgumentException("属性不存在:" + attrKey);
@@ -44,7 +44,7 @@ public class MetaAttributeQueryController {
 
     // 3. 版本列表摘要
     @GetMapping("/{attrKey}/versions")
-    public List<MetaAttributeVersionSummaryDto> versions(@PathVariable String attrKey) {
+    public List<MetaAttributeVersionSummaryDto> versions(@PathVariable("attrKey") String attrKey) {
         return queryService.versions(attrKey);
     }
 }

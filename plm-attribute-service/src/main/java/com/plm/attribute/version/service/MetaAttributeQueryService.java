@@ -48,7 +48,8 @@ public class MetaAttributeQueryService {
         List<String> cond = new ArrayList<>();
         Map<String, Object> params = new HashMap<>();
         if (categoryCodePrefix != null && !categoryCodePrefix.isBlank()) {
-            cond.add("c.code like :catPrefix");
+            // 使用正确字段名 codeKey
+            cond.add("c.codeKey like :catPrefix");
             params.put("catPrefix", categoryCodePrefix + "%");
         }
         // keyword matches displayName inside latest version's JSON -> fallback: load
