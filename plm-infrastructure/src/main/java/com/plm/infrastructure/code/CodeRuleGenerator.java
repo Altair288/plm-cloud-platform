@@ -87,7 +87,7 @@ public class CodeRuleGenerator {
     private int sequenceWidth(String ruleCode) {
         switch (ruleCode) {
             case "CATEGORY": return 4;
-            case "ATTRIBUTE": return 2;
+            case "ATTRIBUTE": return 6; // global attribute sequence zero-padded to 6 digits
             case "LOV": return 2;
             case "INSTANCE": return 4;
             default: return 5; // 兼容旧 pattern

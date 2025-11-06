@@ -3,8 +3,7 @@ package com.plm.attribute.version.service;
 import com.plm.common.api.dto.AttributeImportErrorDto;
 import com.plm.common.api.dto.AttributeImportSummaryDto;
 import com.plm.common.version.domain.*;
-import com.plm.common.version.util.AttributeLovImportUtils;
-import com.plm.common.version.util.PinyinAbbrevUtils;
+import com.plm.common.version.util.AttributeLovImportUtils; // still used for json hash & numeric parse
 import com.plm.infrastructure.code.CodeRuleGenerator;
 import com.plm.infrastructure.version.repository.*;
 import org.apache.poi.ss.usermodel.*;
@@ -124,25 +123,9 @@ public class MetaAttributeImportService {
             if (g.values.isEmpty()) { errors.add(new AttributeImportErrorDto(-1, "属性无枚举值:"+g.attrName)); continue; }
             MetaCategoryDef catDef = categoryCache.get(g.categoryCode);
 
-            // 生成属性首字母拼音缩写，并在同分类内保证唯一性
-            String normalizedCategory = g.categoryCode.replace('.', '_');
-            String initialsBase = PinyinAbbrevUtils.initials(g.attrName);
-            if (initialsBase.isEmpty()) initialsBase = AttributeLovImportUtils.slug(g.attrName); // 兜底使用旧 slug
-            String initialsUsed = initialsBase;
+            // 全局序列生成属性编码：ATTR_000001, ATTR_000002 ... (pattern ATTR_{SEQ})
+            String attrKey = codeRuleGenerator.generate("ATTRIBUTE", Collections.emptyMap());
             Map<String, MetaAttributeDef> catAttrMap = attrCache.computeIfAbsent(catDef.getId(), id -> new HashMap<>());
-            int tryIndex = 2;
-            while (catAttrMap.containsKey(normalizedCategory + "_" + initialsUsed)) { // 已存在同模式
-                // 回退策略：添加数字后缀，避免复杂全拼，保持稳定性
-                initialsUsed = initialsBase + "_" + tryIndex++;
-                if (tryIndex > 50) { // 异常过多冲突，使用 hash 兜底
-                    initialsUsed = initialsBase + "_" + AttributeLovImportUtils.slug(g.attrName).toUpperCase();
-                    break;
-                }
-            }
-            String attrKey = codeRuleGenerator.generate("ATTRIBUTE", Map.of(
-                    "CATEGORY_CODE", normalizedCategory,
-                    "ATTR_INITIALS", initialsUsed
-            ));
             // 查询是否已有 attribute def
             MetaAttributeDef attrDef = catAttrMap.get(attrKey);
             boolean newlyCreatedAttr = false;
@@ -166,11 +149,8 @@ public class MetaAttributeImportService {
         MetaCategoryVersion catVer = categoryVersionRepository.findLatestByDef(catDef).orElse(null);
         if (catVer == null) { errors.add(new AttributeImportErrorDto(-1, "分类缺少版本:"+g.categoryCode)); continue; }
 
-        // 生成 LOV key（与 attribute JSON 保持一致）
-        String lovKey = codeRuleGenerator.generate("LOV", Map.of(
-            "CATEGORY_CODE", normalizedCategory,
-            "ATTR_INITIALS", initialsUsed
-        ));
+        // LOV key 简化：<属性编码>_LOV (由 V10 规则 pattern 支持 {ATTRIBUTE_CODE}_LOV 或直接拼接)
+        String lovKey = codeRuleGenerator.generate("LOV", Map.of("ATTRIBUTE_CODE", attrKey));
 
         // 构造 structure_json (简化)
         String structureJson = buildAttributeJson(g, attrDef, lovKey);
