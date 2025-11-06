@@ -28,5 +28,11 @@
       <artifactId>lombok</artifactId>
       <optional>true</optional>
     </dependency>
+    <!-- 汉字转拼音，用于属性/LOV编码生成首字母缩写 -->
+    <dependency>
+      <groupId>com.belerweb</groupId>
+      <artifactId>pinyin4j</artifactId>
+      <version>2.5.1</version>
+    </dependency>
   </dependencies>
 </project>

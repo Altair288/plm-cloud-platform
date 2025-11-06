@@ -52,22 +52,21 @@ public class CodeRuleGenerator {
         if (meta == null) {
             throw new IllegalArgumentException("编码规则不存在: " + ruleCode);
         }
-
-        // 序列获取 & 自增
-        Map<String, Object> seqRow = jdbcTemplate.queryForMap(
-                "SELECT current_value FROM plm_meta.meta_code_sequence WHERE rule_code = ? FOR UPDATE",
-                ruleCode
-        );
-        long next = ((Number) seqRow.get("current_value")).longValue() + 1;
-        jdbcTemplate.update("UPDATE plm_meta.meta_code_sequence SET current_value = ? WHERE rule_code = ?", next, ruleCode);
-
+        String pattern = meta.pattern;
         String dateStr = LocalDate.now().toString().replaceAll("-", "");
-        int seqWidth = sequenceWidth(ruleCode);
-        String seqStr = String.format("%0" + seqWidth + "d", next);
-
-        String result = meta.pattern
-                .replace("{DATE}", dateStr)
-                .replace("{SEQ}", seqStr);
+        String result = pattern.contains("{DATE}") ? pattern.replace("{DATE}", dateStr) : pattern;
+        if (pattern.contains("{SEQ}")) {
+            // 仅在需要序列时访问序列表，减少不必要锁竞争
+            Map<String, Object> seqRow = jdbcTemplate.queryForMap(
+                    "SELECT current_value FROM plm_meta.meta_code_sequence WHERE rule_code = ? FOR UPDATE",
+                    ruleCode
+            );
+            long next = ((Number) seqRow.get("current_value")).longValue() + 1;
+            jdbcTemplate.update("UPDATE plm_meta.meta_code_sequence SET current_value = ? WHERE rule_code = ?", next, ruleCode);
+            int seqWidth = sequenceWidth(ruleCode);
+            String seqStr = String.format("%0" + seqWidth + "d", next);
+            result = result.replace("{SEQ}", seqStr);
+        }
 
         // 上下文占位符替换
         for (Map.Entry<String,String> e : ctx.entrySet()) {

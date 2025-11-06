@@ -4,6 +4,8 @@ import com.plm.common.api.dto.AttributeImportErrorDto;
 import com.plm.common.api.dto.AttributeImportSummaryDto;
 import com.plm.common.version.domain.*;
 import com.plm.common.version.util.AttributeLovImportUtils;
+import com.plm.common.version.util.PinyinAbbrevUtils;
+import com.plm.infrastructure.code.CodeRuleGenerator;
 import com.plm.infrastructure.version.repository.*;
 import org.apache.poi.ss.usermodel.*;
 import org.slf4j.Logger;
@@ -49,6 +51,7 @@ public class MetaAttributeImportService {
                                       MetaAttributeVersionRepository attributeVersionRepository,
                                       MetaLovDefRepository lovDefRepository,
                                       MetaLovVersionRepository lovVersionRepository,
+                                      CodeRuleGenerator codeRuleGenerator,
                                       DataSource dataSource) {
         this.categoryDefRepository = categoryDefRepository;
         this.categoryVersionRepository = categoryVersionRepository;
@@ -56,7 +59,10 @@ public class MetaAttributeImportService {
         this.attributeVersionRepository = attributeVersionRepository;
         this.lovDefRepository = lovDefRepository;
         this.lovVersionRepository = lovVersionRepository;
+        this.codeRuleGenerator = codeRuleGenerator;
     }
+
+    private final CodeRuleGenerator codeRuleGenerator;
 
     /**
      * Excel 模板(示例): 分类编号 | 分类名称 | 属性名称 | 属性类型 | 单位 | 枚举值1 | 枚举值2 | ...
@@ -118,10 +124,26 @@ public class MetaAttributeImportService {
             if (g.values.isEmpty()) { errors.add(new AttributeImportErrorDto(-1, "属性无枚举值:"+g.attrName)); continue; }
             MetaCategoryDef catDef = categoryCache.get(g.categoryCode);
 
-            // 生成 attribute key (slug)
-            String attrKey = AttributeLovImportUtils.slug(g.attrName);
-            // 查询是否已有 attribute def (简单遍历按分类全部加载避免额外接口)
+            // 生成属性首字母拼音缩写，并在同分类内保证唯一性
+            String normalizedCategory = g.categoryCode.replace('.', '_');
+            String initialsBase = PinyinAbbrevUtils.initials(g.attrName);
+            if (initialsBase.isEmpty()) initialsBase = AttributeLovImportUtils.slug(g.attrName); // 兜底使用旧 slug
+            String initialsUsed = initialsBase;
             Map<String, MetaAttributeDef> catAttrMap = attrCache.computeIfAbsent(catDef.getId(), id -> new HashMap<>());
+            int tryIndex = 2;
+            while (catAttrMap.containsKey(normalizedCategory + "_" + initialsUsed)) { // 已存在同模式
+                // 回退策略：添加数字后缀，避免复杂全拼，保持稳定性
+                initialsUsed = initialsBase + "_" + tryIndex++;
+                if (tryIndex > 50) { // 异常过多冲突，使用 hash 兜底
+                    initialsUsed = initialsBase + "_" + AttributeLovImportUtils.slug(g.attrName).toUpperCase();
+                    break;
+                }
+            }
+            String attrKey = codeRuleGenerator.generate("ATTRIBUTE", Map.of(
+                    "CATEGORY_CODE", normalizedCategory,
+                    "ATTR_INITIALS", initialsUsed
+            ));
+            // 查询是否已有 attribute def
             MetaAttributeDef attrDef = catAttrMap.get(attrKey);
             boolean newlyCreatedAttr = false;
             if (attrDef == null) {
@@ -140,12 +162,18 @@ public class MetaAttributeImportService {
                 log.debug("[ATTR-DEF] categoryCode={} attrKey={} inserted={} id={}", g.categoryCode, attrKey, inserted>0, attrDef!=null?attrDef.getId():null);
             }
 
-            // 最新分类版本
-            MetaCategoryVersion catVer = categoryVersionRepository.findLatestByDef(catDef).orElse(null);
-            if (catVer == null) { errors.add(new AttributeImportErrorDto(-1, "分类缺少版本:"+g.categoryCode)); continue; }
+        // 最新分类版本
+        MetaCategoryVersion catVer = categoryVersionRepository.findLatestByDef(catDef).orElse(null);
+        if (catVer == null) { errors.add(new AttributeImportErrorDto(-1, "分类缺少版本:"+g.categoryCode)); continue; }
 
-            // 构造 structure_json (简化)
-            String structureJson = buildAttributeJson(g, attrDef);
+        // 生成 LOV key（与 attribute JSON 保持一致）
+        String lovKey = codeRuleGenerator.generate("LOV", Map.of(
+            "CATEGORY_CODE", normalizedCategory,
+            "ATTR_INITIALS", initialsUsed
+        ));
+
+        // 构造 structure_json (简化)
+        String structureJson = buildAttributeJson(g, attrDef, lovKey);
             String structHash = AttributeLovImportUtils.jsonHash(structureJson);
             MetaAttributeVersion latestAttrVer = newlyCreatedAttr ? null : attributeVersionRepository.findLatestByDef(attrDef).orElse(null);
             boolean needNewAttrVersion = newlyCreatedAttr || latestAttrVer == null || (structHash != null && !structHash.equals(latestAttrVer.getHash()));
@@ -178,8 +206,7 @@ public class MetaAttributeImportService {
                 }
             }
 
-            // LOV 定义 & 版本
-            String lovKey = AttributeLovImportUtils.generateLovKey(g.categoryCode, g.attrName);
+            // LOV 定义 & 版本（使用与 JSON 相同的 lovKey）
             MetaLovDef lovDef = lovDefRepository.findByKey(lovKey).orElse(null);
             boolean newlyCreatedLov = false;
             if (lovDef == null) {
@@ -253,13 +280,13 @@ public class MetaAttributeImportService {
         return defs.isEmpty()? null : defs.get(0);
     }
 
-    private String buildAttributeJson(AttrGroup g, MetaAttributeDef def) {
+    private String buildAttributeJson(AttrGroup g, MetaAttributeDef def, String lovKey) {
         String unit = g.unit == null? "" : g.unit;
         return "{" +
                 "\"displayName\":\""+escape(g.attrName)+"\"," +
                 "\"dataType\":\"enum\"," +
                 "\"unit\":\""+escape(unit)+"\"," +
-                "\"lovKey\":\""+AttributeLovImportUtils.generateLovKey(g.categoryCode,g.attrName)+"\"" +
+                "\"lovKey\":\""+escape(lovKey)+"\"" +
                 "}";
     }
 
