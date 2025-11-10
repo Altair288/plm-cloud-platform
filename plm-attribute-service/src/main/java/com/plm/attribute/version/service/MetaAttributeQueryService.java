@@ -7,6 +7,8 @@ import com.plm.common.api.dto.MetaAttributeDefListItemDto;
 import com.plm.common.api.dto.MetaAttributeVersionSummaryDto;
 import com.plm.common.version.domain.MetaAttributeDef;
 import com.plm.common.version.domain.MetaAttributeVersion;
+import com.plm.common.version.domain.MetaLovDef;
+import com.plm.common.version.domain.MetaLovVersion;
 import com.plm.infrastructure.version.repository.*;
 import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
@@ -96,6 +98,10 @@ public class MetaAttributeQueryService {
     }
 
     public MetaAttributeDefDetailDto detail(String attrKey) {
+        return detail(attrKey, false);
+    }
+
+    public MetaAttributeDefDetailDto detail(String attrKey, boolean includeValues) {
         // attrKey is globally unique; fetch by unique key requires custom query;
         // fallback: scan page (simplified)
         MetaAttributeDef def = em
@@ -120,6 +126,19 @@ public class MetaAttributeQueryService {
             lv.setUnit(parsed.unit);
             lv.setLovKey(parsed.lovKey);
             dto.setLovKey(parsed.lovKey);
+
+            if (includeValues && parsed.lovKey != null) {
+                // Load LOV def by key then latest lov version
+                MetaLovDef lovDef = em.createQuery("select l from MetaLovDef l where l.key = :k", MetaLovDef.class)
+                        .setParameter("k", parsed.lovKey)
+                        .getResultStream().findFirst().orElse(null);
+                if (lovDef != null) {
+                    MetaLovVersion lovLatest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+                    if (lovLatest != null && lovLatest.getValueJson() != null) {
+                        dto.setLovValues(parseLovValues(lovLatest.getValueJson()));
+                    }
+                }
+            }
         }
         dto.setLatestVersion(lv);
         // Fill versions summary list
@@ -173,5 +192,40 @@ public class MetaAttributeQueryService {
         String unit;
         String lovKey;
         String dataType;
+    }
+
+    private List<MetaAttributeDefDetailDto.LovValueItem> parseLovValues(String json) {
+        List<MetaAttributeDefDetailDto.LovValueItem> list = new ArrayList<>();
+        if (json == null) return list;
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            JsonNode valuesNode = node.get("values");
+            if (valuesNode != null && valuesNode.isArray()) {
+                for (JsonNode v : valuesNode) {
+                    MetaAttributeDefDetailDto.LovValueItem item = new MetaAttributeDefDetailDto.LovValueItem();
+                    if (v.has("code")) item.setCode(v.get("code").asText());
+                    // 兼容两种字段命名: value/name, sort/order, disabled/active
+                    if (v.has("value")) {
+                        item.setValue(v.get("value").asText());
+                    } else if (v.has("name")) {
+                        item.setValue(v.get("name").asText());
+                    }
+                    if (v.has("sort")) {
+                        item.setSort(v.get("sort").asInt());
+                    } else if (v.has("order")) {
+                        item.setSort(v.get("order").asInt());
+                    }
+                    if (v.has("disabled")) {
+                        item.setDisabled(v.get("disabled").asBoolean());
+                    } else if (v.has("active")) {
+                        // active=true => disabled=false
+                        item.setDisabled(!v.get("active").asBoolean());
+                    }
+                    list.add(item);
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return list;
     }
 }

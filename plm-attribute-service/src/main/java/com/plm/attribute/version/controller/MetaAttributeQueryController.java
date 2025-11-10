@@ -35,8 +35,9 @@ public class MetaAttributeQueryController {
 
     // 2. 详情（含最新版本 + 所有历史版本摘要）
     @GetMapping("/{attrKey}")
-    public MetaAttributeDefDetailDto detail(@PathVariable("attrKey") String attrKey) {
-        MetaAttributeDefDetailDto dto = queryService.detail(attrKey);
+    public MetaAttributeDefDetailDto detail(@PathVariable("attrKey") String attrKey,
+                                            @RequestParam(value = "includeValues", required = false, defaultValue = "false") boolean includeValues) {
+        MetaAttributeDefDetailDto dto = queryService.detail(attrKey, includeValues);
         if (dto == null)
             throw new IllegalArgumentException("属性不存在:" + attrKey);
         return dto;
