@@ -40,6 +40,9 @@ public class MetaCategoryDef {
     @Column(name = "is_leaf", nullable = false)
     private Boolean isLeaf = Boolean.TRUE;
 
+    @Column(name = "external_code", length = 64)
+    private String externalCode;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

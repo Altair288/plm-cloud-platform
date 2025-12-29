@@ -6,7 +6,9 @@ import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
 import com.plm.common.api.dto.MetaCategoryDefDto;
 import com.plm.common.api.dto.MetaCategoryImportSummaryDto;
+import com.plm.common.api.dto.UnspscImportItem;
 import com.plm.common.api.mapper.MetaCategoryMapper;
+
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.EncryptedDocumentException;
 import org.springframework.stereotype.Service;
@@ -15,7 +17,11 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.time.OffsetDateTime;
 import org.springframework.jdbc.core.JdbcTemplate;
 import javax.sql.DataSource;
 
@@ -32,6 +38,203 @@ public class MetaCategoryImportService {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
         this.jdbcTemplate = new JdbcTemplate(dataSource);
+    }
+
+    /**
+     * 导入简化格式（UNSPSC）：key | parentKey | code | title
+     * - code -> code_key & external_code
+     * - title -> version.displayName & full_path_name 组成
+     */
+    @Transactional
+    public MetaCategoryImportSummaryDto importUnspsc(List<UnspscImportItem> items, String createdBy) {
+        if (items == null || items.isEmpty())
+            throw new IllegalArgumentException("导入列表为空");
+
+        Map<String, MetaCategoryDef> codeMap = new HashMap<>();
+        Map<String, MetaCategoryDef> keyMap = new HashMap<>();
+        // 预加载已存在的 code_key
+        Set<String> codes = new HashSet<>();
+        for (UnspscImportItem it : items) if (it.getCode() != null) codes.add(it.getCode());
+        if (!codes.isEmpty()) {
+            defRepository.findByCodeKeyIn(codes).forEach(def -> {
+                codeMap.put(def.getCodeKey(), def);
+                keyMap.put(def.getCodeKey(), def); // 如果 key 也用 code 重复引用
+            });
+        }
+
+        Map<String, UnspscImportItem> itemByKey = new HashMap<>();
+        for (UnspscImportItem it : items) {
+            if (it.getKey() != null) itemByKey.put(it.getKey(), it);
+        }
+
+        int createdDefCount = 0;
+        int createdVersionCount = 0;
+        int skipped = 0;
+        List<String> errors = new ArrayList<>();
+        List<MetaCategoryDefDto> createdDefs = new ArrayList<>();
+
+        Set<String> processedKeys = new HashSet<>();
+        boolean progress;
+        int safety = items.size() + 5;
+        do {
+            progress = false;
+            for (UnspscImportItem it : items) {
+                String itemKey = trim(it.getKey());
+                if (itemKey == null) {
+                    errors.add("缺少 key");
+                    continue;
+                }
+                if (processedKeys.contains(itemKey)) continue;
+                String code = trim(it.getCode());
+                String title = trim(it.getTitle());
+                if (code == null || title == null) {
+                    errors.add("缺少 code/title, key=" + itemKey);
+                    processedKeys.add(itemKey);
+                    continue;
+                }
+
+                // 父节点
+                MetaCategoryDef parent = null;
+                if (it.getParentKey() != null && !it.getParentKey().isBlank()) {
+                    parent = keyMap.get(it.getParentKey());
+                    if (parent == null) continue; // 父未就绪，留待下一轮
+                }
+
+                // 已存在则跳过插入
+                MetaCategoryDef def = codeMap.get(code);
+                if (def != null) {
+                    skipped++;
+                    processedKeys.add(itemKey);
+                    keyMap.put(itemKey, def);
+                    continue;
+                }
+
+                UUID newId = null;
+                try {
+                    newId = jdbcTemplate.queryForObject(
+                            "INSERT INTO plm_meta.meta_category_def(id, code_key, status, created_at, created_by, parent_def_id, external_code) " +
+                                    "VALUES (gen_random_uuid(), ?, 'active', now(), ?, ?, ?) ON CONFLICT (code_key) DO NOTHING RETURNING id",
+                            (rs, rowNum) -> rs.getObject(1, java.util.UUID.class),
+                            code,
+                            createdBy,
+                            parent == null ? null : parent.getId(),
+                            code
+                    );
+                } catch (EmptyResultDataAccessException ignore) {
+                    // 冲突：并发或已存在
+                }
+
+                if (newId == null) {
+                    def = defRepository.findByCodeKey(code).orElse(null);
+                    if (def == null) {
+                        errors.add("并发: 未能获取已存在定义 code=" + code);
+                        processedKeys.add(itemKey);
+                        continue;
+                    }
+                    skipped++;
+                    codeMap.put(code, def);
+                    keyMap.put(itemKey, def);
+                    processedKeys.add(itemKey);
+                    continue;
+                }
+
+                def = defRepository.findById(newId).orElse(null);
+                if (def == null) {
+                    errors.add("插入后加载失败 code=" + code);
+                    processedKeys.add(itemKey);
+                    continue;
+                }
+                // 确保 parent 链路可用于闭包插入（避免懒加载额外查询）
+                if (parent != null) def.setParent(parent);
+
+                // 如果父节点存在，确保其 is_leaf = false
+                if (parent != null && Boolean.TRUE.equals(parent.getIsLeaf())) {
+                    parent.setIsLeaf(false);
+                    defRepository.save(parent);
+                }
+
+                // path/depth/fullPathName
+                String parentPath = parent == null ? null : parent.getPath();
+                if (parent != null && parentPath == null) parentPath = "/" + parent.getCodeKey();
+                String path = (parent == null ? "/" + code : parentPath + "/" + code);
+                def.setPath(path);
+                def.setDepth((short) (path.split("/").length - 1));
+                def.setIsLeaf(true);
+
+                String parentFullName = parent == null ? null : parent.getFullPathName();
+                if (parent != null && parentFullName == null) parentFullName = parent.getCodeKey();
+                def.setFullPathName(parent == null ? title : parentFullName + "/" + title);
+                defRepository.save(def);
+
+                // 创建版本
+                MetaCategoryVersion ver = new MetaCategoryVersion();
+                ver.setCategoryDef(def);
+                ver.setDisplayName(title);
+                ver.setIsLatest(true);
+                ver.setCreatedBy(createdBy);
+                versionRepository.save(ver);
+
+                // 闭包表插入（祖先-后代关系）
+                insertClosureRows(def);
+
+                codeMap.put(code, def);
+                keyMap.put(itemKey, def);
+                processedKeys.add(itemKey);
+                createdDefCount++;
+                createdVersionCount++;
+                createdDefs.add(MetaCategoryMapper.toDefDto(def));
+                progress = true;
+            }
+            safety--;
+        } while (progress && safety > 0 && processedKeys.size() < items.size());
+
+        // 未处理完的记录报错
+        for (UnspscImportItem it : items) {
+            if (!processedKeys.contains(it.getKey())) {
+                errors.add("未导入: key=" + it.getKey() + " 可能缺少父节点或重复");
+            }
+        }
+
+        MetaCategoryImportSummaryDto summary = new MetaCategoryImportSummaryDto();
+        summary.setTotalRows(items.size());
+        summary.setCreatedDefCount(createdDefCount);
+        summary.setCreatedVersionCount(createdVersionCount);
+        summary.setSkippedExistingCount(skipped);
+        summary.setErrorCount(errors.size());
+        summary.setErrors(errors);
+        summary.setCreatedDefs(createdDefs);
+        return summary;
+    }
+
+    /**
+     * 从 CSV (UTF-8) 导入 UNSPSC，列顺序：key,parentKey,code,title，首行可为表头自动跳过。
+     */
+    @Transactional
+    public MetaCategoryImportSummaryDto importUnspscCsv(MultipartFile file, String createdBy) {
+        if (file == null || file.isEmpty()) throw new IllegalArgumentException("上传文件为空");
+        List<UnspscImportItem> items = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            boolean first = true;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty()) continue;
+                List<String> parts = parseCsvLine(trimmed);
+                // 兼容表头：检测首行是否包含非数字/键名
+                if (first && isHeader(parts)) { first = false; continue; }
+                first = false;
+                UnspscImportItem item = new UnspscImportItem();
+                item.setKey(getCsv(parts, 0));
+                item.setParentKey(getCsv(parts, 1));
+                item.setCode(getCsv(parts, 2));
+                item.setTitle(getCsv(parts, 3));
+                if (item.getCode() == null && item.getTitle() == null) continue; // skip invalid row
+                items.add(item);
+            }
+        } catch (IOException e) {
+            throw new IllegalArgumentException("读取 CSV 失败", e);
+        }
+        return importUnspsc(items, createdBy);
     }
 
     /**
@@ -230,4 +433,48 @@ public class MetaCategoryImportService {
         };
     }
     private String trim(String s) { if (s == null) return null; String t = s.trim(); return t.isEmpty()? null : t; }
+
+    private String getCsv(List<String> parts, int idx) {
+        if (parts == null || idx >= parts.size()) return null;
+        String v = parts.get(idx);
+        if (v == null) return null;
+        v = v.trim();
+        return v.isEmpty() ? null : v;
+    }
+
+    private boolean isHeader(List<String> parts) {
+        if (parts == null || parts.size() < 3) return false;
+        String joined = String.join(" ", parts).toLowerCase();
+        return joined.contains("key") || joined.contains("键") || joined.contains("code") || joined.contains("编码");
+    }
+
+    /**
+     * 轻量 CSV 解析：支持双引号包裹字段（字段内可含逗号），支持 "" 转义。
+     */
+    private List<String> parseCsvLine(String line) {
+        List<String> out = new ArrayList<>();
+        if (line == null) return out;
+        StringBuilder cur = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char ch = line.charAt(i);
+            if (ch == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    cur.append('"');
+                    i++; // skip escaped quote
+                } else {
+                    inQuotes = !inQuotes;
+                }
+                continue;
+            }
+            if (ch == ',' && !inQuotes) {
+                out.add(cur.toString());
+                cur.setLength(0);
+                continue;
+            }
+            cur.append(ch);
+        }
+        out.add(cur.toString());
+        return out;
+    }
 }
