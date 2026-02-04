@@ -44,57 +44,22 @@ public class MetaAttributeQueryService {
         this.lovVersionRepository = lovVersionRepository;
     }
 
-    public Page<MetaAttributeDefListItemDto> list(String categoryCodePrefix, String keyword, Pageable pageable) {
-        // Build JPQL dynamically (simple where conditions)
-        String base = "select d from MetaAttributeDef d join d.categoryDef c";
-        List<String> cond = new ArrayList<>();
-        Map<String, Object> params = new HashMap<>();
-        if (categoryCodePrefix != null && !categoryCodePrefix.isBlank()) {
-            // 使用正确字段名 codeKey
-            cond.add("c.codeKey like :catPrefix");
-            params.put("catPrefix", categoryCodePrefix + "%");
-        }
-        // keyword matches displayName inside latest version's JSON -> fallback: load
-        // all page then filter in memory
-        String where = cond.isEmpty() ? "" : (" where " + String.join(" and ", cond));
-        String order = " order by d.createdAt desc";
-        TypedQuery<MetaAttributeDef> q = em.createQuery(base + where + order, MetaAttributeDef.class);
-        params.forEach(q::setParameter);
-        int total = q.getResultList().size(); // simple count; can optimize with count query
-        q.setFirstResult((int) pageable.getOffset());
-        q.setMaxResults(pageable.getPageSize());
-        List<MetaAttributeDef> defs = q.getResultList();
-
-        // Load latest versions & lov defs
-        List<MetaAttributeDefListItemDto> items = new ArrayList<>();
-        for (MetaAttributeDef def : defs) {
-            MetaAttributeVersion ver = attributeVersionRepository.findLatestByDef(def).orElse(null);
-            String displayName = null;
-            String unit = null;
-            String lovKey = null;
-            if (ver != null) {
-                ParsedAttributeJson parsed = parseAttributeJson(ver.getStructureJson());
-                displayName = parsed.displayName;
-                unit = parsed.unit;
-                lovKey = parsed.lovKey;
-            }
-            if (keyword != null && !keyword.isBlank() && (displayName == null || !displayName.contains(keyword))) {
-                continue; // Skip; will reduce page size (simpler initial implementation)
-            }
-            items.add(new MetaAttributeDefListItemDto(
-                    def.getKey(),
-                    lovKey,
-                    def.getCategoryDef().getCodeKey(),
-                    def.getStatus(),
-                    ver != null ? ver.getVersionNo() : null,
-                    displayName,
-                    unit,
-                    def.getLovFlag(),
-                    def.getCreatedAt()));
-        }
-        // Adjust total if keyword filtered
-        int filteredTotal = (keyword != null && !keyword.isBlank()) ? items.size() : total;
-        return new PageImpl<>(items, pageable, filteredTotal);
+    public Page<MetaAttributeDefListItemDto> list(
+            String categoryCodePrefix,
+            String keyword,
+            String dataType,
+            Boolean required,
+            Boolean unique,
+            Boolean searchable,
+            Pageable pageable) {
+        return attributeVersionRepository.searchLatestListItems(
+                categoryCodePrefix,
+                keyword,
+                dataType,
+                required,
+                unique,
+                searchable,
+                pageable);
     }
 
     public MetaAttributeDefDetailDto detail(String attrKey) {
@@ -115,6 +80,7 @@ public class MetaAttributeQueryService {
         dto.setKey(def.getKey());
         dto.setCategoryCode(def.getCategoryDef().getCodeKey());
         dto.setStatus(def.getStatus());
+        dto.setCreatedBy(def.getCreatedBy());
         dto.setCreatedAt(def.getCreatedAt());
         dto.setHasLov(def.getLovFlag());
         MetaAttributeDefDetailDto.LatestVersion lv = new MetaAttributeDefDetailDto.LatestVersion();
@@ -122,10 +88,23 @@ public class MetaAttributeQueryService {
             ParsedAttributeJson parsed = parseAttributeJson(latest.getStructureJson());
             lv.setVersionNo(latest.getVersionNo());
             lv.setDisplayName(parsed.displayName);
+            lv.setDescription(parsed.description);
             lv.setDataType(parsed.dataType);
             lv.setUnit(parsed.unit);
+            lv.setDefaultValue(parsed.defaultValue);
+            lv.setRequired(parsed.required);
+            lv.setUnique(parsed.unique);
+            lv.setHidden(parsed.hidden);
+            lv.setReadOnly(parsed.readOnly);
+            lv.setSearchable(parsed.searchable);
             lv.setLovKey(parsed.lovKey);
+            lv.setCreatedBy(latest.getCreatedBy());
+            lv.setCreatedAt(latest.getCreatedAt());
             dto.setLovKey(parsed.lovKey);
+
+            // 版本语义下：最新版本创建人/时间即为“修改人/修改时间”
+            dto.setModifiedBy(latest.getCreatedBy());
+            dto.setModifiedAt(latest.getCreatedAt());
 
             if (includeValues && parsed.lovKey != null) {
                 // Load LOV def by key then latest lov version
@@ -175,9 +154,17 @@ public class MetaAttributeQueryService {
         try {
             JsonNode node = objectMapper.readTree(json);
             p.displayName = text(node, "displayName");
+            p.description = text(node, "description");
             p.unit = text(node, "unit");
             p.lovKey = text(node, "lovKey");
             p.dataType = text(node, "dataType");
+            p.defaultValue = text(node, "defaultValue");
+
+            p.required = bool(node, "required");
+            p.unique = bool(node, "unique");
+            p.hidden = bool(node, "hidden");
+            p.readOnly = bool(node, "readOnly");
+            p.searchable = bool(node, "searchable");
         } catch (IOException ignored) {
         }
         return p;
@@ -187,11 +174,23 @@ public class MetaAttributeQueryService {
         return node != null && node.has(field) ? node.get(field).asText() : null;
     }
 
+    private Boolean bool(JsonNode node, String field) {
+        if (node == null || !node.has(field) || node.get(field).isNull()) return null;
+        return node.get(field).asBoolean();
+    }
+
     private static class ParsedAttributeJson {
         String displayName;
+        String description;
         String unit;
         String lovKey;
         String dataType;
+        String defaultValue;
+        Boolean required;
+        Boolean unique;
+        Boolean hidden;
+        Boolean readOnly;
+        Boolean searchable;
     }
 
     private List<MetaAttributeDefDetailDto.LovValueItem> parseLovValues(String json) {

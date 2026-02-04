@@ -35,6 +35,28 @@ public class MetaAttributeVersion {
     @Column(name = "structure_json", nullable = false)
     private String structureJson;
 
+    // ===== Generated columns (query/index only; source of truth is structure_json) =====
+    @Column(name = "display_name", insertable = false, updatable = false)
+    private String displayName;
+
+    @Column(name = "data_type", insertable = false, updatable = false)
+    private String dataType;
+
+    @Column(name = "unit", insertable = false, updatable = false)
+    private String unit;
+
+    @Column(name = "lov_key", insertable = false, updatable = false)
+    private String lovKey;
+
+    @Column(name = "required_flag", insertable = false, updatable = false)
+    private Boolean requiredFlag;
+
+    @Column(name = "unique_flag", insertable = false, updatable = false)
+    private Boolean uniqueFlag;
+
+    @Column(name = "searchable_flag", insertable = false, updatable = false)
+    private Boolean searchableFlag;
+
     @Column(name = "hash", length = 64)
     private String hash;
 

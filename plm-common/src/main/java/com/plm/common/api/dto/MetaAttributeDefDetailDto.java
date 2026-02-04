@@ -9,7 +9,10 @@ public class MetaAttributeDefDetailDto {
     private String key;
     private String categoryCode;
     private String status;
+    private String createdBy;
     private OffsetDateTime createdAt;
+    private String modifiedBy;
+    private OffsetDateTime modifiedAt;
     private LatestVersion latestVersion;
     private String lovKey;
     private Boolean hasLov;
@@ -21,9 +24,19 @@ public class MetaAttributeDefDetailDto {
     public static class LatestVersion {
         private Integer versionNo;
         private String displayName;
+        private String description;
         private String dataType;
         private String unit;
+        private String defaultValue;
+        private Boolean required;
+        private Boolean unique;
+        private Boolean hidden;
+        private Boolean readOnly;
+        private Boolean searchable;
         private String lovKey;
+
+        private String createdBy;
+        private OffsetDateTime createdAt;
     }
 
     @Data

@@ -13,6 +13,7 @@ import java.util.UUID;
 
 @Repository
 public interface MetaAttributeDefRepository extends JpaRepository<MetaAttributeDef, UUID> {
+        Optional<MetaAttributeDef> findByCategoryDefAndKey(MetaCategoryDef categoryDef, String key);
     List<MetaAttributeDef> findByCategoryDefAndKeyIn(MetaCategoryDef categoryDef, Collection<String> keys);
     List<MetaAttributeDef> findByCategoryDefIdIn(Collection<UUID> categoryDefIds);
 

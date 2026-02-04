@@ -27,10 +27,14 @@ public class MetaAttributeQueryController {
     public Page<MetaAttributeDefListItemDto> list(
             @RequestParam(value = "categoryCode", required = false) String categoryCode,
             @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "dataType", required = false) String dataType,
+            @RequestParam(value = "required", required = false) Boolean required,
+            @RequestParam(value = "unique", required = false) Boolean unique,
+            @RequestParam(value = "searchable", required = false) Boolean searchable,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        return queryService.list(categoryCode, keyword, pageable);
+        return queryService.list(categoryCode, keyword, dataType, required, unique, searchable, pageable);
     }
 
     // 2. 详情（含最新版本 + 所有历史版本摘要）
