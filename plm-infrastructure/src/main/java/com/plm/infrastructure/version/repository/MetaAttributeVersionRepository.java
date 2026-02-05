@@ -30,6 +30,11 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                             v.dataType,
                             v.unit,
                             d.lovFlag,
+                            v.requiredFlag,
+                            v.uniqueFlag,
+                            v.hiddenFlag,
+                            v.readOnlyFlag,
+                            v.searchableFlag,
                             d.createdAt
                         )
                         from MetaAttributeVersion v

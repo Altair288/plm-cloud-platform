@@ -83,6 +83,11 @@ curl "http://localhost:8080/api/meta/attribute-defs?categoryCode=44120000&keywor
       "dataType": "string",
       "unit": null,
       "hasLov": false,
+      "required": true,
+      "unique": false,
+      "hidden": false,
+      "readOnly": false,
+      "searchable": true,
       "createdAt": "2026-02-04T09:30:00Z"
     }
   ],

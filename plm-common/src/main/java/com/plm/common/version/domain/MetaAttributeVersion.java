@@ -57,6 +57,12 @@ public class MetaAttributeVersion {
     @Column(name = "searchable_flag", insertable = false, updatable = false)
     private Boolean searchableFlag;
 
+    @Column(name = "hidden_flag", insertable = false, updatable = false)
+    private Boolean hiddenFlag;
+
+    @Column(name = "read_only_flag", insertable = false, updatable = false)
+    private Boolean readOnlyFlag;
+
     @Column(name = "hash", length = 64)
     private String hash;
 
