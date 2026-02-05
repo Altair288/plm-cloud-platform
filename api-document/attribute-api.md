@@ -1,10 +1,11 @@
 # 属性相关 API 文档（plm-attribute-service）
 
-更新时间：2026-02-04
+更新时间：2026-02-05
 
 > 本文覆盖“属性元数据（Meta Attribute Def/Version）”的查询与写入接口；旧版 `/api/attributes` 已移除。
-> 
+>
 > 约定：
+>
 > - `categoryCode` 使用 UNSPSC 分类的 `codeKey`（例如：`44120000`）。
 > - `attrKey` 对应 `meta_attribute_def.key`（即属性编码）。
 
@@ -19,6 +20,7 @@
 | 元数据属性版本摘要列表 | `GET /api/meta/attribute-defs/{attrKey}/versions` | ✅ | 返回 versionNo/hash/latest/createdAt |
 | 创建元数据属性（写入 def + 首个 version） | `POST /api/meta/attribute-defs` | ✅ | `categoryCode` 必填；enum 未传 `lovKey` 会自动生成 |
 | 更新元数据属性（新增 version） | `PUT/PATCH /api/meta/attribute-defs/{attrKey}` | ✅ | 若 hash 未变化会跳过新增版本 |
+| 删除元数据属性（软删） | `DELETE /api/meta/attribute-defs/{attrKey}` | ✅ | 仅将 def.status 置为 `deleted`；列表默认不返回已删除 |
 | 导入元数据属性（Excel） | `POST /api/meta/attributes/import` | ✅ | `multipart/form-data` 上传文件 |
 | 旧版属性实例接口（`/api/attributes`） | - | ❌（已移除） | 已删除 Controller/Service/Repository/Domain 代码 |
 
@@ -59,6 +61,7 @@
 | required | boolean | 否 | - | 过滤必填 |
 | unique | boolean | 否 | - | 过滤唯一 |
 | searchable | boolean | 否 | - | 过滤可搜索 |
+| includeDeleted | boolean | 否 | false | 是否包含已删除属性（默认不包含） |
 | page | int | 否 | 0 | 0-based 页码 |
 | size | int | 否 | 20 | 每页大小 |
 
@@ -274,6 +277,39 @@ curl -X PUT "http://localhost:8080/api/meta/attribute-defs/color?categoryCode=44
 **说明（lovKey 行为）**
 
 - 若 `dataType=enum` 且请求未传 `lovKey`：会优先沿用历史最新版本的 `lovKey`；若历史也没有则生成一个默认 `lovKey`。
+
+---
+
+### 2.3 删除属性（软删）
+
+- 方法：`DELETE`
+- 路径：`/api/meta/attribute-defs/{attrKey}`
+
+**Query 参数**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|---|---|---:|---|---|
+| categoryCode | string | 是 | - | UNSPSC 分类 codeKey |
+| createdBy | string | 否 | system | 兜底操作人（如果没传 header） |
+
+**Header（可选）**
+
+- `X-User: alice`
+
+**curl 示例**
+
+```bash
+curl -X DELETE "http://localhost:8080/api/meta/attribute-defs/color?categoryCode=44120000" \
+  -H "X-User: alice"
+```
+
+**响应**
+
+- `204 No Content`
+
+**说明**
+
+- 删除后该属性不会出现在列表接口中（除非 `includeDeleted=true`）。
 
 ---
 

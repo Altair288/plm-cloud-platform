@@ -22,6 +22,9 @@ import java.util.UUID;
 @Service
 public class MetaAttributeManageService {
 
+    private static final String STATUS_ACTIVE = "active";
+    private static final String STATUS_DELETED = "deleted";
+
     private final MetaCategoryDefRepository categoryDefRepository;
     private final MetaCategoryVersionRepository categoryVersionRepository;
     private final MetaAttributeDefRepository attributeDefRepository;
@@ -115,6 +118,10 @@ public class MetaAttributeManageService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "attribute not found: category=" + categoryCodeKey + ", key=" + key));
 
+        if (isDeleted(def)) {
+            throw new IllegalArgumentException("attribute is deleted: category=" + categoryCodeKey + ", key=" + key);
+        }
+
         MetaAttributeVersion latest = attributeVersionRepository.findLatestByDef(def).orElse(null);
 
         // 如果 body 里传了 key，要求一致（避免误修改）
@@ -158,6 +165,38 @@ public class MetaAttributeManageService {
         attributeVersionRepository.save(v);
 
         return queryService.detail(def.getKey(), true);
+    }
+
+    /**
+     * 软删属性：仅更新 def.status=deleted，不删除历史版本。
+     * - 幂等：重复调用不会报错
+     */
+    @Transactional
+    public void delete(String categoryCodeKey, String attrKey, String operator) {
+        if (isBlank(categoryCodeKey))
+            throw new IllegalArgumentException("categoryCode is required");
+        if (isBlank(attrKey))
+            throw new IllegalArgumentException("attrKey is required");
+
+        MetaCategoryDef categoryDef = categoryDefRepository.findByCodeKey(categoryCodeKey)
+                .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
+
+        String key = attrKey.trim();
+        MetaAttributeDef def = attributeDefRepository.findByCategoryDefAndKey(categoryDef, key)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "attribute not found: category=" + categoryCodeKey + ", key=" + key));
+
+        if (isDeleted(def))
+            return;
+
+        def.setStatus(STATUS_DELETED);
+        attributeDefRepository.save(def);
+    }
+
+    private boolean isDeleted(MetaAttributeDef def) {
+        if (def == null || def.getStatus() == null)
+            return false;
+        return STATUS_DELETED.equalsIgnoreCase(def.getStatus().trim());
     }
 
     private String buildStructureJson(MetaAttributeUpsertRequestDto req, String lovKey) {

@@ -41,6 +41,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         join v.attributeDef d
                         join d.categoryDef c
                         where v.isLatest = true
+                            and (:includeDeleted = true or lower(d.status) <> 'deleted')
                             and (:categoryCodePrefix is null or :categoryCodePrefix = '' or c.codeKey like concat(:categoryCodePrefix, '%'))
                             and (:keyword is null or :keyword = '' or v.displayName like concat('%', :keyword, '%'))
                             and (:dataType is null or :dataType = '' or v.dataType = :dataType)
@@ -54,6 +55,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         join v.attributeDef d
                         join d.categoryDef c
                         where v.isLatest = true
+                            and (:includeDeleted = true or lower(d.status) <> 'deleted')
                             and (:categoryCodePrefix is null or :categoryCodePrefix = '' or c.codeKey like concat(:categoryCodePrefix, '%'))
                             and (:keyword is null or :keyword = '' or v.displayName like concat('%', :keyword, '%'))
                             and (:dataType is null or :dataType = '' or v.dataType = :dataType)
@@ -69,6 +71,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                 @Param("requiredFlag") Boolean requiredFlag,
                 @Param("uniqueFlag") Boolean uniqueFlag,
                 @Param("searchableFlag") Boolean searchableFlag,
+                    @Param("includeDeleted") boolean includeDeleted,
                 Pageable pageable
         );
 }

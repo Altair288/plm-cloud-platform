@@ -31,10 +31,11 @@ public class MetaAttributeQueryController {
             @RequestParam(value = "required", required = false) Boolean required,
             @RequestParam(value = "unique", required = false) Boolean unique,
             @RequestParam(value = "searchable", required = false) Boolean searchable,
+            @RequestParam(value = "includeDeleted", required = false, defaultValue = "false") boolean includeDeleted,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        return queryService.list(categoryCode, keyword, dataType, required, unique, searchable, pageable);
+        return queryService.list(categoryCode, keyword, dataType, required, unique, searchable, includeDeleted, pageable);
     }
 
     // 2. 详情（含最新版本 + 所有历史版本摘要）

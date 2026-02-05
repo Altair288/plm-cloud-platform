@@ -27,8 +27,7 @@ public class MetaAttributeManageController {
         String operator = pickOperator(xUser, createdBy);
         MetaAttributeDefDetailDto dto = manageService.create(categoryCode, req, operator);
         if (!includeValues && dto != null) {
-            // 当前 manageService 返回 detail(includeValues=true)。若前端不需要枚举值可再扩展 manageService
-            // 支持。
+            // 当前 manageService 返回 detail(includeValues=true)。若前端不需要枚举值可再扩展 manageService 支持。
         }
         return ResponseEntity.ok(dto);
     }
@@ -59,6 +58,18 @@ public class MetaAttributeManageController {
             @RequestParam(value = "createdBy", required = false) String createdBy,
             @RequestParam(value = "includeValues", required = false, defaultValue = "true") boolean includeValues) {
         return update(attrKey, categoryCode, req, xUser, createdBy, includeValues);
+    }
+
+    /** 删除属性：软删（将 meta_attribute_def.status 置为 deleted） */
+    @DeleteMapping("/{attrKey}")
+    public ResponseEntity<Void> delete(
+            @PathVariable("attrKey") String attrKey,
+            @RequestParam("categoryCode") String categoryCode,
+            @RequestHeader(value = "X-User", required = false) String xUser,
+            @RequestParam(value = "createdBy", required = false) String createdBy) {
+        String operator = pickOperator(xUser, createdBy);
+        manageService.delete(categoryCode, attrKey, operator);
+        return ResponseEntity.noContent().build();
     }
 
     private String pickOperator(String xUser, String createdBy) {

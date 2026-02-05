@@ -51,6 +51,7 @@ public class MetaAttributeQueryService {
             Boolean required,
             Boolean unique,
             Boolean searchable,
+            boolean includeDeleted,
             Pageable pageable) {
         return attributeVersionRepository.searchLatestListItems(
                 categoryCodePrefix,
@@ -59,6 +60,7 @@ public class MetaAttributeQueryService {
                 required,
                 unique,
                 searchable,
+                includeDeleted,
                 pageable);
     }
 
