@@ -33,8 +33,8 @@ public class MetaCategoryImportService {
     private final JdbcTemplate jdbcTemplate;
 
     public MetaCategoryImportService(MetaCategoryDefRepository defRepository,
-                                     MetaCategoryVersionRepository versionRepository,
-                                     DataSource dataSource) {
+            MetaCategoryVersionRepository versionRepository,
+            DataSource dataSource) {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
         this.jdbcTemplate = new JdbcTemplate(dataSource);
@@ -54,7 +54,9 @@ public class MetaCategoryImportService {
         Map<String, MetaCategoryDef> keyMap = new HashMap<>();
         // 预加载已存在的 code_key
         Set<String> codes = new HashSet<>();
-        for (UnspscImportItem it : items) if (it.getCode() != null) codes.add(it.getCode());
+        for (UnspscImportItem it : items)
+            if (it.getCode() != null)
+                codes.add(it.getCode());
         if (!codes.isEmpty()) {
             defRepository.findByCodeKeyIn(codes).forEach(def -> {
                 codeMap.put(def.getCodeKey(), def);
@@ -64,7 +66,8 @@ public class MetaCategoryImportService {
 
         Map<String, UnspscImportItem> itemByKey = new HashMap<>();
         for (UnspscImportItem it : items) {
-            if (it.getKey() != null) itemByKey.put(it.getKey(), it);
+            if (it.getKey() != null)
+                itemByKey.put(it.getKey(), it);
         }
 
         int createdDefCount = 0;
@@ -84,7 +87,8 @@ public class MetaCategoryImportService {
                     errors.add("缺少 key");
                     continue;
                 }
-                if (processedKeys.contains(itemKey)) continue;
+                if (processedKeys.contains(itemKey))
+                    continue;
                 String code = trim(it.getCode());
                 String title = trim(it.getTitle());
                 if (code == null || title == null) {
@@ -97,7 +101,8 @@ public class MetaCategoryImportService {
                 MetaCategoryDef parent = null;
                 if (it.getParentKey() != null && !it.getParentKey().isBlank()) {
                     parent = keyMap.get(it.getParentKey());
-                    if (parent == null) continue; // 父未就绪，留待下一轮
+                    if (parent == null)
+                        continue; // 父未就绪，留待下一轮
                 }
 
                 // 已存在则跳过插入
@@ -112,14 +117,14 @@ public class MetaCategoryImportService {
                 UUID newId = null;
                 try {
                     newId = jdbcTemplate.queryForObject(
-                            "INSERT INTO plm_meta.meta_category_def(id, code_key, status, created_at, created_by, parent_def_id, external_code) " +
+                            "INSERT INTO plm_meta.meta_category_def(id, code_key, status, created_at, created_by, parent_def_id, external_code) "
+                                    +
                                     "VALUES (gen_random_uuid(), ?, 'active', now(), ?, ?, ?) ON CONFLICT (code_key) DO NOTHING RETURNING id",
                             (rs, rowNum) -> rs.getObject(1, java.util.UUID.class),
                             code,
                             createdBy,
                             parent == null ? null : parent.getId(),
-                            code
-                    );
+                            code);
                 } catch (EmptyResultDataAccessException ignore) {
                     // 冲突：并发或已存在
                 }
@@ -145,7 +150,8 @@ public class MetaCategoryImportService {
                     continue;
                 }
                 // 确保 parent 链路可用于闭包插入（避免懒加载额外查询）
-                if (parent != null) def.setParent(parent);
+                if (parent != null)
+                    def.setParent(parent);
 
                 // 如果父节点存在，确保其 is_leaf = false
                 if (parent != null && Boolean.TRUE.equals(parent.getIsLeaf())) {
@@ -155,14 +161,16 @@ public class MetaCategoryImportService {
 
                 // path/depth/fullPathName
                 String parentPath = parent == null ? null : parent.getPath();
-                if (parent != null && parentPath == null) parentPath = "/" + parent.getCodeKey();
+                if (parent != null && parentPath == null)
+                    parentPath = "/" + parent.getCodeKey();
                 String path = (parent == null ? "/" + code : parentPath + "/" + code);
                 def.setPath(path);
                 def.setDepth((short) (path.split("/").length - 1));
                 def.setIsLeaf(true);
 
                 String parentFullName = parent == null ? null : parent.getFullPathName();
-                if (parent != null && parentFullName == null) parentFullName = parent.getCodeKey();
+                if (parent != null && parentFullName == null)
+                    parentFullName = parent.getCodeKey();
                 def.setFullPathName(parent == null ? title : parentFullName + "/" + title);
                 defRepository.save(def);
 
@@ -211,24 +219,31 @@ public class MetaCategoryImportService {
      */
     @Transactional
     public MetaCategoryImportSummaryDto importUnspscCsv(MultipartFile file, String createdBy) {
-        if (file == null || file.isEmpty()) throw new IllegalArgumentException("上传文件为空");
+        if (file == null || file.isEmpty())
+            throw new IllegalArgumentException("上传文件为空");
         List<UnspscImportItem> items = new ArrayList<>();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             boolean first = true;
             while ((line = reader.readLine()) != null) {
                 String trimmed = line.trim();
-                if (trimmed.isEmpty()) continue;
+                if (trimmed.isEmpty())
+                    continue;
                 List<String> parts = parseCsvLine(trimmed);
                 // 兼容表头：检测首行是否包含非数字/键名
-                if (first && isHeader(parts)) { first = false; continue; }
+                if (first && isHeader(parts)) {
+                    first = false;
+                    continue;
+                }
                 first = false;
                 UnspscImportItem item = new UnspscImportItem();
                 item.setKey(getCsv(parts, 0));
                 item.setParentKey(getCsv(parts, 1));
                 item.setCode(getCsv(parts, 2));
                 item.setTitle(getCsv(parts, 3));
-                if (item.getCode() == null && item.getTitle() == null) continue; // skip invalid row
+                if (item.getCode() == null && item.getTitle() == null)
+                    continue; // skip invalid row
                 items.add(item);
             }
         } catch (IOException e) {
@@ -239,14 +254,19 @@ public class MetaCategoryImportService {
 
     /**
      * 导入 Excel 多级分类到 plm_meta.* 表
-     * 表头约定 8 列: 一级分类编号 | 一级分类名称 | 二级分类编号 | 二级分类名称 | 三级分类编号 | 三级分类名称 | 四级分类编号 | 四级分类名称
+     * 表头约定 8 列: 一级分类编号 | 一级分类名称 | 二级分类编号 | 二级分类名称 | 三级分类编号 | 三级分类名称 | 四级分类编号 |
+     * 四级分类名称
      */
     @Transactional
     public MetaCategoryImportSummaryDto importExcel(MultipartFile file, String createdBy) throws IOException {
-        if (file == null || file.isEmpty()) throw new IllegalArgumentException("上传文件为空");
+        if (file == null || file.isEmpty())
+            throw new IllegalArgumentException("上传文件为空");
         Workbook workbook;
-        try { workbook = WorkbookFactory.create(file.getInputStream()); }
-        catch (EncryptedDocumentException e) { throw new IllegalArgumentException("无法读取加密 Excel", e); }
+        try {
+            workbook = WorkbookFactory.create(file.getInputStream());
+        } catch (EncryptedDocumentException e) {
+            throw new IllegalArgumentException("无法读取加密 Excel", e);
+        }
         Sheet sheet = workbook.getSheetAt(0);
         int lastRow = sheet.getLastRowNum();
 
@@ -262,11 +282,13 @@ public class MetaCategoryImportService {
         Set<String> excelAllCodes = new HashSet<>();
         for (int r = 1; r <= lastRow; r++) {
             Row row = sheet.getRow(r);
-            if (row == null) continue;
+            if (row == null)
+                continue;
             for (int level = 0; level < 4; level++) {
                 int codeIdx = level * 2;
                 String code = getCellString(row.getCell(codeIdx));
-                if (code != null) excelAllCodes.add(code);
+                if (code != null)
+                    excelAllCodes.add(code);
             }
         }
         // 2. 一次性查询已存在的 definitions
@@ -280,23 +302,45 @@ public class MetaCategoryImportService {
 
         for (int r = 1; r <= lastRow; r++) { // 从第二行开始
             Row row = sheet.getRow(r);
-            if (row == null) continue;
+            if (row == null)
+                continue;
             boolean hasValue = false;
-            for (int c = 0; c < 8; c++) { if (getCellString(row.getCell(c)) != null) { hasValue = true; break; } }
-            if (!hasValue) continue;
+            for (int c = 0; c < 8; c++) {
+                if (getCellString(row.getCell(c)) != null) {
+                    hasValue = true;
+                    break;
+                }
+            }
+            if (!hasValue)
+                continue;
 
             for (int level = 0; level < 4; level++) {
                 int codeIdx = level * 2;
                 int nameIdx = codeIdx + 1;
                 String code = getCellString(row.getCell(codeIdx));
                 String name = getCellString(row.getCell(nameIdx));
-                if (code == null && name == null) continue; // 该层未填写
-                if (code == null) { errors.add("第" + (r+1) + "行: 层级" + (level+1) + "缺少编号"); errorCount++; continue; }
-                if (name == null) { errors.add("第" + (r+1) + "行: 层级" + (level+1) + "编号=" + code + " 缺少名称"); errorCount++; continue; }
+                if (code == null && name == null)
+                    continue; // 该层未填写
+                if (code == null) {
+                    errors.add("第" + (r + 1) + "行: 层级" + (level + 1) + "缺少编号");
+                    errorCount++;
+                    continue;
+                }
+                if (name == null) {
+                    errors.add("第" + (r + 1) + "行: 层级" + (level + 1) + "编号=" + code + " 缺少名称");
+                    errorCount++;
+                    continue;
+                }
 
                 // 并发安全: 不做 exists 先查直接尝试插入, 依赖唯一约束 (code_key) ON CONFLICT DO NOTHING
-                if (sessionNewCodes.contains(code)) { skipped++; continue; }
-                if (existingDefMap.containsKey(code)) { skipped++; continue; }
+                if (sessionNewCodes.contains(code)) {
+                    skipped++;
+                    continue;
+                }
+                if (existingDefMap.containsKey(code)) {
+                    skipped++;
+                    continue;
+                }
 
                 // 父节点处理：如果父节点不在缓存，尝试从库查询（避免多次查询仍可并发安全）
                 MetaCategoryDef parentDef = null;
@@ -305,7 +349,8 @@ public class MetaCategoryImportService {
                     parentDef = existingDefMap.get(parentCode);
                     if (parentDef == null) {
                         parentDef = defRepository.findByCodeKey(parentCode).orElse(null);
-                        if (parentDef != null) existingDefMap.put(parentCode, parentDef);
+                        if (parentDef != null)
+                            existingDefMap.put(parentCode, parentDef);
                     }
                 }
 
@@ -313,11 +358,11 @@ public class MetaCategoryImportService {
                 try {
                     // 只插入最小字段，后续再补 path/depth/fullPathName
                     newId = jdbcTemplate.queryForObject(
-                            "INSERT INTO plm_meta.meta_category_def(id, code_key, status, created_at, created_by, parent_def_id) " +
+                            "INSERT INTO plm_meta.meta_category_def(id, code_key, status, created_at, created_by, parent_def_id) "
+                                    +
                                     "VALUES (gen_random_uuid(), ?, 'active', now(), ?, ?) ON CONFLICT (code_key) DO NOTHING RETURNING id",
                             (rs, rowNum) -> rs.getObject(1, java.util.UUID.class),
-                            code, createdBy, parentDef == null ? null : parentDef.getId()
-                    );
+                            code, createdBy, parentDef == null ? null : parentDef.getId());
                 } catch (EmptyResultDataAccessException ignore) {
                     // 冲突 -> 已存在其他并发导入插入
                 }
@@ -326,13 +371,21 @@ public class MetaCategoryImportService {
                 if (newId == null) {
                     // 未插入（并发导致存在），加载现有记录并跳过版本创建（视为已存在）
                     def = defRepository.findByCodeKey(code).orElse(null);
-                    if (def == null) { errors.add("并发: 未能获取已存在定义 code=" + code); errorCount++; continue; }
+                    if (def == null) {
+                        errors.add("并发: 未能获取已存在定义 code=" + code);
+                        errorCount++;
+                        continue;
+                    }
                     skipped++; // 视为跳过
                     continue; // 不重复创建版本 & 闭包
                 } else {
                     // 刚成功插入
                     def = defRepository.findById(newId).orElse(null);
-                    if (def == null) { errors.add("插入后加载失败 code=" + code); errorCount++; continue; }
+                    if (def == null) {
+                        errors.add("插入后加载失败 code=" + code);
+                        errorCount++;
+                        continue;
+                    }
                     existingDefMap.put(code, def);
                 }
 
@@ -386,12 +439,14 @@ public class MetaCategoryImportService {
      */
     private void insertClosureRows(MetaCategoryDef def) {
         // self
-        jdbcTemplate.update("INSERT INTO plm_meta.category_hierarchy(ancestor_def_id, descendant_def_id, distance) VALUES (?,?,0) ON CONFLICT DO NOTHING",
+        jdbcTemplate.update(
+                "INSERT INTO plm_meta.category_hierarchy(ancestor_def_id, descendant_def_id, distance) VALUES (?,?,0) ON CONFLICT DO NOTHING",
                 def.getId(), def.getId());
         int distance = 1;
         MetaCategoryDef cursor = def.getParent();
         while (cursor != null) {
-            jdbcTemplate.update("INSERT INTO plm_meta.category_hierarchy(ancestor_def_id, descendant_def_id, distance) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+            jdbcTemplate.update(
+                    "INSERT INTO plm_meta.category_hierarchy(ancestor_def_id, descendant_def_id, distance) VALUES (?,?,?) ON CONFLICT DO NOTHING",
                     cursor.getId(), def.getId(), distance);
             cursor = cursor.getParent();
             distance++;
@@ -404,14 +459,17 @@ public class MetaCategoryImportService {
     }
 
     private String buildPath(MetaCategoryDef def) {
-        if (def.getParent() == null) return "/" + def.getCodeKey();
+        if (def.getParent() == null)
+            return "/" + def.getCodeKey();
         String parentPath = def.getParent().getPath();
-        if (parentPath == null) parentPath = "/" + def.getParent().getCodeKey();
+        if (parentPath == null)
+            parentPath = "/" + def.getParent().getCodeKey();
         return parentPath + "/" + def.getCodeKey();
     }
 
     private String buildFullPathName(MetaCategoryDef def, String currentDisplayName) {
-        if (def.getParent() == null) return currentDisplayName;
+        if (def.getParent() == null)
+            return currentDisplayName;
         // 找父的最新版本显示名
         String parentName = versionRepository.findLatestByDef(def.getParent())
                 .map(MetaCategoryVersion::getDisplayName)
@@ -420,7 +478,8 @@ public class MetaCategoryImportService {
     }
 
     private String getCellString(Cell cell) {
-        if (cell == null) return null;
+        if (cell == null)
+            return null;
         return switch (cell.getCellType()) {
             case STRING -> trim(cell.getStringCellValue());
             case NUMERIC -> {
@@ -432,18 +491,27 @@ public class MetaCategoryImportService {
             default -> null;
         };
     }
-    private String trim(String s) { if (s == null) return null; String t = s.trim(); return t.isEmpty()? null : t; }
+
+    private String trim(String s) {
+        if (s == null)
+            return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
+    }
 
     private String getCsv(List<String> parts, int idx) {
-        if (parts == null || idx >= parts.size()) return null;
+        if (parts == null || idx >= parts.size())
+            return null;
         String v = parts.get(idx);
-        if (v == null) return null;
+        if (v == null)
+            return null;
         v = v.trim();
         return v.isEmpty() ? null : v;
     }
 
     private boolean isHeader(List<String> parts) {
-        if (parts == null || parts.size() < 3) return false;
+        if (parts == null || parts.size() < 3)
+            return false;
         String joined = String.join(" ", parts).toLowerCase();
         return joined.contains("key") || joined.contains("键") || joined.contains("code") || joined.contains("编码");
     }
@@ -453,7 +521,8 @@ public class MetaCategoryImportService {
      */
     private List<String> parseCsvLine(String line) {
         List<String> out = new ArrayList<>();
-        if (line == null) return out;
+        if (line == null)
+            return out;
         StringBuilder cur = new StringBuilder();
         boolean inQuotes = false;
         for (int i = 0; i < line.length(); i++) {

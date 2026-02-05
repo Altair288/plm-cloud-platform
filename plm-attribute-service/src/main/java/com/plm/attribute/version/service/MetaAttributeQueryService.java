@@ -175,7 +175,8 @@ public class MetaAttributeQueryService {
     }
 
     private Boolean bool(JsonNode node, String field) {
-        if (node == null || !node.has(field) || node.get(field).isNull()) return null;
+        if (node == null || !node.has(field) || node.get(field).isNull())
+            return null;
         return node.get(field).asBoolean();
     }
 
@@ -195,14 +196,16 @@ public class MetaAttributeQueryService {
 
     private List<MetaAttributeDefDetailDto.LovValueItem> parseLovValues(String json) {
         List<MetaAttributeDefDetailDto.LovValueItem> list = new ArrayList<>();
-        if (json == null) return list;
+        if (json == null)
+            return list;
         try {
             JsonNode node = objectMapper.readTree(json);
             JsonNode valuesNode = node.get("values");
             if (valuesNode != null && valuesNode.isArray()) {
                 for (JsonNode v : valuesNode) {
                     MetaAttributeDefDetailDto.LovValueItem item = new MetaAttributeDefDetailDto.LovValueItem();
-                    if (v.has("code")) item.setCode(v.get("code").asText());
+                    if (v.has("code"))
+                        item.setCode(v.get("code").asText());
                     // 兼容两种字段命名: value/name, sort/order, disabled/active
                     if (v.has("value")) {
                         item.setValue(v.get("value").asText());

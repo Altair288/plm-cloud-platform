@@ -45,13 +45,13 @@ public class MetaAttributeImportService {
     private EntityManager entityManager;
 
     public MetaAttributeImportService(MetaCategoryDefRepository categoryDefRepository,
-                                      MetaCategoryVersionRepository categoryVersionRepository,
-                                      MetaAttributeDefRepository attributeDefRepository,
-                                      MetaAttributeVersionRepository attributeVersionRepository,
-                                      MetaLovDefRepository lovDefRepository,
-                                      MetaLovVersionRepository lovVersionRepository,
-                                      CodeRuleGenerator codeRuleGenerator,
-                                      DataSource dataSource) {
+            MetaCategoryVersionRepository categoryVersionRepository,
+            MetaAttributeDefRepository attributeDefRepository,
+            MetaAttributeVersionRepository attributeVersionRepository,
+            MetaLovDefRepository lovDefRepository,
+            MetaLovVersionRepository lovVersionRepository,
+            CodeRuleGenerator codeRuleGenerator,
+            DataSource dataSource) {
         this.categoryDefRepository = categoryDefRepository;
         this.categoryVersionRepository = categoryVersionRepository;
         this.attributeDefRepository = attributeDefRepository;
@@ -68,7 +68,8 @@ public class MetaAttributeImportService {
      */
     @Transactional
     public AttributeImportSummaryDto importExcel(MultipartFile file, String createdBy) throws IOException {
-        if (file == null || file.isEmpty()) throw new IllegalArgumentException("上传文件为空");
+        if (file == null || file.isEmpty())
+            throw new IllegalArgumentException("上传文件为空");
         Workbook workbook = WorkbookFactory.create(file.getInputStream());
         Sheet sheet = workbook.getSheetAt(0);
         int lastRow = sheet.getLastRowNum();
@@ -84,34 +85,53 @@ public class MetaAttributeImportService {
         int skipped = 0;
 
         // 临时结构: (categoryCode, attributeName) -> 枚举值集合 & meta
-    Map<String, AttrGroup> groups = new LinkedHashMap<>();
+        Map<String, AttrGroup> groups = new LinkedHashMap<>();
 
         for (int r = 1; r <= lastRow; r++) {
             Row row = sheet.getRow(r);
-            if (row == null) continue;
-            String categoryCode = cell(row,0);
+            if (row == null)
+                continue;
+            String categoryCode = cell(row, 0);
             // 分类名称列暂不使用
-            String attrName = cell(row,2);
-            String dataType = cell(row,3);
-            String unit = cell(row,4);
-            if (isBlank(categoryCode) && isBlank(attrName)) continue; // 空行
-            if (isBlank(categoryCode)) { errors.add(new AttributeImportErrorDto(r+1, "缺少分类编号")); continue; }
-            if (isBlank(attrName)) { errors.add(new AttributeImportErrorDto(r+1, "缺少属性名称")); continue; }
-            if (isBlank(dataType) || !"enum".equalsIgnoreCase(dataType)) { errors.add(new AttributeImportErrorDto(r+1, "仅支持属性类型=enum")); continue; }
+            String attrName = cell(row, 2);
+            String dataType = cell(row, 3);
+            String unit = cell(row, 4);
+            if (isBlank(categoryCode) && isBlank(attrName))
+                continue; // 空行
+            if (isBlank(categoryCode)) {
+                errors.add(new AttributeImportErrorDto(r + 1, "缺少分类编号"));
+                continue;
+            }
+            if (isBlank(attrName)) {
+                errors.add(new AttributeImportErrorDto(r + 1, "缺少属性名称"));
+                continue;
+            }
+            if (isBlank(dataType) || !"enum".equalsIgnoreCase(dataType)) {
+                errors.add(new AttributeImportErrorDto(r + 1, "仅支持属性类型=enum"));
+                continue;
+            }
             String key = categoryCode + "||" + attrName;
-            AttrGroup g = groups.computeIfAbsent(key, k -> { AttrGroup ag = new AttrGroup(); ag.categoryCode=categoryCode; ag.attrName=attrName; ag.unit=unit; return ag;});
-            g.rowIndices.add(r+1); // 保存 Excel 行号(1-based 展示)
+            AttrGroup g = groups.computeIfAbsent(key, k -> {
+                AttrGroup ag = new AttrGroup();
+                ag.categoryCode = categoryCode;
+                ag.attrName = attrName;
+                ag.unit = unit;
+                return ag;
+            });
+            g.rowIndices.add(r + 1); // 保存 Excel 行号(1-based 展示)
             // 枚举列从第5索引(枚举值1列位置=5)开始
             for (int c = 5; c < row.getLastCellNum(); c++) {
-                String v = cell(row,c);
-                if (!isBlank(v)) g.values.add(v.trim());
+                String v = cell(row, c);
+                if (!isBlank(v))
+                    g.values.add(v.trim());
             }
         }
 
         // 预加载分类
         Set<String> allCatCodes = new HashSet<>();
         groups.values().forEach(g -> allCatCodes.add(g.categoryCode));
-        allCatCodes.forEach(code -> categoryDefRepository.findByCodeKey(code).ifPresent(d -> categoryCache.put(code, d)));
+        allCatCodes
+                .forEach(code -> categoryDefRepository.findByCodeKey(code).ifPresent(d -> categoryCache.put(code, d)));
 
         // 预加载分类下已有属性 -> (categoryDefId -> (attrKey->MetaAttributeDef))
         Map<UUID, Map<String, MetaAttributeDef>> attrCache = new HashMap<>();
@@ -119,8 +139,14 @@ public class MetaAttributeImportService {
         int batchCount = 0;
         final int FLUSH_THRESHOLD = 200; // 可调
         for (AttrGroup g : groups.values()) {
-            if (!categoryCache.containsKey(g.categoryCode)) { errors.add(new AttributeImportErrorDto(-1, "分类不存在:"+g.categoryCode)); continue; }
-            if (g.values.isEmpty()) { errors.add(new AttributeImportErrorDto(-1, "属性无枚举值:"+g.attrName)); continue; }
+            if (!categoryCache.containsKey(g.categoryCode)) {
+                errors.add(new AttributeImportErrorDto(-1, "分类不存在:" + g.categoryCode));
+                continue;
+            }
+            if (g.values.isEmpty()) {
+                errors.add(new AttributeImportErrorDto(-1, "属性无枚举值:" + g.attrName));
+                continue;
+            }
             MetaCategoryDef catDef = categoryCache.get(g.categoryCode);
 
             // 全局序列生成属性编码：ATTR_000001, ATTR_000002 ... (pattern ATTR_{SEQ})
@@ -131,7 +157,8 @@ public class MetaAttributeImportService {
             boolean newlyCreatedAttr = false;
             if (attrDef == null) {
                 UUID newId = UUID.randomUUID();
-                int inserted = attributeDefRepository.insertIgnore(newId, catDef.getId(), attrKey, true, attrKey, createdBy);
+                int inserted = attributeDefRepository.insertIgnore(newId, catDef.getId(), attrKey, true, attrKey,
+                        createdBy);
                 if (inserted > 0) {
                     // 查询持久化实体，保证关系映射使用托管对象
                     attrDef = attributeDefRepository.findById(newId).orElseThrow();
@@ -142,22 +169,31 @@ public class MetaAttributeImportService {
                     attrDef = findAttributeDef(catDef, attrKey);
                 }
                 catAttrMap.put(attrKey, attrDef);
-                log.debug("[ATTR-DEF] categoryCode={} attrKey={} inserted={} id={}", g.categoryCode, attrKey, inserted>0, attrDef!=null?attrDef.getId():null);
+                log.debug("[ATTR-DEF] categoryCode={} attrKey={} inserted={} id={}", g.categoryCode, attrKey,
+                        inserted > 0, attrDef != null ? attrDef.getId() : null);
             }
 
-        // 最新分类版本
-        MetaCategoryVersion catVer = categoryVersionRepository.findLatestByDef(catDef).orElse(null);
-        if (catVer == null) { errors.add(new AttributeImportErrorDto(-1, "分类缺少版本:"+g.categoryCode)); continue; }
+            // 最新分类版本
+            MetaCategoryVersion catVer = categoryVersionRepository.findLatestByDef(catDef).orElse(null);
+            if (catVer == null) {
+                errors.add(new AttributeImportErrorDto(-1, "分类缺少版本:" + g.categoryCode));
+                continue;
+            }
 
-        // LOV key 简化：<属性编码>_LOV (由 V10 规则 pattern 支持 {ATTRIBUTE_CODE}_LOV 或直接拼接)
-        String lovKey = codeRuleGenerator.generate("LOV", Map.of("ATTRIBUTE_CODE", attrKey));
+            // LOV key 简化：<属性编码>_LOV (由 V10 规则 pattern 支持 {ATTRIBUTE_CODE}_LOV 或直接拼接)
+            String lovKey = codeRuleGenerator.generate("LOV", Map.of("ATTRIBUTE_CODE", attrKey));
 
-        // 构造 structure_json (简化)
-        String structureJson = buildAttributeJson(g, attrDef, lovKey);
+            // 构造 structure_json (简化)
+            String structureJson = buildAttributeJson(g, attrDef, lovKey);
             String structHash = AttributeLovImportUtils.jsonHash(structureJson);
-            MetaAttributeVersion latestAttrVer = newlyCreatedAttr ? null : attributeVersionRepository.findLatestByDef(attrDef).orElse(null);
-            boolean needNewAttrVersion = newlyCreatedAttr || latestAttrVer == null || (structHash != null && !structHash.equals(latestAttrVer.getHash()));
-            log.debug("[ATTR-VERSION-CHECK] attrKey={} newlyCreatedAttr={} latestExists={} needNew={} latestVersionNo={}", attrKey, newlyCreatedAttr, latestAttrVer!=null, needNewAttrVersion, latestAttrVer!=null?latestAttrVer.getVersionNo():null);
+            MetaAttributeVersion latestAttrVer = newlyCreatedAttr ? null
+                    : attributeVersionRepository.findLatestByDef(attrDef).orElse(null);
+            boolean needNewAttrVersion = newlyCreatedAttr || latestAttrVer == null
+                    || (structHash != null && !structHash.equals(latestAttrVer.getHash()));
+            log.debug(
+                    "[ATTR-VERSION-CHECK] attrKey={} newlyCreatedAttr={} latestExists={} needNew={} latestVersionNo={}",
+                    attrKey, newlyCreatedAttr, latestAttrVer != null, needNewAttrVersion,
+                    latestAttrVer != null ? latestAttrVer.getVersionNo() : null);
             MetaAttributeVersion attrVer;
             if (needNewAttrVersion) {
                 attrVer = new MetaAttributeVersion();
@@ -175,14 +211,16 @@ public class MetaAttributeImportService {
                 }
                 attributeVersionRepository.save(attrVer);
                 if (attrDef != null) {
-                    log.debug("[ATTR-VERSION-CREATE] attrDefId={} versionNo={} hash={}", attrDef.getId(), attrVer.getVersionNo(), structHash);
+                    log.debug("[ATTR-VERSION-CREATE] attrDefId={} versionNo={} hash={}", attrDef.getId(),
+                            attrVer.getVersionNo(), structHash);
                 }
                 createdAttrVers++;
             } else {
                 attrVer = latestAttrVer;
                 skipped++;
                 if (attrDef != null) {
-                    log.debug("[ATTR-VERSION-SKIP] attrDefId={} versionNo={} hash={} (unchanged)", attrDef.getId(), attrVer!=null?attrVer.getVersionNo():null, structHash);
+                    log.debug("[ATTR-VERSION-SKIP] attrDefId={} versionNo={} hash={} (unchanged)", attrDef.getId(),
+                            attrVer != null ? attrVer.getVersionNo() : null, structHash);
                 }
             }
 
@@ -191,7 +229,8 @@ public class MetaAttributeImportService {
             boolean newlyCreatedLov = false;
             if (lovDef == null) {
                 if (attrDef == null) {
-                    errors.add(new AttributeImportErrorDto(g.rowIndices.isEmpty()? -1 : g.rowIndices.get(0), "属性定义缺失，无法创建LOV:"+attrKey));
+                    errors.add(new AttributeImportErrorDto(g.rowIndices.isEmpty() ? -1 : g.rowIndices.get(0),
+                            "属性定义缺失，无法创建LOV:" + attrKey));
                     continue; // 安全提前
                 }
                 UUID lovId = UUID.randomUUID();
@@ -203,13 +242,18 @@ public class MetaAttributeImportService {
                 } else {
                     lovDef = lovDefRepository.findByKey(lovKey).orElse(null);
                 }
-                log.debug("[LOV-DEF] categoryCode={} attrKey={} lovKey={} inserted={} lovId={}", g.categoryCode, attrKey, lovKey, insLov>0, lovDef!=null?lovDef.getId():null);
+                log.debug("[LOV-DEF] categoryCode={} attrKey={} lovKey={} inserted={} lovId={}", g.categoryCode,
+                        attrKey, lovKey, insLov > 0, lovDef != null ? lovDef.getId() : null);
             }
             String valueJson = buildLovJson(g.values);
             String valueHash = AttributeLovImportUtils.jsonHash(valueJson);
-            MetaLovVersion latestLovVer = newlyCreatedLov ? null : lovVersionRepository.findLatestByDef(lovDef).orElse(null);
-            boolean needNewLovVersion = newlyCreatedLov || latestLovVer == null || (valueHash != null && !valueHash.equals(latestLovVer.getHash()));
-            log.debug("[LOV-VERSION-CHECK] lovKey={} newlyCreatedLov={} latestExists={} needNew={} latestVersionNo={}", lovKey, newlyCreatedLov, latestLovVer!=null, needNewLovVersion, latestLovVer!=null?latestLovVer.getVersionNo():null);
+            MetaLovVersion latestLovVer = newlyCreatedLov ? null
+                    : lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+            boolean needNewLovVersion = newlyCreatedLov || latestLovVer == null
+                    || (valueHash != null && !valueHash.equals(latestLovVer.getHash()));
+            log.debug("[LOV-VERSION-CHECK] lovKey={} newlyCreatedLov={} latestExists={} needNew={} latestVersionNo={}",
+                    lovKey, newlyCreatedLov, latestLovVer != null, needNewLovVersion,
+                    latestLovVer != null ? latestLovVer.getVersionNo() : null);
             if (needNewLovVersion) {
                 MetaLovVersion lv = new MetaLovVersion();
                 lv.setLovDef(lovDef);
@@ -225,13 +269,15 @@ public class MetaAttributeImportService {
                 }
                 lovVersionRepository.save(lv);
                 if (lovDef != null) {
-                    log.debug("[LOV-VERSION-CREATE] lovDefId={} versionNo={} hash={}", lovDef.getId(), lv.getVersionNo(), valueHash);
+                    log.debug("[LOV-VERSION-CREATE] lovDefId={} versionNo={} hash={}", lovDef.getId(),
+                            lv.getVersionNo(), valueHash);
                 }
                 createdLovVers++;
             } else {
                 skipped++;
                 if (lovDef != null) {
-                    log.debug("[LOV-VERSION-SKIP] lovDefId={} versionNo={} hash={} (unchanged)", lovDef.getId(), latestLovVer!=null?latestLovVer.getVersionNo():null, valueHash);
+                    log.debug("[LOV-VERSION-SKIP] lovDefId={} versionNo={} hash={} (unchanged)", lovDef.getId(),
+                            latestLovVer != null ? latestLovVer.getVersionNo() : null, valueHash);
                 }
             }
 
@@ -256,17 +302,18 @@ public class MetaAttributeImportService {
 
     private MetaAttributeDef findAttributeDef(MetaCategoryDef catDef, String attrKey) {
         // 精准查询，避免加载全集 (后续可加 repository 方法 findByCategoryDefAndKey)
-        List<MetaAttributeDef> defs = attributeDefRepository.findByCategoryDefAndKeyIn(catDef, Collections.singleton(attrKey));
-        return defs.isEmpty()? null : defs.get(0);
+        List<MetaAttributeDef> defs = attributeDefRepository.findByCategoryDefAndKeyIn(catDef,
+                Collections.singleton(attrKey));
+        return defs.isEmpty() ? null : defs.get(0);
     }
 
     private String buildAttributeJson(AttrGroup g, MetaAttributeDef def, String lovKey) {
-        String unit = g.unit == null? "" : g.unit;
+        String unit = g.unit == null ? "" : g.unit;
         return "{" +
-                "\"displayName\":\""+escape(g.attrName)+"\"," +
+                "\"displayName\":\"" + escape(g.attrName) + "\"," +
                 "\"dataType\":\"enum\"," +
-                "\"unit\":\""+escape(unit)+"\"," +
-                "\"lovKey\":\""+escape(lovKey)+"\"" +
+                "\"unit\":\"" + escape(unit) + "\"," +
+                "\"lovKey\":\"" + escape(lovKey) + "\"" +
                 "}";
     }
 
@@ -276,12 +323,13 @@ public class MetaAttributeImportService {
         for (int i = 0; i < values.size(); i++) {
             String v = values.get(i);
             BigDecimal num = AttributeLovImportUtils.parseNumeric(v);
-            if (i>0) sb.append(',');
+            if (i > 0)
+                sb.append(',');
             sb.append('{')
-              .append("\"code\":\"").append(escape(v)).append("\",")
-              .append("\"name\":\"").append(escape(v)).append("\",")
-              .append("\"order\":").append(i+1).append(',')
-              .append("\"active\":true");
+                    .append("\"code\":\"").append(escape(v)).append("\",")
+                    .append("\"name\":\"").append(escape(v)).append("\",")
+                    .append("\"order\":").append(i + 1).append(',')
+                    .append("\"active\":true");
             if (num != null) {
                 sb.append(',').append("\"numericValue\":").append(num.toPlainString());
             }
@@ -293,15 +341,25 @@ public class MetaAttributeImportService {
 
     private String cell(Row row, int idx) {
         Cell c = row.getCell(idx, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
-        if (c == null) return null;
+        if (c == null)
+            return null;
         return switch (c.getCellType()) {
             case STRING -> trim(c.getStringCellValue());
-            case NUMERIC -> trim(String.valueOf(c.getNumericCellValue()).replaceAll("\\.0$",""));
+            case NUMERIC -> trim(String.valueOf(c.getNumericCellValue()).replaceAll("\\.0$", ""));
             case BOOLEAN -> String.valueOf(c.getBooleanCellValue());
             default -> null;
         };
     }
-    private boolean isBlank(String s) { return s == null || s.trim().isEmpty(); }
-    private String trim(String s){ return s==null?null:(s.trim().isEmpty()?null:s.trim()); }
-    private String escape(String s){ return s==null?"": s.replace("\\","\\\\").replace("\"","\\\""); }
+
+    private boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
+    }
+
+    private String trim(String s) {
+        return s == null ? null : (s.trim().isEmpty() ? null : s.trim());
+    }
+
+    private String escape(String s) {
+        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
 }

@@ -15,7 +15,7 @@ public class MetaCategoryHierarchyService {
     private final CategoryHierarchyRepository hierarchyRepository;
 
     public MetaCategoryHierarchyService(MetaCategoryDefRepository defRepository,
-                                        CategoryHierarchyRepository hierarchyRepository) {
+            CategoryHierarchyRepository hierarchyRepository) {
         this.defRepository = defRepository;
         this.hierarchyRepository = hierarchyRepository;
     }
@@ -24,16 +24,18 @@ public class MetaCategoryHierarchyService {
      * 重建闭包表：清空现有 category_hierarchy，重新计算所有 ancestor->descendant 关系。
      */
     @Transactional
-    public Map<String,Object> rebuildClosure() {
+    public Map<String, Object> rebuildClosure() {
         hierarchyRepository.deleteAll();
         List<MetaCategoryDef> all = defRepository.findAll();
         // 为了确保父节点先处理，可按 depth 升序（如果 depth 为空则按 path 长度或 codeKey 简单排序）
-    all.sort(Comparator.comparing((MetaCategoryDef def) -> Optional.ofNullable(def.getDepth()).orElse((short)0))
-        .thenComparing(MetaCategoryDef::getCodeKey));
+        all.sort(Comparator.comparing((MetaCategoryDef def) -> Optional.ofNullable(def.getDepth()).orElse((short) 0))
+                .thenComparing(MetaCategoryDef::getCodeKey));
 
-    Map<UUID, List<UUID>> ancestorsCache = new HashMap<>(all.size());
-    Map<UUID, MetaCategoryDef> idToDefMap = new HashMap<>(all.size());
-    for (MetaCategoryDef d : all) { idToDefMap.put(d.getId(), d); }
+        Map<UUID, List<UUID>> ancestorsCache = new HashMap<>(all.size());
+        Map<UUID, MetaCategoryDef> idToDefMap = new HashMap<>(all.size());
+        for (MetaCategoryDef d : all) {
+            idToDefMap.put(d.getId(), d);
+        }
         List<CategoryHierarchy> buffer = new ArrayList<>(all.size() * 3);
 
         for (MetaCategoryDef def : all) {
@@ -54,15 +56,17 @@ public class MetaCategoryHierarchyService {
             CategoryHierarchy self = new CategoryHierarchy();
             self.setAncestorDef(def);
             self.setDescendantDef(def);
-            self.setDistance((short)0);
+            self.setDistance((short) 0);
             buffer.add(self);
 
             // 祖先闭包行（距离 = 索引+1）
             short distance = 1;
             for (UUID ancId : ancestors) {
                 // 使用缓存映射避免每次 stream 扫描
-                MetaCategoryDef ancDef = idToDefMap.computeIfAbsent(ancId, k -> all.stream().filter(d -> d.getId().equals(k)).findFirst().orElse(null));
-                if (ancDef == null) continue; // 防御：缺失父链
+                MetaCategoryDef ancDef = idToDefMap.computeIfAbsent(ancId,
+                        k -> all.stream().filter(d -> d.getId().equals(k)).findFirst().orElse(null));
+                if (ancDef == null)
+                    continue; // 防御：缺失父链
                 CategoryHierarchy ch = new CategoryHierarchy();
                 ch.setAncestorDef(ancDef);
                 ch.setDescendantDef(def);
@@ -73,7 +77,7 @@ public class MetaCategoryHierarchyService {
         }
 
         hierarchyRepository.saveAll(buffer); // 单次批量写入
-        Map<String,Object> result = new HashMap<>();
+        Map<String, Object> result = new HashMap<>();
         result.put("definitions", all.size());
         result.put("closureRows", buffer.size());
         result.put("cacheEntries", ancestorsCache.size());

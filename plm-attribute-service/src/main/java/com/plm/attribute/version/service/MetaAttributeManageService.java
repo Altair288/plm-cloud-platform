@@ -30,10 +30,10 @@ public class MetaAttributeManageService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public MetaAttributeManageService(MetaCategoryDefRepository categoryDefRepository,
-                                     MetaCategoryVersionRepository categoryVersionRepository,
-                                     MetaAttributeDefRepository attributeDefRepository,
-                                     MetaAttributeVersionRepository attributeVersionRepository,
-                                     MetaAttributeQueryService queryService) {
+            MetaCategoryVersionRepository categoryVersionRepository,
+            MetaAttributeDefRepository attributeDefRepository,
+            MetaAttributeVersionRepository attributeVersionRepository,
+            MetaAttributeQueryService queryService) {
         this.categoryDefRepository = categoryDefRepository;
         this.categoryVersionRepository = categoryVersionRepository;
         this.attributeDefRepository = attributeDefRepository;
@@ -42,12 +42,18 @@ public class MetaAttributeManageService {
     }
 
     @Transactional
-    public MetaAttributeDefDetailDto create(String categoryCodeKey, MetaAttributeUpsertRequestDto req, String operator) {
-        if (req == null) throw new IllegalArgumentException("request body is required");
-        if (isBlank(categoryCodeKey)) throw new IllegalArgumentException("categoryCode is required");
-        if (isBlank(req.getKey())) throw new IllegalArgumentException("key is required");
-        if (isBlank(req.getDisplayName())) throw new IllegalArgumentException("displayName is required");
-        if (isBlank(req.getDataType())) throw new IllegalArgumentException("dataType is required");
+    public MetaAttributeDefDetailDto create(String categoryCodeKey, MetaAttributeUpsertRequestDto req,
+            String operator) {
+        if (req == null)
+            throw new IllegalArgumentException("request body is required");
+        if (isBlank(categoryCodeKey))
+            throw new IllegalArgumentException("categoryCode is required");
+        if (isBlank(req.getKey()))
+            throw new IllegalArgumentException("key is required");
+        if (isBlank(req.getDisplayName()))
+            throw new IllegalArgumentException("displayName is required");
+        if (isBlank(req.getDataType()))
+            throw new IllegalArgumentException("dataType is required");
 
         MetaCategoryDef categoryDef = categoryDefRepository.findByCodeKey(categoryCodeKey)
                 .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
@@ -61,7 +67,8 @@ public class MetaAttributeManageService {
         // 1) create def (unique per category)
         MetaAttributeDef def = attributeDefRepository.findByCategoryDefAndKey(categoryDef, key).orElse(null);
         if (def != null) {
-            throw new IllegalArgumentException("attribute already exists: category=" + categoryCodeKey + ", key=" + key);
+            throw new IllegalArgumentException(
+                    "attribute already exists: category=" + categoryCodeKey + ", key=" + key);
         }
 
         UUID id = UUID.randomUUID();
@@ -89,10 +96,14 @@ public class MetaAttributeManageService {
     }
 
     @Transactional
-    public MetaAttributeDefDetailDto update(String categoryCodeKey, String attrKey, MetaAttributeUpsertRequestDto req, String operator) {
-        if (req == null) throw new IllegalArgumentException("request body is required");
-        if (isBlank(categoryCodeKey)) throw new IllegalArgumentException("categoryCode is required");
-        if (isBlank(attrKey)) throw new IllegalArgumentException("attrKey is required");
+    public MetaAttributeDefDetailDto update(String categoryCodeKey, String attrKey, MetaAttributeUpsertRequestDto req,
+            String operator) {
+        if (req == null)
+            throw new IllegalArgumentException("request body is required");
+        if (isBlank(categoryCodeKey))
+            throw new IllegalArgumentException("categoryCode is required");
+        if (isBlank(attrKey))
+            throw new IllegalArgumentException("attrKey is required");
 
         MetaCategoryDef categoryDef = categoryDefRepository.findByCodeKey(categoryCodeKey)
                 .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
@@ -101,7 +112,8 @@ public class MetaAttributeManageService {
 
         String key = attrKey.trim();
         MetaAttributeDef def = attributeDefRepository.findByCategoryDefAndKey(categoryDef, key)
-                .orElseThrow(() -> new IllegalArgumentException("attribute not found: category=" + categoryCodeKey + ", key=" + key));
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "attribute not found: category=" + categoryCodeKey + ", key=" + key));
 
         MetaAttributeVersion latest = attributeVersionRepository.findLatestByDef(def).orElse(null);
 
@@ -109,8 +121,10 @@ public class MetaAttributeManageService {
         if (!isBlank(req.getKey()) && !Objects.equals(req.getKey().trim(), key)) {
             throw new IllegalArgumentException("key mismatch: pathKey=" + key + ", bodyKey=" + req.getKey());
         }
-        if (isBlank(req.getDisplayName())) throw new IllegalArgumentException("displayName is required");
-        if (isBlank(req.getDataType())) throw new IllegalArgumentException("dataType is required");
+        if (isBlank(req.getDisplayName()))
+            throw new IllegalArgumentException("displayName is required");
+        if (isBlank(req.getDataType()))
+            throw new IllegalArgumentException("dataType is required");
 
         String lovKey = resolveLovKeyForUpdate(categoryCodeKey, req, latest);
         boolean hasLov = !isBlank(lovKey) || isEnum(req);
@@ -153,39 +167,56 @@ public class MetaAttributeManageService {
         node.put("dataType", req.getDataType().trim());
 
         String description = trimToNull(req.getDescription());
-        if (description != null) node.put("description", description);
+        if (description != null)
+            node.put("description", description);
         String unit = trimToNull(req.getUnit());
-        if (unit != null) node.put("unit", unit);
+        if (unit != null)
+            node.put("unit", unit);
         String defaultValue = trimToNull(req.getDefaultValue());
-        if (defaultValue != null) node.put("defaultValue", defaultValue);
+        if (defaultValue != null)
+            node.put("defaultValue", defaultValue);
 
-        if (req.getRequired() != null) node.put("required", req.getRequired());
-        if (req.getUnique() != null) node.put("unique", req.getUnique());
-        if (req.getHidden() != null) node.put("hidden", req.getHidden());
-        if (req.getReadOnly() != null) node.put("readOnly", req.getReadOnly());
-        if (req.getSearchable() != null) node.put("searchable", req.getSearchable());
+        if (req.getRequired() != null)
+            node.put("required", req.getRequired());
+        if (req.getUnique() != null)
+            node.put("unique", req.getUnique());
+        if (req.getHidden() != null)
+            node.put("hidden", req.getHidden());
+        if (req.getReadOnly() != null)
+            node.put("readOnly", req.getReadOnly());
+        if (req.getSearchable() != null)
+            node.put("searchable", req.getSearchable());
 
-        if (!isBlank(lovKey)) node.put("lovKey", lovKey.trim());
+        if (!isBlank(lovKey))
+            node.put("lovKey", lovKey.trim());
 
         return node.toString();
     }
 
     private String resolveLovKeyForCreate(String categoryCodeKey, MetaAttributeUpsertRequestDto req) {
-        if (req == null) return null;
-        if (!isBlank(req.getLovKey())) return req.getLovKey().trim();
-        if (!isEnum(req)) return null;
+        if (req == null)
+            return null;
+        if (!isBlank(req.getLovKey()))
+            return req.getLovKey().trim();
+        if (!isEnum(req))
+            return null;
         // enum 且未显式传 lovKey：生成一个可重复的 key，便于前端不传也可用
         return AttributeLovImportUtils.generateLovKey(categoryCodeKey, req.getDisplayName());
     }
 
-    private String resolveLovKeyForUpdate(String categoryCodeKey, MetaAttributeUpsertRequestDto req, MetaAttributeVersion latest) {
-        if (req == null) return null;
-        if (!isBlank(req.getLovKey())) return req.getLovKey().trim();
+    private String resolveLovKeyForUpdate(String categoryCodeKey, MetaAttributeUpsertRequestDto req,
+            MetaAttributeVersion latest) {
+        if (req == null)
+            return null;
+        if (!isBlank(req.getLovKey()))
+            return req.getLovKey().trim();
 
         // 若历史已有 lovKey 且本次未显式修改，优先沿用，避免“改名导致 lovKey 变化”
-        if (latest != null && !isBlank(latest.getLovKey())) return latest.getLovKey().trim();
+        if (latest != null && !isBlank(latest.getLovKey()))
+            return latest.getLovKey().trim();
 
-        if (!isEnum(req)) return null;
+        if (!isEnum(req))
+            return null;
         return AttributeLovImportUtils.generateLovKey(categoryCodeKey, req.getDisplayName());
     }
 
@@ -198,7 +229,8 @@ public class MetaAttributeManageService {
     }
 
     private String trimToNull(String s) {
-        if (s == null) return null;
+        if (s == null)
+            return null;
         String t = s.trim();
         return t.isEmpty() ? null : t;
     }
