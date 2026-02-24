@@ -1,6 +1,7 @@
 package com.plm.common.api.dto;
 
 import lombok.Data;
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -35,6 +36,13 @@ public class MetaAttributeDefDetailDto {
         private Boolean searchable;
         private String lovKey;
 
+        private BigDecimal minValue;
+        private BigDecimal maxValue;
+        private BigDecimal step;
+        private Integer precision;
+        private String trueLabel;
+        private String falseLabel;
+
         private String createdBy;
         private OffsetDateTime createdAt;
     }
@@ -43,6 +51,7 @@ public class MetaAttributeDefDetailDto {
     public static class LovValueItem {
         private String code; // 枚举值编码（如果有）
         private String value; // 展示值
+        private String label; // 枚举值标签
         private Integer sort; // 排序
         private Boolean disabled; // 是否禁用
     }

@@ -219,7 +219,62 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
   "hidden": false,
   "readOnly": false,
   "searchable": true,
-  "lovKey": null
+  "lovKey": null,
+  "minValue": null,
+  "maxValue": null,
+  "step": null,
+  "precision": null,
+  "trueLabel": null,
+  "falseLabel": null,
+  "lovValues": []
+}
+```
+
+**值配置约定（新增）**
+
+- 数字型（`dataType=number`）：支持 `minValue/maxValue/step/precision`
+- 布尔型（`dataType=boolean`）：支持 `trueLabel/falseLabel`
+- 枚举型（`dataType=enum`）：支持 `lovValues[]`，每项可配置 `code/name/label`
+
+**示例：数字型配置**
+
+```json
+{
+  "key": "length",
+  "displayName": "长度",
+  "dataType": "number",
+  "unit": "mm",
+  "minValue": 0,
+  "maxValue": 9999,
+  "step": 0.1,
+  "precision": 2
+}
+```
+
+**示例：布尔型配置**
+
+```json
+{
+  "key": "isStandard",
+  "displayName": "是否标准件",
+  "dataType": "boolean",
+  "trueLabel": "是",
+  "falseLabel": "否"
+}
+```
+
+**示例：枚举值配置（编码/名称/标签）**
+
+```json
+{
+  "key": "color",
+  "displayName": "颜色",
+  "dataType": "enum",
+  "lovKey": "COLOR_LOV",
+  "lovValues": [
+    { "code": "RED", "name": "红色", "label": "warm" },
+    { "code": "BLUE", "name": "蓝色", "label": "cool" }
+  ]
 }
 ```
 

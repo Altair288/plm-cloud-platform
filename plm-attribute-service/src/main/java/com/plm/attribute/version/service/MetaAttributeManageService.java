@@ -8,14 +8,21 @@ import com.plm.common.version.domain.MetaAttributeDef;
 import com.plm.common.version.domain.MetaAttributeVersion;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;
+import com.plm.common.version.domain.MetaLovDef;
+import com.plm.common.version.domain.MetaLovVersion;
 import com.plm.common.version.util.AttributeLovImportUtils;
 import com.plm.infrastructure.version.repository.MetaAttributeDefRepository;
 import com.plm.infrastructure.version.repository.MetaAttributeVersionRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
+import com.plm.infrastructure.version.repository.MetaLovDefRepository;
+import com.plm.infrastructure.version.repository.MetaLovVersionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -28,6 +35,8 @@ public class MetaAttributeManageService {
     private final MetaCategoryVersionRepository categoryVersionRepository;
     private final MetaAttributeDefRepository attributeDefRepository;
     private final MetaAttributeVersionRepository attributeVersionRepository;
+    private final MetaLovDefRepository lovDefRepository;
+    private final MetaLovVersionRepository lovVersionRepository;
     private final MetaAttributeQueryService queryService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -35,11 +44,15 @@ public class MetaAttributeManageService {
             MetaCategoryVersionRepository categoryVersionRepository,
             MetaAttributeDefRepository attributeDefRepository,
             MetaAttributeVersionRepository attributeVersionRepository,
+            MetaLovDefRepository lovDefRepository,
+            MetaLovVersionRepository lovVersionRepository,
             MetaAttributeQueryService queryService) {
         this.categoryDefRepository = categoryDefRepository;
         this.categoryVersionRepository = categoryVersionRepository;
         this.attributeDefRepository = attributeDefRepository;
         this.attributeVersionRepository = attributeVersionRepository;
+        this.lovDefRepository = lovDefRepository;
+        this.lovVersionRepository = lovVersionRepository;
         this.queryService = queryService;
     }
 
@@ -64,7 +77,7 @@ public class MetaAttributeManageService {
 
         String key = req.getKey().trim();
         String lovKey = resolveLovKeyForCreate(categoryCodeKey, req);
-        boolean hasLov = !isBlank(lovKey) || isEnum(req);
+        boolean hasLov = !isBlank(lovKey) || isEnumLike(req);
 
         // 1) create def (unique per category)
         MetaAttributeDef def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key).orElse(null);
@@ -93,6 +106,8 @@ public class MetaAttributeManageService {
         v.setIsLatest(true);
         v.setCreatedBy(operator);
         attributeVersionRepository.save(v);
+
+        upsertLovValuesIfNeeded(def, v, req, lovKey, operator);
 
         return queryService.detail(def.getKey(), true);
     }
@@ -133,7 +148,7 @@ public class MetaAttributeManageService {
             throw new IllegalArgumentException("dataType is required");
 
         String lovKey = resolveLovKeyForUpdate(categoryCodeKey, req, latest);
-        boolean hasLov = !isBlank(lovKey) || isEnum(req);
+        boolean hasLov = !isBlank(lovKey) || isEnumLike(req);
         if (def.getLovFlag() == null || !Objects.equals(def.getLovFlag(), hasLov)) {
             def.setLovFlag(hasLov);
             attributeDefRepository.save(def);
@@ -143,6 +158,8 @@ public class MetaAttributeManageService {
         String newHash = AttributeLovImportUtils.jsonHash(newJson);
 
         if (latest != null && Objects.equals(latest.getHash(), newHash)) {
+            // 结构无变化时，仍需处理可能变化的 LOV 值（如仅编辑枚举项）
+            upsertLovValuesIfNeeded(def, latest, req, lovKey, operator);
             // 无变化：直接返回
             return queryService.detail(def.getKey(), true);
         }
@@ -162,6 +179,8 @@ public class MetaAttributeManageService {
         }
         v.setIsLatest(true);
         attributeVersionRepository.save(v);
+
+        upsertLovValuesIfNeeded(def, v, req, lovKey, operator);
 
         return queryService.detail(def.getKey(), true);
     }
@@ -225,6 +244,22 @@ public class MetaAttributeManageService {
         if (req.getSearchable() != null)
             node.put("searchable", req.getSearchable());
 
+        if (req.getMinValue() != null)
+            node.put("minValue", req.getMinValue());
+        if (req.getMaxValue() != null)
+            node.put("maxValue", req.getMaxValue());
+        if (req.getStep() != null)
+            node.put("step", req.getStep());
+        if (req.getPrecision() != null)
+            node.put("precision", req.getPrecision());
+
+        String trueLabel = trimToNull(req.getTrueLabel());
+        if (trueLabel != null)
+            node.put("trueLabel", trueLabel);
+        String falseLabel = trimToNull(req.getFalseLabel());
+        if (falseLabel != null)
+            node.put("falseLabel", falseLabel);
+
         if (!isBlank(lovKey))
             node.put("lovKey", lovKey.trim());
 
@@ -236,7 +271,7 @@ public class MetaAttributeManageService {
             return null;
         if (!isBlank(req.getLovKey()))
             return req.getLovKey().trim();
-        if (!isEnum(req))
+        if (!isEnumLike(req))
             return null;
         // enum 且未显式传 lovKey：生成一个可重复的 key，便于前端不传也可用
         return AttributeLovImportUtils.generateLovKey(categoryCodeKey, req.getDisplayName());
@@ -253,13 +288,97 @@ public class MetaAttributeManageService {
         if (latest != null && !isBlank(latest.getLovKey()))
             return latest.getLovKey().trim();
 
-        if (!isEnum(req))
+        if (!isEnumLike(req))
             return null;
         return AttributeLovImportUtils.generateLovKey(categoryCodeKey, req.getDisplayName());
     }
 
     private boolean isEnum(MetaAttributeUpsertRequestDto req) {
         return req != null && req.getDataType() != null && "enum".equalsIgnoreCase(req.getDataType().trim());
+    }
+
+    private boolean isEnumLike(MetaAttributeUpsertRequestDto req) {
+        if (req == null || req.getDataType() == null) {
+            return false;
+        }
+        String dataType = req.getDataType().trim();
+        return "enum".equalsIgnoreCase(dataType) || "multi-enum".equalsIgnoreCase(dataType);
+    }
+
+    private void upsertLovValuesIfNeeded(MetaAttributeDef def,
+                                         MetaAttributeVersion attrVersion,
+                                         MetaAttributeUpsertRequestDto req,
+                                         String lovKey,
+                                         String operator) {
+        if (def == null || attrVersion == null || req == null)
+            return;
+        if (!isEnumLike(req))
+            return;
+        if (isBlank(lovKey))
+            return;
+        if (req.getLovValues() == null)
+            return;
+
+        MetaLovDef lovDef = lovDefRepository.findByAttributeDefAndKey(def, lovKey).orElse(null);
+        if (lovDef == null) {
+            UUID lovId = UUID.randomUUID();
+            int inserted = lovDefRepository.insertIgnore(lovId, def.getId(), lovKey, def.getKey(), null, operator);
+            if (inserted > 0) {
+                lovDef = lovDefRepository.findById(lovId).orElseThrow();
+            } else {
+                lovDef = lovDefRepository.findByAttributeDefAndKey(def, lovKey).orElse(null);
+            }
+        }
+        if (lovDef == null)
+            return;
+
+        String valueJson = buildLovValueJson(req.getLovValues());
+        String newHash = AttributeLovImportUtils.jsonHash(valueJson);
+        MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+        if (latest != null && Objects.equals(latest.getHash(), newHash)) {
+            return;
+        }
+
+        MetaLovVersion lv = new MetaLovVersion();
+        lv.setLovDef(lovDef);
+        lv.setAttributeVersion(attrVersion);
+        lv.setValueJson(valueJson);
+        lv.setHash(newHash);
+        lv.setCreatedBy(operator);
+        lv.setIsLatest(true);
+        if (latest != null) {
+            latest.setIsLatest(false);
+            lv.setVersionNo(latest.getVersionNo() + 1);
+        } else {
+            lv.setVersionNo(1);
+        }
+        lovVersionRepository.save(lv);
+    }
+
+    private String buildLovValueJson(List<MetaAttributeUpsertRequestDto.LovValueUpsertItem> items) {
+        ObjectNode root = objectMapper.createObjectNode();
+        var arr = objectMapper.createArrayNode();
+        List<MetaAttributeUpsertRequestDto.LovValueUpsertItem> safeItems = items == null ? new ArrayList<>() : items;
+        int order = 1;
+        for (MetaAttributeUpsertRequestDto.LovValueUpsertItem item : safeItems) {
+            if (item == null)
+                continue;
+            String code = trimToNull(item.getCode());
+            String name = trimToNull(item.getName());
+            if (code == null && name == null)
+                continue;
+            ObjectNode one = objectMapper.createObjectNode();
+            one.put("code", code != null ? code : name);
+            one.put("name", name != null ? name : code);
+            String label = trimToNull(item.getLabel());
+            if (label != null)
+                one.put("label", label);
+            one.put("order", order++);
+            one.put("active", true);
+            arr.add(one);
+        }
+        root.set("values", arr);
+        return root.toString();
     }
 
     private boolean isBlank(String s) {

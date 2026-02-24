@@ -18,6 +18,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -100,6 +101,12 @@ public class MetaAttributeQueryService {
             lv.setReadOnly(parsed.readOnly);
             lv.setSearchable(parsed.searchable);
             lv.setLovKey(parsed.lovKey);
+            lv.setMinValue(parsed.minValue);
+            lv.setMaxValue(parsed.maxValue);
+            lv.setStep(parsed.step);
+            lv.setPrecision(parsed.precision);
+            lv.setTrueLabel(parsed.trueLabel);
+            lv.setFalseLabel(parsed.falseLabel);
             lv.setCreatedBy(latest.getCreatedBy());
             lv.setCreatedAt(latest.getCreatedAt());
             dto.setLovKey(parsed.lovKey);
@@ -109,10 +116,7 @@ public class MetaAttributeQueryService {
             dto.setModifiedAt(latest.getCreatedAt());
 
             if (includeValues && parsed.lovKey != null) {
-                // Load LOV def by key then latest lov version
-                MetaLovDef lovDef = em.createQuery("select l from MetaLovDef l where l.key = :k", MetaLovDef.class)
-                        .setParameter("k", parsed.lovKey)
-                        .getResultStream().findFirst().orElse(null);
+                MetaLovDef lovDef = lovDefRepository.findByAttributeDefAndKey(def, parsed.lovKey).orElse(null);
                 if (lovDef != null) {
                     MetaLovVersion lovLatest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
                     if (lovLatest != null && lovLatest.getValueJson() != null) {
@@ -162,6 +166,13 @@ public class MetaAttributeQueryService {
             p.dataType = text(node, "dataType");
             p.defaultValue = text(node, "defaultValue");
 
+            p.minValue = decimal(node, "minValue");
+            p.maxValue = decimal(node, "maxValue");
+            p.step = decimal(node, "step");
+            p.precision = integer(node, "precision");
+            p.trueLabel = text(node, "trueLabel");
+            p.falseLabel = text(node, "falseLabel");
+
             p.required = bool(node, "required");
             p.unique = bool(node, "unique");
             p.hidden = bool(node, "hidden");
@@ -182,6 +193,22 @@ public class MetaAttributeQueryService {
         return node.get(field).asBoolean();
     }
 
+    private Integer integer(JsonNode node, String field) {
+        if (node == null || !node.has(field) || node.get(field).isNull())
+            return null;
+        return node.get(field).asInt();
+    }
+
+    private BigDecimal decimal(JsonNode node, String field) {
+        if (node == null || !node.has(field) || node.get(field).isNull())
+            return null;
+        try {
+            return node.get(field).decimalValue();
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
     private static class ParsedAttributeJson {
         String displayName;
         String description;
@@ -189,6 +216,12 @@ public class MetaAttributeQueryService {
         String lovKey;
         String dataType;
         String defaultValue;
+        BigDecimal minValue;
+        BigDecimal maxValue;
+        BigDecimal step;
+        Integer precision;
+        String trueLabel;
+        String falseLabel;
         Boolean required;
         Boolean unique;
         Boolean hidden;
@@ -213,6 +246,9 @@ public class MetaAttributeQueryService {
                         item.setValue(v.get("value").asText());
                     } else if (v.has("name")) {
                         item.setValue(v.get("name").asText());
+                    }
+                    if (v.has("label")) {
+                        item.setLabel(v.get("label").asText());
                     }
                     if (v.has("sort")) {
                         item.setSort(v.get("sort").asInt());

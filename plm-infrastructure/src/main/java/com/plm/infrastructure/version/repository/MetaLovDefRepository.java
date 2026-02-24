@@ -16,6 +16,7 @@ public interface MetaLovDefRepository extends JpaRepository<MetaLovDef, UUID> {
     List<MetaLovDef> findByKeyIn(Collection<String> keys);
     List<MetaLovDef> findByAttributeDefIn(Collection<MetaAttributeDef> attributeDefs);
     Optional<MetaLovDef> findByKey(String key);
+        Optional<MetaLovDef> findByAttributeDefAndKey(MetaAttributeDef attributeDef, String key);
 
     @Modifying
     @Query(value = "INSERT INTO plm_meta.meta_lov_def (id, attribute_def_id, key, source_attribute_key, description, created_by, created_at) " +
