@@ -301,10 +301,7 @@ public class MetaAttributeImportService {
     }
 
     private MetaAttributeDef findAttributeDef(MetaCategoryDef catDef, String attrKey) {
-        // 精准查询，避免加载全集 (后续可加 repository 方法 findByCategoryDefAndKey)
-        List<MetaAttributeDef> defs = attributeDefRepository.findByCategoryDefAndKeyIn(catDef,
-                Collections.singleton(attrKey));
-        return defs.isEmpty() ? null : defs.get(0);
+        return attributeDefRepository.findActiveByCategoryDefAndKey(catDef, attrKey).orElse(null);
     }
 
     private String buildAttributeJson(AttrGroup g, MetaAttributeDef def, String lovKey) {

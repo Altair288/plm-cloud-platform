@@ -22,7 +22,6 @@ import java.util.UUID;
 @Service
 public class MetaAttributeManageService {
 
-    private static final String STATUS_ACTIVE = "active";
     private static final String STATUS_DELETED = "deleted";
 
     private final MetaCategoryDefRepository categoryDefRepository;
@@ -68,7 +67,7 @@ public class MetaAttributeManageService {
         boolean hasLov = !isBlank(lovKey) || isEnum(req);
 
         // 1) create def (unique per category)
-        MetaAttributeDef def = attributeDefRepository.findByCategoryDefAndKey(categoryDef, key).orElse(null);
+        MetaAttributeDef def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key).orElse(null);
         if (def != null) {
             throw new IllegalArgumentException(
                     "attribute already exists: category=" + categoryCodeKey + ", key=" + key);
@@ -79,7 +78,7 @@ public class MetaAttributeManageService {
         int inserted = attributeDefRepository.insertIgnore(id, categoryDef.getId(), key, hasLov, key, operator);
         if (inserted <= 0) {
             // 并发情况下可能被其它请求插入
-            def = attributeDefRepository.findByCategoryDefAndKey(categoryDef, key).orElseThrow();
+            def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key).orElseThrow();
         } else {
             def = attributeDefRepository.findById(id).orElseThrow();
         }
@@ -114,7 +113,7 @@ public class MetaAttributeManageService {
                 .orElseThrow(() -> new IllegalArgumentException("category has no latest version: " + categoryCodeKey));
 
         String key = attrKey.trim();
-        MetaAttributeDef def = attributeDefRepository.findByCategoryDefAndKey(categoryDef, key)
+        MetaAttributeDef def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "attribute not found: category=" + categoryCodeKey + ", key=" + key));
 
@@ -182,7 +181,7 @@ public class MetaAttributeManageService {
                 .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
 
         String key = attrKey.trim();
-        MetaAttributeDef def = attributeDefRepository.findByCategoryDefAndKey(categoryDef, key)
+        MetaAttributeDef def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "attribute not found: category=" + categoryCodeKey + ", key=" + key));
 

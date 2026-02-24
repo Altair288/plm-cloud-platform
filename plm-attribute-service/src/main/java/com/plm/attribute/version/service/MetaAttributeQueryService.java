@@ -72,7 +72,7 @@ public class MetaAttributeQueryService {
         // attrKey is globally unique; fetch by unique key requires custom query;
         // fallback: scan page (simplified)
         MetaAttributeDef def = em
-                .createQuery("select d from MetaAttributeDef d where d.key = :k", MetaAttributeDef.class)
+            .createQuery("select d from MetaAttributeDef d where d.key = :k and lower(d.status) <> 'deleted'", MetaAttributeDef.class)
                 .setParameter("k", attrKey)
                 .getResultStream().findFirst().orElse(null);
         if (def == null)
@@ -137,7 +137,7 @@ public class MetaAttributeQueryService {
 
     public List<MetaAttributeVersionSummaryDto> versions(String attrKey) {
         MetaAttributeDef def = em
-                .createQuery("select d from MetaAttributeDef d where d.key = :k", MetaAttributeDef.class)
+            .createQuery("select d from MetaAttributeDef d where d.key = :k and lower(d.status) <> 'deleted'", MetaAttributeDef.class)
                 .setParameter("k", attrKey).getResultStream().findFirst().orElse(null);
         if (def == null)
             return Collections.emptyList();

@@ -13,14 +13,24 @@ import java.util.UUID;
 
 @Repository
 public interface MetaAttributeDefRepository extends JpaRepository<MetaAttributeDef, UUID> {
-        Optional<MetaAttributeDef> findByCategoryDefAndKey(MetaCategoryDef categoryDef, String key);
+    Optional<MetaAttributeDef> findByCategoryDefAndKey(MetaCategoryDef categoryDef, String key);
+
+    @Query("""
+            select d from MetaAttributeDef d
+            where d.categoryDef = :categoryDef
+              and d.key = :key
+              and lower(d.status) <> 'deleted'
+            """)
+    Optional<MetaAttributeDef> findActiveByCategoryDefAndKey(@Param("categoryDef") MetaCategoryDef categoryDef,
+                                                              @Param("key") String key);
+
     List<MetaAttributeDef> findByCategoryDefAndKeyIn(MetaCategoryDef categoryDef, Collection<String> keys);
     List<MetaAttributeDef> findByCategoryDefIdIn(Collection<UUID> categoryDefIds);
 
     @Modifying
     @Query(value = "INSERT INTO plm_meta.meta_attribute_def (id, category_def_id, key, lov_flag, auto_bind_key, created_by, created_at) " +
             "VALUES (:id, :categoryDefId, :key, :lovFlag, :autoBindKey, :createdBy, now()) " +
-            "ON CONFLICT (category_def_id, key) DO NOTHING", nativeQuery = true)
+            "ON CONFLICT (category_def_id, key) WHERE (status <> 'deleted') DO NOTHING", nativeQuery = true)
     int insertIgnore(@Param("id") UUID id,
                      @Param("categoryDefId") UUID categoryDefId,
                      @Param("key") String key,
