@@ -69,6 +69,9 @@ public class MetaAttributeVersion {
     @Column(name = "is_latest", nullable = false)
     private Boolean isLatest = Boolean.TRUE;
 
+    @Column(name = "status", nullable = false, length = 20)
+    private String status = "active";
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -81,5 +84,6 @@ public class MetaAttributeVersion {
         if (createdAt == null) createdAt = OffsetDateTime.now();
         if (versionNo == null) versionNo = 1;
         if (structureJson == null) structureJson = "{}";
+        if (status == null) status = "active";
     }
 }

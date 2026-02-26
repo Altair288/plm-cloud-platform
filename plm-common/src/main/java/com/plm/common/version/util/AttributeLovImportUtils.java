@@ -42,13 +42,27 @@ public final class AttributeLovImportUtils {
         return ch == '_' || ch == '-' || ch == '/' || ch == '.' || ch == ':' || ch == ';' || ch == '·';
     }
 
-    public static String generateLovKey(String categoryCode, String attributeDisplayName) {
-        String cat = slug(categoryCode == null? "cat" : categoryCode).replace('-', '_');
-        String attr = slug(attributeDisplayName == null? "attr" : attributeDisplayName).replace('-', '_');
+    /**
+     * Generate a deterministic LOV key using category code + attribute key.
+     *
+     * NOTE: Second parameter is intentionally kept as String for backward compatibility
+     * of call sites/tests, but should pass attribute key (not display name).
+     */
+    public static String generateLovKey(String categoryCode, String attributeKey) {
+        String cat = normalizeForLovKey(categoryCode, "cat");
+        String attr = normalizeForLovKey(attributeKey, "attr");
         String base = cat + "_" + attr + "__lov"; // 双下划线保持与旧格式类似
         if (base.length() <= 120) return base;
         String hash = sha256Hex(base).substring(0, 8);
-        return (base.substring(0, Math.min(100, base.length())) + "_" + hash).replaceAll("_+", "_");
+        return base.substring(0, Math.min(100, base.length())) + "_" + hash;
+    }
+
+    private static String normalizeForLovKey(String raw, String fallback) {
+        if (raw == null) {
+            return fallback;
+        }
+        String normalized = Normalizer.normalize(raw.trim(), Normalizer.Form.NFKC);
+        return normalized.isEmpty() ? fallback : normalized;
     }
 
     public static BigDecimal parseNumeric(String value) {

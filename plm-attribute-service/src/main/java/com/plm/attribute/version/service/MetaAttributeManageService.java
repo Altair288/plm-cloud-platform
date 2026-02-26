@@ -76,7 +76,7 @@ public class MetaAttributeManageService {
                 .orElseThrow(() -> new IllegalArgumentException("category has no latest version: " + categoryCodeKey));
 
         String key = req.getKey().trim();
-        String lovKey = resolveLovKeyForCreate(categoryCodeKey, req);
+        String lovKey = resolveLovKeyForCreate(categoryCodeKey, req, key);
         boolean hasLov = !isBlank(lovKey) || isEnumLike(req);
 
         // 1) create def (unique per category)
@@ -147,7 +147,7 @@ public class MetaAttributeManageService {
         if (isBlank(req.getDataType()))
             throw new IllegalArgumentException("dataType is required");
 
-        String lovKey = resolveLovKeyForUpdate(categoryCodeKey, req, latest);
+        String lovKey = resolveLovKeyForUpdate(categoryCodeKey, req, key, latest);
         boolean hasLov = !isBlank(lovKey) || isEnumLike(req);
         if (def.getLovFlag() == null || !Objects.equals(def.getLovFlag(), hasLov)) {
             def.setLovFlag(hasLov);
@@ -206,6 +206,14 @@ public class MetaAttributeManageService {
 
         if (isDeleted(def))
             return;
+
+        // 先级联标记子表，再标记 def，确保语义一致
+        attributeVersionRepository.softDeleteByDef(def);
+        var lovDefs = lovDefRepository.findByAttributeDef(def);
+        if (!lovDefs.isEmpty()) {
+            lovVersionRepository.softDeleteByLovDefs(lovDefs);
+        }
+        lovDefRepository.softDeleteByAttributeDef(def);
 
         def.setStatus(STATUS_DELETED);
         attributeDefRepository.save(def);
@@ -266,18 +274,19 @@ public class MetaAttributeManageService {
         return node.toString();
     }
 
-    private String resolveLovKeyForCreate(String categoryCodeKey, MetaAttributeUpsertRequestDto req) {
+    private String resolveLovKeyForCreate(String categoryCodeKey, MetaAttributeUpsertRequestDto req, String attributeKey) {
         if (req == null)
             return null;
         if (!isBlank(req.getLovKey()))
             return req.getLovKey().trim();
         if (!isEnumLike(req))
             return null;
-        // enum 且未显式传 lovKey：生成一个可重复的 key，便于前端不传也可用
-        return AttributeLovImportUtils.generateLovKey(categoryCodeKey, req.getDisplayName());
+        // enum/multi-enum 且未显式传 lovKey：使用“分类编码+属性编码(key)”生成稳定 key
+        return AttributeLovImportUtils.generateLovKey(categoryCodeKey, attributeKey);
     }
 
     private String resolveLovKeyForUpdate(String categoryCodeKey, MetaAttributeUpsertRequestDto req,
+            String attributeKey,
             MetaAttributeVersion latest) {
         if (req == null)
             return null;
@@ -290,7 +299,7 @@ public class MetaAttributeManageService {
 
         if (!isEnumLike(req))
             return null;
-        return AttributeLovImportUtils.generateLovKey(categoryCodeKey, req.getDisplayName());
+        return AttributeLovImportUtils.generateLovKey(categoryCodeKey, attributeKey);
     }
 
     private boolean isEnum(MetaAttributeUpsertRequestDto req) {

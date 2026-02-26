@@ -6,6 +6,7 @@ import com.plm.common.api.dto.MetaAttributeDefListItemDto;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -17,6 +18,16 @@ import java.util.UUID;
 public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttributeVersion, UUID> {
     @Query("select v from MetaAttributeVersion v where v.attributeDef = :def and v.isLatest = true")
     Optional<MetaAttributeVersion> findLatestByDef(@Param("def") MetaAttributeDef def);
+
+        @Modifying
+        @Query("""
+                        update MetaAttributeVersion v
+                        set v.status = 'deleted',
+                                v.isLatest = false
+                        where v.attributeDef = :def
+                            and lower(v.status) <> 'deleted'
+                        """)
+        int softDeleteByDef(@Param("def") MetaAttributeDef def);
 
         @Query(
                 value = """

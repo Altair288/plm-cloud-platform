@@ -14,9 +14,19 @@ import java.util.UUID;
 @Repository
 public interface MetaLovDefRepository extends JpaRepository<MetaLovDef, UUID> {
     List<MetaLovDef> findByKeyIn(Collection<String> keys);
+        List<MetaLovDef> findByAttributeDef(MetaAttributeDef attributeDef);
     List<MetaLovDef> findByAttributeDefIn(Collection<MetaAttributeDef> attributeDefs);
     Optional<MetaLovDef> findByKey(String key);
         Optional<MetaLovDef> findByAttributeDefAndKey(MetaAttributeDef attributeDef, String key);
+
+        @Modifying
+        @Query("""
+                        update MetaLovDef d
+                        set d.status = 'deleted'
+                        where d.attributeDef = :attributeDef
+                            and lower(d.status) <> 'deleted'
+                        """)
+        int softDeleteByAttributeDef(@Param("attributeDef") MetaAttributeDef attributeDef);
 
     @Modifying
     @Query(value = "INSERT INTO plm_meta.meta_lov_def (id, attribute_def_id, key, source_attribute_key, description, created_by, created_at) " +

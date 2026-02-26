@@ -27,6 +27,12 @@ public class AttributeLovImportUtilsTest {
     }
 
     @Test
+    void testGenerateLovKeyPreserveCase() {
+        String key = AttributeLovImportUtils.generateLovKey("27121504", "ATTR_YYJ_001");
+        Assertions.assertEquals("27121504_ATTR_YYJ_001__lov", key);
+    }
+
+    @Test
     void testNumericParse() {
         Assertions.assertNotNull(AttributeLovImportUtils.parseNumeric("12.50"));
         Assertions.assertNull(AttributeLovImportUtils.parseNumeric("ABC"));
