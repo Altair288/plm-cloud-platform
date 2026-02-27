@@ -45,6 +45,12 @@ public class MetaAttributeVersion {
     @Column(name = "unit", insertable = false, updatable = false)
     private String unit;
 
+    /**
+     * Business field name for frontend-backend mapping (generated from structure_json).
+     */
+    @Column(name = "attribute_field", insertable = false, updatable = false)
+    private String attributeField;
+
     @Column(name = "lov_key", insertable = false, updatable = false)
     private String lovKey;
 

@@ -92,6 +92,7 @@ public class MetaAttributeQueryService {
             lv.setVersionNo(latest.getVersionNo());
             lv.setDisplayName(parsed.displayName);
             lv.setDescription(parsed.description);
+            lv.setAttributeField(parsed.attributeField);
             lv.setDataType(parsed.dataType);
             lv.setUnit(parsed.unit);
             lv.setDefaultValue(parsed.defaultValue);
@@ -161,6 +162,7 @@ public class MetaAttributeQueryService {
             JsonNode node = objectMapper.readTree(json);
             p.displayName = text(node, "displayName");
             p.description = text(node, "description");
+            p.attributeField = text(node, "attributeField");
             p.unit = text(node, "unit");
             p.lovKey = text(node, "lovKey");
             p.dataType = text(node, "dataType");
@@ -212,6 +214,7 @@ public class MetaAttributeQueryService {
     private static class ParsedAttributeJson {
         String displayName;
         String description;
+        String attributeField;
         String unit;
         String lovKey;
         String dataType;

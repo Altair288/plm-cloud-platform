@@ -11,6 +11,7 @@ public class MetaAttributeDefListItemDto {
     private String status;
     private Integer latestVersionNo;
     private String displayName;
+    private String attributeField;
     private String dataType;
     private String unit;
     private Boolean hasLov;
@@ -25,13 +26,15 @@ public class MetaAttributeDefListItemDto {
     }
 
     public MetaAttributeDefListItemDto(String key, String lovKey, String categoryCode, String status,
-            Integer latestVersionNo, String displayName, String dataType, String unit, Boolean hasLov, OffsetDateTime createdAt) {
+            Integer latestVersionNo, String displayName, String attributeField, String dataType, String unit,
+            Boolean hasLov, OffsetDateTime createdAt) {
         this.key = key;
         this.lovKey = lovKey;
         this.categoryCode = categoryCode;
         this.status = status;
         this.latestVersionNo = latestVersionNo;
         this.displayName = displayName;
+        this.attributeField = attributeField;
         this.dataType = dataType;
         this.unit = unit;
         this.hasLov = hasLov;
@@ -39,7 +42,8 @@ public class MetaAttributeDefListItemDto {
     }
 
     public MetaAttributeDefListItemDto(String key, String lovKey, String categoryCode, String status,
-            Integer latestVersionNo, String displayName, String dataType, String unit, Boolean hasLov,
+            Integer latestVersionNo, String displayName, String attributeField, String dataType, String unit,
+            Boolean hasLov,
             Boolean required, Boolean unique, Boolean hidden, Boolean readOnly, Boolean searchable,
             OffsetDateTime createdAt) {
         this.key = key;
@@ -48,6 +52,7 @@ public class MetaAttributeDefListItemDto {
         this.status = status;
         this.latestVersionNo = latestVersionNo;
         this.displayName = displayName;
+        this.attributeField = attributeField;
         this.dataType = dataType;
         this.unit = unit;
         this.hasLov = hasLov;

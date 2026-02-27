@@ -17,6 +17,9 @@ public class MetaAttributeUpsertRequestDto {
     /** 名称（展示名） */
     private String displayName;
 
+    /** 属性字段（业务字段名） */
+    private String attributeField;
+
     /** 描述 */
     private String description;
 

@@ -83,6 +83,7 @@ curl "http://localhost:8080/api/meta/attribute-defs?categoryCode=44120000&keywor
       "status": "ACTIVE",
       "latestVersionNo": 3,
       "displayName": "颜色",
+      "attributeField": "colorValue",
       "dataType": "string",
       "unit": null,
       "hasLov": false,
@@ -134,6 +135,7 @@ curl "http://localhost:8080/api/meta/attribute-defs/color?includeValues=false"
   "latestVersion": {
     "versionNo": 3,
     "displayName": "颜色",
+    "attributeField": "colorValue",
     "description": "物料颜色",
     "dataType": "string",
     "unit": null,
@@ -210,6 +212,7 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
 {
   "key": "color",
   "displayName": "颜色",
+  "attributeField": "colorValue",
   "description": "物料颜色",
   "dataType": "string",
   "unit": null,
@@ -232,6 +235,7 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
 
 **值配置约定（新增）**
 
+- 通用字段：支持 `attributeField`（属性字段/业务字段名，用于前后端字段映射）
 - 数字型（`dataType=number`）：支持 `minValue/maxValue/step/precision`
 - 布尔型（`dataType=boolean`）：支持 `trueLabel/falseLabel`
 - 枚举型（`dataType=enum`）：支持 `lovValues[]`，每项可配置 `code/name/label`
@@ -242,6 +246,7 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
 {
   "key": "length",
   "displayName": "长度",
+  "attributeField": "lengthValue",
   "dataType": "number",
   "unit": "mm",
   "minValue": 0,
@@ -257,6 +262,7 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
 {
   "key": "isStandard",
   "displayName": "是否标准件",
+  "attributeField": "standardFlag",
   "dataType": "boolean",
   "trueLabel": "是",
   "falseLabel": "否"
@@ -269,6 +275,7 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
 {
   "key": "color",
   "displayName": "颜色",
+  "attributeField": "colorValue",
   "dataType": "enum",
   "lovKey": "COLOR_LOV",
   "lovValues": [
@@ -287,6 +294,7 @@ curl -X POST "http://localhost:8080/api/meta/attribute-defs?categoryCode=4412000
   -d '{
     "key":"color",
     "displayName":"颜色",
+    "attributeField":"colorValue",
     "dataType":"string",
     "required":true,
     "searchable":true
@@ -310,6 +318,7 @@ curl -X POST "http://localhost:8080/api/meta/attribute-defs?categoryCode=4412000
 {
   "key": "color",
   "displayName": "颜色(新)",
+  "attributeField": "colorValue",
   "dataType": "string",
   "searchable": false
 }
@@ -324,6 +333,7 @@ curl -X PUT "http://localhost:8080/api/meta/attribute-defs/color?categoryCode=44
   -d '{
     "key":"color",
     "displayName":"颜色(新)",
+    "attributeField":"colorValue",
     "dataType":"string",
     "searchable":false
   }'

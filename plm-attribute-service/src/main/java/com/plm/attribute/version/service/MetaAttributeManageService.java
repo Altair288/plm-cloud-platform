@@ -234,6 +234,9 @@ public class MetaAttributeManageService {
         String description = trimToNull(req.getDescription());
         if (description != null)
             node.put("description", description);
+        String attributeField = trimToNull(req.getAttributeField());
+        if (attributeField != null)
+            node.put("attributeField", attributeField);
         String unit = trimToNull(req.getUnit());
         if (unit != null)
             node.put("unit", unit);

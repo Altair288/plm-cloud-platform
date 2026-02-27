@@ -26,6 +26,7 @@ public class MetaAttributeDefDetailDto {
         private Integer versionNo;
         private String displayName;
         private String description;
+        private String attributeField;
         private String dataType;
         private String unit;
         private String defaultValue;
