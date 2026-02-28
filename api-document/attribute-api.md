@@ -416,9 +416,10 @@ curl -X POST "http://localhost:8080/api/meta/attributes/import?createdBy=system"
 
 ---
 
-## 附录：与属性联动的 UNSPSC 分类浏览/搜索（可选参考）
+## 附录：与属性联动的通用分类浏览/搜索（完整迁移后）
 
-- `GET /api/meta/categories/unspsc/segments`
-- `GET /api/meta/categories/unspsc/segments/{segmentCodeKey}/families`
-- `GET /api/meta/categories/unspsc/families/{familyCodeKey}/classes-with-commodities`
-- `GET /api/meta/categories/unspsc/search?q=...&scopeCodeKey=...&limit=50`
+- `GET /api/meta/categories/nodes?taxonomy=UNSPSC&parentId=...&page=0&size=50`
+- `GET /api/meta/categories/nodes/{id}/path?taxonomy=UNSPSC`
+- `GET /api/meta/categories/search?taxonomy=UNSPSC&keyword=...&scopeNodeId=...&page=0&size=20`
+- `POST /api/meta/categories/nodes:children-batch`
+- `GET /api/meta/taxonomies/UNSPSC`

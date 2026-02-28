@@ -1,6 +1,7 @@
 package com.plm.infrastructure.version.repository;
 
 import com.plm.common.version.domain.MetaCategoryDef;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -52,6 +53,99 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                 @Param("prefix") String prefix,
                 @Param("like") String like,
                 @Param("scopeId") UUID scopeId,
+                Pageable pageable
+        );
+
+        @Query(
+                value = """
+                        select d
+                        from MetaCategoryDef d
+                        left join MetaCategoryVersion v
+                            on v.categoryDef = d and v.isLatest = true
+                        where
+                            ((:parentId is null and d.parent is null)
+                                or (:parentId is not null and d.parent.id = :parentId))
+                            and (:depth is null or d.depth = :depth)
+                            and (:status is null or :status = '' or lower(d.status) = lower(:status))
+                            and (:keyword is null or :keyword = ''
+                                or lower(d.codeKey) like lower(concat('%', :keyword, '%'))
+                                or lower(coalesce(v.displayName, '')) like lower(concat('%', :keyword, '%')))
+                        order by d.sortOrder asc, d.codeKey asc
+                        """,
+                countQuery = """
+                        select count(d.id)
+                        from MetaCategoryDef d
+                        left join MetaCategoryVersion v
+                            on v.categoryDef = d and v.isLatest = true
+                        where
+                            ((:parentId is null and d.parent is null)
+                                or (:parentId is not null and d.parent.id = :parentId))
+                            and (:depth is null or d.depth = :depth)
+                            and (:status is null or :status = '' or lower(d.status) = lower(:status))
+                            and (:keyword is null or :keyword = ''
+                                or lower(d.codeKey) like lower(concat('%', :keyword, '%'))
+                                or lower(coalesce(v.displayName, '')) like lower(concat('%', :keyword, '%')))
+                        """
+        )
+        Page<MetaCategoryDef> findNodePage(
+                @Param("parentId") UUID parentId,
+                @Param("depth") Short depth,
+                @Param("status") String status,
+                @Param("keyword") String keyword,
+                Pageable pageable
+        );
+
+        @Query(
+                value = """
+                        select d
+                        from MetaCategoryDef d
+                        left join MetaCategoryVersion v
+                            on v.categoryDef = d and v.isLatest = true
+                        where
+                            (:status is null or :status = '' or lower(d.status) = lower(:status))
+                            and (:keyword is not null and :keyword <> '')
+                            and (
+                                lower(d.codeKey) like lower(concat('%', :keyword, '%'))
+                                or lower(coalesce(v.displayName, '')) like lower(concat('%', :keyword, '%'))
+                                or lower(coalesce(d.fullPathName, '')) like lower(concat('%', :keyword, '%'))
+                            )
+                            and (:scopeId is null or exists (
+                                select 1
+                                from CategoryHierarchy h
+                                where h.ancestorDef.id = :scopeId
+                                    and h.descendantDef = d
+                            ))
+                        order by
+                            case when lower(d.codeKey) like lower(concat(:keyword, '%')) then 0 else 1 end,
+                            coalesce(d.depth, 32767) asc,
+                            d.sortOrder asc,
+                            d.codeKey asc
+                        """,
+                countQuery = """
+                        select count(d.id)
+                        from MetaCategoryDef d
+                        left join MetaCategoryVersion v
+                            on v.categoryDef = d and v.isLatest = true
+                        where
+                            (:status is null or :status = '' or lower(d.status) = lower(:status))
+                            and (:keyword is not null and :keyword <> '')
+                            and (
+                                lower(d.codeKey) like lower(concat('%', :keyword, '%'))
+                                or lower(coalesce(v.displayName, '')) like lower(concat('%', :keyword, '%'))
+                                or lower(coalesce(d.fullPathName, '')) like lower(concat('%', :keyword, '%'))
+                            )
+                            and (:scopeId is null or exists (
+                                select 1
+                                from CategoryHierarchy h
+                                where h.ancestorDef.id = :scopeId
+                                    and h.descendantDef = d
+                            ))
+                        """
+        )
+        Page<MetaCategoryDef> searchGeneric(
+                @Param("keyword") String keyword,
+                @Param("scopeId") UUID scopeId,
+                @Param("status") String status,
                 Pageable pageable
         );
 }
