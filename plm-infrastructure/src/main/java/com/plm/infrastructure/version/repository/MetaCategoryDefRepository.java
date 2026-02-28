@@ -22,6 +22,9 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
     // 批量查询已有的 codeKey，降低并发导入时逐条 exists 造成的竞态/性能问题
     List<MetaCategoryDef> findByCodeKeyIn(Collection<String> codeKeys);
 
+        @Query("select min(d.depth) from MetaCategoryDef d where d.parent is null and d.depth is not null")
+        Short findMinRootDepth();
+
         /**
          * UNSPSC 搜索：编码前缀优先 + 名称/全路径名模糊；可选 scopeId 时限定在节点子树内（closure exists）。
          *

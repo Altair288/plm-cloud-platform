@@ -43,7 +43,8 @@ public class MetaCategoryGenericQueryService {
                                                String status,
                                                Pageable pageable) {
         requireSupportedTaxonomy(taxonomy);
-        Short depth = level == null ? null : toDepth(level);
+        short rootDepthBase = resolveRootDepthBase();
+        Short depth = level == null ? null : toDepth(level, rootDepthBase);
         Page<MetaCategoryDef> page = defRepository.findNodePage(
                 parentId,
                 depth,
@@ -53,7 +54,7 @@ public class MetaCategoryGenericQueryService {
 
         Map<UUID, String> titleById = loadLatestTitles(page.getContent());
         Map<UUID, Long> childCountById = loadDirectChildCounts(page.getContent());
-        return page.map(def -> toNodeDto(def, titleById.get(def.getId()), childCountById));
+        return page.map(def -> toNodeDto(def, titleById.get(def.getId()), childCountById, rootDepthBase));
     }
 
     public List<MetaCategoryNodeDto> path(UUID id, String taxonomy) {
@@ -65,9 +66,10 @@ public class MetaCategoryGenericQueryService {
         if (defs.isEmpty()) {
             defs = List.of(target);
         }
+        short rootDepthBase = resolveRootDepthBase();
         Map<UUID, String> titleById = loadLatestTitles(defs);
         Map<UUID, Long> childCountById = loadDirectChildCounts(defs);
-        return defs.stream().map(d -> toNodeDto(d, titleById.get(d.getId()), childCountById)).toList();
+        return defs.stream().map(d -> toNodeDto(d, titleById.get(d.getId()), childCountById, rootDepthBase)).toList();
     }
 
     public Page<MetaCategorySearchItemDto> search(String taxonomy,
@@ -81,6 +83,7 @@ public class MetaCategoryGenericQueryService {
         if (kw == null) {
             return Page.empty(pageable);
         }
+        short rootDepthBase = resolveRootDepthBase();
 
         MetaCategoryDef scope = null;
         if (scopeNodeId != null) {
@@ -107,11 +110,11 @@ public class MetaCategoryGenericQueryService {
 
             Map<UUID, String> pathTitleById = loadLatestTitles(ancestors);
             List<MetaCategoryNodeDto> pathNodes = ancestors.stream()
-                    .map(a -> toNodeDto(a, pathTitleById.get(a.getId()), childCountById))
+                    .map(a -> toNodeDto(a, pathTitleById.get(a.getId()), childCountById, rootDepthBase))
                     .toList();
 
             MetaCategorySearchItemDto dto = new MetaCategorySearchItemDto();
-            dto.setNode(toNodeDto(def, titleById.get(def.getId()), childCountById));
+                dto.setNode(toNodeDto(def, titleById.get(def.getId()), childCountById, rootDepthBase));
             dto.setPath(def.getPath());
             dto.setPathNodes(pathNodes);
             return dto;
@@ -131,6 +134,8 @@ public class MetaCategoryGenericQueryService {
                     .toList();
         }
 
+        short rootDepthBase = resolveRootDepthBase();
+
         Map<UUID, String> titleById = loadLatestTitles(children);
         Map<UUID, Long> childCountById = loadDirectChildCounts(children);
 
@@ -143,7 +148,7 @@ public class MetaCategoryGenericQueryService {
             if (parentId == null)
                 continue;
             result.computeIfAbsent(parentId, k -> new ArrayList<>())
-                    .add(toNodeDto(child, titleById.get(child.getId()), childCountById));
+                    .add(toNodeDto(child, titleById.get(child.getId()), childCountById, rootDepthBase));
         }
         return result;
     }
@@ -165,13 +170,14 @@ public class MetaCategoryGenericQueryService {
 
     private MetaCategoryNodeDto toNodeDto(MetaCategoryDef def,
                                           String latestTitle,
-                                          Map<UUID, Long> childCountById) {
+                                          Map<UUID, Long> childCountById,
+                                          short rootDepthBase) {
         MetaCategoryNodeDto dto = new MetaCategoryNodeDto();
         dto.setId(def.getId());
         dto.setTaxonomy(SUPPORTED_TAXONOMY);
         dto.setCode(def.getCodeKey());
         dto.setName((latestTitle != null && !latestTitle.isBlank()) ? latestTitle : def.getCodeKey());
-        dto.setLevel(def.getDepth() == null ? null : def.getDepth() + 1);
+        dto.setLevel(depthToLevel(def.getDepth(), rootDepthBase));
         dto.setParentId(def.getParent() == null ? null : def.getParent().getId());
         dto.setPath(def.getPath());
 
@@ -232,14 +238,27 @@ public class MetaCategoryGenericQueryService {
         }
     }
 
-    private Short toDepth(Integer level) {
+    private Short toDepth(Integer level, short rootDepthBase) {
         if (level == null) {
             return null;
         }
         if (level <= 0) {
             throw new IllegalArgumentException("level must be greater than 0");
         }
-        return (short) (level - 1);
+        return (short) (rootDepthBase + level - 1);
+    }
+
+    private Integer depthToLevel(Short depth, short rootDepthBase) {
+        if (depth == null) {
+            return null;
+        }
+        int level = depth - rootDepthBase + 1;
+        return Math.max(level, 1);
+    }
+
+    private short resolveRootDepthBase() {
+        Short minDepth = defRepository.findMinRootDepth();
+        return minDepth == null ? 0 : minDepth;
     }
 
     private String trimToNull(String value) {
