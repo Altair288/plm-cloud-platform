@@ -6,6 +6,7 @@ import java.util.UUID;
 @Data
 public class MetaCategoryDefDto {
     private UUID id;
+    private String businessDomain;
     private String codeKey;
     private String status;
     private String path;

@@ -10,6 +10,7 @@ public class MetaCategoryMapper {
         if (def == null) return null;
         MetaCategoryDefDto d = new MetaCategoryDefDto();
         d.setId(def.getId());
+        d.setBusinessDomain(def.getBusinessDomain());
         d.setCodeKey(def.getCodeKey());
         d.setStatus(def.getStatus());
         d.setPath(def.getPath());

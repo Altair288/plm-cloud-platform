@@ -15,7 +15,10 @@ public class MetaCategoryDef {
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
-    @Column(name = "code_key", nullable = false, length = 64, unique = true)
+    @Column(name = "business_domain", nullable = false, length = 64)
+    private String businessDomain;
+
+    @Column(name = "code_key", nullable = false, length = 64)
     private String codeKey;
 
     @Column(name = "status", nullable = false, length = 20)

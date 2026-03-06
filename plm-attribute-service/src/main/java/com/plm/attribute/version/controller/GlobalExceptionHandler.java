@@ -1,5 +1,7 @@
 package com.plm.attribute.version.controller;
 
+import com.plm.attribute.version.exception.CategoryConflictException;
+import com.plm.attribute.version.exception.CategoryNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -15,6 +17,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
         return build(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", ex.getMessage());
+    }
+
+    @ExceptionHandler(CategoryConflictException.class)
+    public ResponseEntity<Map<String, Object>> handleCategoryConflict(CategoryConflictException ex) {
+        return build(HttpStatus.CONFLICT, ex.getCode(), ex.getMessage());
+    }
+
+    @ExceptionHandler(CategoryNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleCategoryNotFound(CategoryNotFoundException ex) {
+        return build(HttpStatus.NOT_FOUND, "CATEGORY_NOT_FOUND", ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

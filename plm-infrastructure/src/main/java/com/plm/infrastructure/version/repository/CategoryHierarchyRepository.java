@@ -20,6 +20,12 @@ public interface CategoryHierarchyRepository extends JpaRepository<CategoryHiera
     @Query("select h.descendantDef from CategoryHierarchy h where h.ancestorDef.id = :ancestorId and h.distance > 0")
     List<MetaCategoryDef> findDescendantDefs(@Param("ancestorId") UUID ancestorId);
 
+    @Query("select count(h) from CategoryHierarchy h where h.ancestorDef.id = :ancestorId and h.distance = 1")
+    long countDirectChildren(@Param("ancestorId") UUID ancestorId);
+
+    @Query("select h.descendantDef.id from CategoryHierarchy h where h.ancestorDef.id = :ancestorId")
+    List<UUID> findDescendantIdsIncludingSelf(@Param("ancestorId") UUID ancestorId);
+
     @Query("""
             select h.ancestorDef
             from CategoryHierarchy h

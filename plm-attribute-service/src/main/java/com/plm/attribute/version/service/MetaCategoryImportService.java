@@ -28,6 +28,8 @@ import javax.sql.DataSource;
 @Service
 public class MetaCategoryImportService {
 
+    private static final String IMPORT_BUSINESS_DOMAIN = "MATERIAL";
+
     private final MetaCategoryDefRepository defRepository;
     private final MetaCategoryVersionRepository versionRepository;
     private final JdbcTemplate jdbcTemplate;
@@ -58,7 +60,7 @@ public class MetaCategoryImportService {
             if (it.getCode() != null)
                 codes.add(it.getCode());
         if (!codes.isEmpty()) {
-            defRepository.findByCodeKeyIn(codes).forEach(def -> {
+            defRepository.findByBusinessDomainAndCodeKeyIn(IMPORT_BUSINESS_DOMAIN, codes).forEach(def -> {
                 codeMap.put(def.getCodeKey(), def);
                 keyMap.put(def.getCodeKey(), def); // 如果 key 也用 code 重复引用
             });
@@ -117,10 +119,10 @@ public class MetaCategoryImportService {
                 UUID newId = null;
                 try {
                     newId = jdbcTemplate.queryForObject(
-                            "INSERT INTO plm_meta.meta_category_def(id, code_key, status, created_at, created_by, parent_def_id, external_code) "
-                                    +
-                                    "VALUES (gen_random_uuid(), ?, 'active', now(), ?, ?, ?) ON CONFLICT (code_key) DO NOTHING RETURNING id",
+                            "INSERT INTO plm_meta.meta_category_def(id, business_domain, code_key, status, created_at, created_by, parent_def_id, external_code) " +
+                                    "VALUES (gen_random_uuid(), ?, ?, 'active', now(), ?, ?, ?) ON CONFLICT (business_domain, code_key) DO NOTHING RETURNING id",
                             (rs, rowNum) -> rs.getObject(1, java.util.UUID.class),
+                            IMPORT_BUSINESS_DOMAIN,
                             code,
                             createdBy,
                             parent == null ? null : parent.getId(),
@@ -130,7 +132,7 @@ public class MetaCategoryImportService {
                 }
 
                 if (newId == null) {
-                    def = defRepository.findByCodeKey(code).orElse(null);
+                    def = defRepository.findByBusinessDomainAndCodeKey(IMPORT_BUSINESS_DOMAIN, code).orElse(null);
                     if (def == null) {
                         errors.add("并发: 未能获取已存在定义 code=" + code);
                         processedKeys.add(itemKey);
@@ -294,7 +296,8 @@ public class MetaCategoryImportService {
         // 2. 一次性查询已存在的 definitions
         Map<String, MetaCategoryDef> existingDefMap = new HashMap<>();
         if (!excelAllCodes.isEmpty()) {
-            defRepository.findByCodeKeyIn(excelAllCodes).forEach(def -> existingDefMap.put(def.getCodeKey(), def));
+                defRepository.findByBusinessDomainAndCodeKeyIn(IMPORT_BUSINESS_DOMAIN, excelAllCodes)
+                    .forEach(def -> existingDefMap.put(def.getCodeKey(), def));
         }
 
         // 记录本次成功插入的新 code，避免同一批次重复处理
@@ -348,7 +351,8 @@ public class MetaCategoryImportService {
                 if (parentCode != null) {
                     parentDef = existingDefMap.get(parentCode);
                     if (parentDef == null) {
-                        parentDef = defRepository.findByCodeKey(parentCode).orElse(null);
+                        parentDef = defRepository.findByBusinessDomainAndCodeKey(IMPORT_BUSINESS_DOMAIN, parentCode)
+                            .orElse(null);
                         if (parentDef != null)
                             existingDefMap.put(parentCode, parentDef);
                     }
@@ -358,11 +362,13 @@ public class MetaCategoryImportService {
                 try {
                     // 只插入最小字段，后续再补 path/depth/fullPathName
                     newId = jdbcTemplate.queryForObject(
-                            "INSERT INTO plm_meta.meta_category_def(id, code_key, status, created_at, created_by, parent_def_id) "
-                                    +
-                                    "VALUES (gen_random_uuid(), ?, 'active', now(), ?, ?) ON CONFLICT (code_key) DO NOTHING RETURNING id",
+                            "INSERT INTO plm_meta.meta_category_def(id, business_domain, code_key, status, created_at, created_by, parent_def_id) " +
+                                    "VALUES (gen_random_uuid(), ?, ?, 'active', now(), ?, ?) ON CONFLICT (business_domain, code_key) DO NOTHING RETURNING id",
                             (rs, rowNum) -> rs.getObject(1, java.util.UUID.class),
-                            code, createdBy, parentDef == null ? null : parentDef.getId());
+                            IMPORT_BUSINESS_DOMAIN,
+                            code,
+                            createdBy,
+                            parentDef == null ? null : parentDef.getId());
                 } catch (EmptyResultDataAccessException ignore) {
                     // 冲突 -> 已存在其他并发导入插入
                 }
@@ -370,7 +376,7 @@ public class MetaCategoryImportService {
                 MetaCategoryDef def;
                 if (newId == null) {
                     // 未插入（并发导致存在），加载现有记录并跳过版本创建（视为已存在）
-                    def = defRepository.findByCodeKey(code).orElse(null);
+                    def = defRepository.findByBusinessDomainAndCodeKey(IMPORT_BUSINESS_DOMAIN, code).orElse(null);
                     if (def == null) {
                         errors.add("并发: 未能获取已存在定义 code=" + code);
                         errorCount++;

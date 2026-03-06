@@ -14,6 +14,13 @@ import java.util.*;
 public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef, UUID> {
     Optional<MetaCategoryDef> findByCodeKey(String codeKey);
     boolean existsByCodeKey(String codeKey);
+    Optional<MetaCategoryDef> findByBusinessDomainAndCodeKey(String businessDomain, String codeKey);
+    boolean existsByBusinessDomainAndCodeKey(String businessDomain, String codeKey);
+
+    @Query("select d from MetaCategoryDef d where d.businessDomain = :businessDomain and d.codeKey in :codeKeys")
+    List<MetaCategoryDef> findByBusinessDomainAndCodeKeyIn(
+            @Param("businessDomain") String businessDomain,
+            @Param("codeKeys") Collection<String> codeKeys);
 
         List<MetaCategoryDef> findByParentIsNullOrderBySortOrderAscCodeKeyAsc();
         List<MetaCategoryDef> findByParentIdOrderBySortOrderAscCodeKeyAsc(UUID parentId);
