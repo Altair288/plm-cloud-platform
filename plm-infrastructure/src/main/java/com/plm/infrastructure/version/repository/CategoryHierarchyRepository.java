@@ -4,6 +4,7 @@ import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.CategoryHierarchyId;
 import com.plm.common.version.domain.MetaCategoryDef;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -25,6 +26,17 @@ public interface CategoryHierarchyRepository extends JpaRepository<CategoryHiera
 
     @Query("select h.descendantDef.id from CategoryHierarchy h where h.ancestorDef.id = :ancestorId")
     List<UUID> findDescendantIdsIncludingSelf(@Param("ancestorId") UUID ancestorId);
+
+        @Modifying
+        @Query("""
+            delete from CategoryHierarchy h
+            where h.descendantDef.id in :descendantIds
+              and h.ancestorDef.id not in :internalAncestorIds
+            """)
+        int deleteExternalLinksForDescendants(
+            @Param("descendantIds") List<UUID> descendantIds,
+            @Param("internalAncestorIds") List<UUID> internalAncestorIds
+        );
 
     @Query("""
             select h.ancestorDef

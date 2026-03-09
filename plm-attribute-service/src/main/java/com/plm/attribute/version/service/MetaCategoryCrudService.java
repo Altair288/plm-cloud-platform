@@ -9,6 +9,7 @@ import com.plm.common.api.dto.CreateCategoryRequestDto;
 import com.plm.common.api.dto.MetaCategoryDetailDto;
 import com.plm.common.api.dto.MetaCategoryLatestVersionDto;
 import com.plm.common.api.dto.UpdateCategoryRequestDto;
+import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;
 import com.plm.infrastructure.version.repository.CategoryHierarchyRepository;
@@ -87,7 +88,8 @@ public class MetaCategoryCrudService {
         def.setBusinessDomain(businessDomain);
         def.setParent(parent);
         def.setStatus(status);
-        def.setSortOrder(req.getSort() == null ? 0 : req.getSort());
+        Integer targetSort = req.getSort() == null ? nextSort(parent == null ? null : parent.getId()) : req.getSort();
+        def.setSortOrder(targetSort);
         def.setIsLeaf(Boolean.TRUE);
         def.setCreatedBy(normalizeOperator(operator));
         defRepository.save(def);
@@ -101,12 +103,17 @@ public class MetaCategoryCrudService {
         version.setCreatedBy(normalizeOperator(operator));
         versionRepository.save(version);
 
+        // 创建场景使用增量维护，避免触发整树重建带来的高频查询。
+        applyCreateNodeMeta(def, parent, name);
+
         if (parent != null && Boolean.TRUE.equals(parent.getIsLeaf())) {
             parent.setIsLeaf(Boolean.FALSE);
             defRepository.save(parent);
         }
 
-        rebuildTreeAndClosure();
+        normalizeSiblingOrders(parent == null ? null : parent.getId());
+
+        insertClosureForNewNode(def, parent);
         return detail(def.getId());
     }
 
@@ -126,6 +133,9 @@ public class MetaCategoryCrudService {
 
         String normalizedOperator = normalizeOperator(operator);
         boolean defChanged = false;
+        boolean parentChanged = false;
+        boolean sortChanged = false;
+        MetaCategoryDef oldParent = def.getParent();
 
         if (!isBlank(req.getBusinessDomain())) {
             String nextDomain = normalizeBusinessDomain(req.getBusinessDomain());
@@ -150,12 +160,14 @@ public class MetaCategoryCrudService {
             if (!Objects.equals(oldParentId, nextParentId)) {
                 def.setParent(nextParent);
                 defChanged = true;
+                parentChanged = true;
             }
         }
 
         if (req.getSort() != null && !Objects.equals(def.getSortOrder(), req.getSort())) {
             def.setSortOrder(req.getSort());
             defChanged = true;
+            sortChanged = true;
         }
 
         if (!isBlank(req.getStatus()) || !patchMode) {
@@ -191,7 +203,17 @@ public class MetaCategoryCrudService {
 
         if (defChanged) {
             defRepository.save(def);
-            rebuildTreeAndClosure();
+            if (parentChanged) {
+                if (req.getSort() == null) {
+                    def.setSortOrder(nextSort(def.getParent() == null ? null : def.getParent().getId()));
+                    defRepository.save(def);
+                }
+                applyParentMove(def, oldParent);
+                normalizeSiblingOrders(oldParent == null ? null : oldParent.getId());
+                normalizeSiblingOrders(def.getParent() == null ? null : def.getParent().getId());
+            } else if (sortChanged) {
+                normalizeSiblingOrders(def.getParent() == null ? null : def.getParent().getId());
+            }
         }
 
         return detail(def.getId());
@@ -200,6 +222,7 @@ public class MetaCategoryCrudService {
     @Transactional
     public int delete(UUID id, boolean cascade, boolean confirm, String operator) {
         MetaCategoryDef def = loadExisting(id);
+        MetaCategoryDef oldParent = def.getParent();
         if (isDeleted(def)) {
             throw new CategoryNotFoundException("category is already deleted: id=" + id);
         }
@@ -232,8 +255,8 @@ public class MetaCategoryCrudService {
         }
         defRepository.saveAll(targets);
 
-        // 软删除后重新计算叶子节点标记，避免父节点状态变化后叶子状态不一致。
-        rebuildTreeAndClosure();
+        refreshParentLeafIfNeeded(oldParent);
+        normalizeSiblingOrders(oldParent == null ? null : oldParent.getId());
         return changed;
     }
 
@@ -282,6 +305,14 @@ public class MetaCategoryCrudService {
             return;
         }
 
+        Map<UUID, String> latestNameByDefId = versionRepository.findByCategoryDefInAndIsLatestTrue(all).stream()
+                .filter(v -> v.getCategoryDef() != null)
+                .collect(Collectors.toMap(
+                        v -> v.getCategoryDef().getId(),
+                        v -> v.getDisplayName() == null || v.getDisplayName().isBlank() ? v.getCategoryDef().getCodeKey() : v.getDisplayName(),
+                        (a, b) -> a
+                ));
+
         Map<UUID, MetaCategoryDef> byId = all.stream().collect(Collectors.toMap(MetaCategoryDef::getId, d -> d));
         Map<UUID, List<MetaCategoryDef>> childrenByParent = new HashMap<>();
         for (MetaCategoryDef def : all) {
@@ -300,7 +331,7 @@ public class MetaCategoryCrudService {
         while (!queue.isEmpty()) {
             MetaCategoryDef current = queue.poll();
             MetaCategoryDef parent = current.getParent();
-            String currentName = latestTitleOrCode(current);
+            String currentName = latestTitleOrCode(current, latestNameByDefId);
 
             if (parent == null || !byId.containsKey(parent.getId())) {
                 current.setPath("/" + current.getCodeKey());
@@ -311,7 +342,9 @@ public class MetaCategoryCrudService {
                 current.setPath(parentPath + "/" + current.getCodeKey());
                 short parentDepth = parent.getDepth() == null ? 0 : parent.getDepth();
                 current.setDepth((short) (parentDepth + 1));
-                String parentFullPath = parent.getFullPathName() == null ? latestTitleOrCode(parent) : parent.getFullPathName();
+                String parentFullPath = parent.getFullPathName() == null
+                        ? latestTitleOrCode(parent, latestNameByDefId)
+                        : parent.getFullPathName();
                 current.setFullPathName(parentFullPath + "/" + currentName);
             }
 
@@ -328,11 +361,234 @@ public class MetaCategoryCrudService {
         defRepository.saveAll(all);
     }
 
-    private String latestTitleOrCode(MetaCategoryDef def) {
-        return versionRepository.findLatestByDef(def)
-                .map(MetaCategoryVersion::getDisplayName)
-                .filter(v -> !v.isBlank())
-                .orElse(def.getCodeKey());
+    private String latestTitleOrCode(MetaCategoryDef def, Map<UUID, String> latestNameByDefId) {
+        if (def == null || def.getId() == null) {
+            return null;
+        }
+        return latestNameByDefId.getOrDefault(def.getId(), def.getCodeKey());
+    }
+
+    private void applyParentMove(MetaCategoryDef root, MetaCategoryDef oldParent) {
+        MetaCategoryDef newParent = root.getParent();
+
+        List<MetaCategoryDef> subtree = new ArrayList<>();
+        subtree.add(root);
+        subtree.addAll(hierarchyRepository.findDescendantDefs(root.getId()));
+
+        recalculateSubtreeMeta(root, newParent, subtree);
+        rebuildSubtreeClosure(root, newParent, subtree);
+
+        refreshParentLeafIfNeeded(oldParent);
+        refreshParentLeafIfNeeded(newParent);
+    }
+
+    private void recalculateSubtreeMeta(MetaCategoryDef root, MetaCategoryDef newParent, List<MetaCategoryDef> subtree) {
+        if (subtree == null || subtree.isEmpty()) {
+            return;
+        }
+
+        Map<UUID, String> latestNameByDefId = versionRepository.findByCategoryDefInAndIsLatestTrue(subtree).stream()
+                .filter(v -> v.getCategoryDef() != null)
+                .collect(Collectors.toMap(
+                        v -> v.getCategoryDef().getId(),
+                        v -> v.getDisplayName() == null || v.getDisplayName().isBlank() ? v.getCategoryDef().getCodeKey() : v.getDisplayName(),
+                        (a, b) -> a
+                ));
+
+        Map<UUID, MetaCategoryDef> byId = subtree.stream().collect(Collectors.toMap(MetaCategoryDef::getId, d -> d));
+        Map<UUID, List<MetaCategoryDef>> childrenByParent = new HashMap<>();
+        for (MetaCategoryDef d : subtree) {
+            UUID p = d.getParent() == null ? null : d.getParent().getId();
+            if (p != null && byId.containsKey(p)) {
+                childrenByParent.computeIfAbsent(p, k -> new ArrayList<>()).add(d);
+            }
+        }
+
+        String rootName = latestTitleOrCode(root, latestNameByDefId);
+        if (newParent == null) {
+            root.setPath("/" + root.getCodeKey());
+            root.setDepth(resolveRootDepthBase());
+            root.setFullPathName(rootName);
+        } else {
+            String parentPath = newParent.getPath();
+            if (parentPath == null || parentPath.isBlank()) {
+                parentPath = "/" + newParent.getCodeKey();
+            }
+            String parentName = newParent.getFullPathName();
+            if (parentName == null || parentName.isBlank()) {
+                parentName = versionRepository.findLatestByDef(newParent)
+                        .map(MetaCategoryVersion::getDisplayName)
+                        .filter(v -> !v.isBlank())
+                        .orElse(newParent.getCodeKey());
+            }
+            short parentDepth = newParent.getDepth() == null ? 0 : newParent.getDepth();
+            root.setPath(parentPath + "/" + root.getCodeKey());
+            root.setDepth((short) (parentDepth + 1));
+            root.setFullPathName(parentName + "/" + rootName);
+        }
+
+        Queue<MetaCategoryDef> q = new ArrayDeque<>();
+        q.add(root);
+        while (!q.isEmpty()) {
+            MetaCategoryDef current = q.poll();
+            List<MetaCategoryDef> children = childrenByParent.getOrDefault(current.getId(), List.of());
+            current.setIsLeaf(children.isEmpty());
+
+            for (MetaCategoryDef child : children) {
+                String childName = latestTitleOrCode(child, latestNameByDefId);
+                String currentPath = current.getPath() == null ? "/" + current.getCodeKey() : current.getPath();
+                String currentName = current.getFullPathName() == null
+                        ? latestTitleOrCode(current, latestNameByDefId)
+                        : current.getFullPathName();
+                short currentDepth = current.getDepth() == null ? 0 : current.getDepth();
+
+                child.setPath(currentPath + "/" + child.getCodeKey());
+                child.setDepth((short) (currentDepth + 1));
+                child.setFullPathName(currentName + "/" + childName);
+                q.add(child);
+            }
+        }
+
+        defRepository.saveAll(subtree);
+    }
+
+    private void rebuildSubtreeClosure(MetaCategoryDef root, MetaCategoryDef newParent, List<MetaCategoryDef> subtree) {
+        List<UUID> subtreeIds = subtree.stream().map(MetaCategoryDef::getId).toList();
+        if (subtreeIds.isEmpty()) {
+            return;
+        }
+
+        hierarchyRepository.deleteExternalLinksForDescendants(subtreeIds, subtreeIds);
+
+        if (newParent == null) {
+            return;
+        }
+
+        List<MetaCategoryDef> newAncestors = hierarchyRepository.findAncestorsByDescendant(newParent.getId());
+        if (newAncestors.isEmpty()) {
+            newAncestors = List.of(newParent);
+        }
+
+        List<CategoryHierarchy> rows = new ArrayList<>();
+        for (MetaCategoryDef ancestor : newAncestors) {
+            short ancestorDepth = ancestor.getDepth() == null ? 0 : ancestor.getDepth();
+            for (MetaCategoryDef node : subtree) {
+                if (ancestor.getId().equals(node.getId())) {
+                    continue;
+                }
+                short nodeDepth = node.getDepth() == null ? ancestorDepth : node.getDepth();
+                short distance = (short) Math.max(nodeDepth - ancestorDepth, 0);
+                CategoryHierarchy one = new CategoryHierarchy();
+                one.setAncestorDef(ancestor);
+                one.setDescendantDef(node);
+                one.setDistance(distance);
+                rows.add(one);
+            }
+        }
+
+        if (!rows.isEmpty()) {
+            hierarchyRepository.saveAll(rows);
+        }
+    }
+
+    private void refreshParentLeafIfNeeded(MetaCategoryDef parent) {
+        if (parent == null || parent.getId() == null) {
+            return;
+        }
+        if (isDeleted(parent)) {
+            return;
+        }
+        boolean hasActiveChildren = defRepository.countActiveChildren(parent.getId()) > 0;
+        boolean nextLeaf = !hasActiveChildren;
+        if (!Objects.equals(parent.getIsLeaf(), nextLeaf)) {
+            parent.setIsLeaf(nextLeaf);
+            defRepository.save(parent);
+        }
+    }
+
+    private int nextSort(UUID parentId) {
+        Integer maxSort = defRepository.findMaxSortByParentId(parentId);
+        int base = maxSort == null ? 0 : maxSort;
+        return base + 1;
+    }
+
+    private void normalizeSiblingOrders(UUID parentId) {
+        List<MetaCategoryDef> siblings = defRepository.findActiveSiblingsByParentId(parentId);
+        if (siblings.isEmpty()) {
+            return;
+        }
+        int expected = 1;
+        boolean changed = false;
+        for (MetaCategoryDef sibling : siblings) {
+            if (!Objects.equals(sibling.getSortOrder(), expected)) {
+                sibling.setSortOrder(expected);
+                changed = true;
+            }
+            expected++;
+        }
+        if (changed) {
+            defRepository.saveAll(siblings);
+        }
+    }
+
+    private void applyCreateNodeMeta(MetaCategoryDef def, MetaCategoryDef parent, String displayName) {
+        if (parent == null) {
+            def.setPath("/" + def.getCodeKey());
+            def.setDepth(resolveRootDepthBase());
+            def.setFullPathName(displayName);
+            def.setIsLeaf(Boolean.TRUE);
+            defRepository.save(def);
+            return;
+        }
+
+        String parentPath = parent.getPath();
+        if (parentPath == null || parentPath.isBlank()) {
+            parentPath = "/" + parent.getCodeKey();
+        }
+
+        String parentName = parent.getFullPathName();
+        if (parentName == null || parentName.isBlank()) {
+            parentName = versionRepository.findLatestByDef(parent)
+                    .map(MetaCategoryVersion::getDisplayName)
+                    .filter(v -> !v.isBlank())
+                    .orElse(parent.getCodeKey());
+        }
+
+        short parentDepth = parent.getDepth() == null ? 0 : parent.getDepth();
+        def.setPath(parentPath + "/" + def.getCodeKey());
+        def.setDepth((short) (parentDepth + 1));
+        def.setFullPathName(parentName + "/" + displayName);
+        def.setIsLeaf(Boolean.TRUE);
+        defRepository.save(def);
+    }
+
+    private void insertClosureForNewNode(MetaCategoryDef def, MetaCategoryDef parent) {
+        List<CategoryHierarchy> rows = new ArrayList<>();
+
+        CategoryHierarchy self = new CategoryHierarchy();
+        self.setAncestorDef(def);
+        self.setDescendantDef(def);
+        self.setDistance((short) 0);
+        rows.add(self);
+
+        if (parent != null) {
+            List<MetaCategoryDef> ancestors = hierarchyRepository.findAncestorsByDescendant(parent.getId());
+            if (ancestors.isEmpty()) {
+                ancestors = List.of(parent);
+            }
+
+            short distance = 1;
+            for (int i = ancestors.size() - 1; i >= 0; i--) {
+                MetaCategoryDef ancestor = ancestors.get(i);
+                CategoryHierarchy one = new CategoryHierarchy();
+                one.setAncestorDef(ancestor);
+                one.setDescendantDef(def);
+                one.setDistance(distance++);
+                rows.add(one);
+            }
+        }
+
+        hierarchyRepository.saveAll(rows);
     }
 
     private void ensureNoCycle(UUID currentId, UUID nextParentId) {

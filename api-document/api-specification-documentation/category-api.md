@@ -259,3 +259,329 @@
 - `taxonomy not supported: {code}`
 - `category not found: id={id}`
 - `scope node not found: id={id}`
+
+---
+
+## 8. 本次新增（2026-03-09）
+
+> 本节为本次迭代新增内容，与上文“通用分类查询接口”区分。
+>
+> 上文 1~7 章节继续描述查询体系（`nodes/path/search/nodes:children-batch/taxonomies`）；
+> 本节仅描述新增的分类管理写接口（CRUD）与主标识语义调整。
+
+### 8.1 变更摘要
+
+- 新增分类写接口：创建、全量更新、局部更新、删除（软删除）。
+- 分类主标识语义调整为：`(business_domain, code_key)`。
+- `code` 创建后不可修改。
+- `businessDomain` 当前采用静态枚举，创建后不可修改。
+- 删除默认不级联；存在子节点时需前端二次确认后级联删除。
+
+### 8.2 写接口清单（新增）
+
+| 功能 | 方法 | 路径 | 说明 |
+|---|---|---|---|
+| 创建分类 | `POST` | `/api/meta/categories` | 新增 def + v1 version |
+| 全量编辑 | `PUT` | `/api/meta/categories/{id}` | 按全量语义更新 |
+| 局部编辑 | `PATCH` | `/api/meta/categories/{id}` | 按局部语义更新 |
+| 删除分类 | `DELETE` | `/api/meta/categories/{id}` | 软删除；支持可选级联 |
+
+### 8.3 请求字段（写接口）
+
+```json
+{
+  "code": "27121504",
+  "name": "Machine screws",
+  "businessDomain": "MATERIAL",
+  "parentId": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
+  "status": "CREATED",
+  "description": "用于连接紧固件分类",
+  "sort": 120
+}
+```
+
+字段说明：
+
+- `code`：分类编码，创建后不可变。
+- `name`：分类名称，写入 `meta_category_version.display_name`。
+- `businessDomain`：业务领域，写入 `meta_category_def.business_domain`。
+- `parentId`：父分类 ID，可为空（根节点）。
+- `status`：接口语义状态（见 8.4）。
+- `description`：写入 `meta_category_version.structure_json.description`。
+- `sort`：排序值，写入 `meta_category_def.sort_order`。
+
+### 8.4 状态映射（写接口）
+
+- `CREATED -> draft`
+- `EFFECTIVE -> active`
+- `INVALID -> inactive`
+- 删除时内部状态：`deleted`
+
+### 8.5 删除语义（重点）
+
+- 默认：`cascade=false`，仅删除本级。
+- 当目标节点存在子节点时：
+  - 若未携带 `cascade=true&confirm=true`，返回冲突错误。
+  - 前端确认后，携带 `cascade=true&confirm=true` 再次调用执行级联软删。
+
+删除接口参数：
+
+- `cascade`：是否级联删除（默认 `false`）。
+- `confirm`：是否确认级联删除（默认 `false`）。
+
+### 8.6 新增错误码
+
+- `CATEGORY_HAS_CHILDREN`：存在子节点，需确认级联删除（HTTP 409）。
+- `CATEGORY_NOT_FOUND`：分类不存在或不可用（HTTP 404）。
+
+### 8.7 版本策略（写接口）
+
+- 创建：生成 `version_no=1`，`is_latest=true`。
+- 编辑：内容变化时新增版本，旧版本 `is_latest=false`。
+- `versionDate` 规则：
+  - `v1`：创建时间。
+  - `v2+`：每次编辑生成新版本时的 `created_at`。
+
+### 8.8 数据库迁移与索引（本次）
+
+- 新增迁移：`V17__category_business_domain_and_crud_indexes.sql`
+- 主要内容：
+  - 新增 `meta_category_def.business_domain` 并回填历史值。
+  - 唯一约束由 `code_key` 调整为 `(business_domain, code_key)`。
+  - 新增写场景索引：
+    - `idx_meta_cat_def_domain_parent_status_sort`
+    - `idx_meta_cat_def_domain_code`
+
+### 8.9 与历史文档边界说明
+
+- 1~7 章节：通用分类查询接口（既有内容）。
+- 8 章节：本次新增 CRUD 与主标识演进（增量内容）。
+
+### 8.10 联调示例（成功）
+
+#### 8.10.1 创建分类
+
+- 方法：`POST`
+- 路径：`/api/meta/categories`
+
+请求示例：
+
+```http
+POST /api/meta/categories?operator=alice HTTP/1.1
+Content-Type: application/json
+```
+
+```json
+{
+  "code": "27121504",
+  "name": "Machine screws",
+  "businessDomain": "MATERIAL",
+  "parentId": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
+  "status": "CREATED",
+  "description": "用于连接紧固件分类",
+  "sort": 120
+}
+```
+
+响应示例（200）：
+
+```json
+{
+  "id": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+  "code": "27121504",
+  "businessDomain": "MATERIAL",
+  "status": "CREATED",
+  "parentId": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
+  "rootId": "f1e1f3f8-80c3-4702-a4c1-2f9f5a34ad5a",
+  "rootCode": "27",
+  "path": "/27/2712/271215/27121504",
+  "level": 4,
+  "depth": 3,
+  "sort": 120,
+  "createdBy": "alice",
+  "createdAt": "2026-03-09T09:10:00Z",
+  "latestVersion": {
+    "versionNo": 1,
+    "versionDate": "2026-03-09T09:10:00Z",
+    "name": "Machine screws",
+    "description": "用于连接紧固件分类",
+    "updatedBy": "alice"
+  }
+}
+```
+
+#### 8.10.2 全量更新分类
+
+- 方法：`PUT`
+- 路径：`/api/meta/categories/{id}`
+
+请求示例：
+
+```http
+PUT /api/meta/categories/8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1?operator=bob HTTP/1.1
+Content-Type: application/json
+```
+
+```json
+{
+  "name": "Machine screws and bolts",
+  "businessDomain": "MATERIAL",
+  "parentId": "f40e8e8e-b2f6-4f75-a6d2-f4254e91dbf7",
+  "status": "EFFECTIVE",
+  "description": "更新描述",
+  "sort": 130
+}
+```
+
+响应示例（200）：
+
+```json
+{
+  "id": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+  "code": "27121504",
+  "businessDomain": "MATERIAL",
+  "status": "EFFECTIVE",
+  "parentId": "f40e8e8e-b2f6-4f75-a6d2-f4254e91dbf7",
+  "rootId": "f1e1f3f8-80c3-4702-a4c1-2f9f5a34ad5a",
+  "rootCode": "27",
+  "path": "/27/2712/271215/27121504",
+  "level": 4,
+  "depth": 3,
+  "sort": 130,
+  "createdBy": "alice",
+  "createdAt": "2026-03-09T09:10:00Z",
+  "latestVersion": {
+    "versionNo": 2,
+    "versionDate": "2026-03-09T09:25:00Z",
+    "name": "Machine screws and bolts",
+    "description": "更新描述",
+    "updatedBy": "bob"
+  }
+}
+```
+
+#### 8.10.3 局部更新分类
+
+- 方法：`PATCH`
+- 路径：`/api/meta/categories/{id}`
+
+请求示例：
+
+```http
+PATCH /api/meta/categories/8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1?operator=bob HTTP/1.1
+Content-Type: application/json
+```
+
+```json
+{
+  "description": "仅更新描述"
+}
+```
+
+响应示例（200）：
+
+```json
+{
+  "id": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+  "code": "27121504",
+  "businessDomain": "MATERIAL",
+  "status": "EFFECTIVE",
+  "parentId": "f40e8e8e-b2f6-4f75-a6d2-f4254e91dbf7",
+  "rootId": "f1e1f3f8-80c3-4702-a4c1-2f9f5a34ad5a",
+  "rootCode": "27",
+  "path": "/27/2712/271215/27121504",
+  "level": 4,
+  "depth": 3,
+  "sort": 130,
+  "createdBy": "alice",
+  "createdAt": "2026-03-09T09:10:00Z",
+  "latestVersion": {
+    "versionNo": 3,
+    "versionDate": "2026-03-09T09:40:00Z",
+    "name": "Machine screws and bolts",
+    "description": "仅更新描述",
+    "updatedBy": "bob"
+  }
+}
+```
+
+#### 8.10.4 删除分类
+
+- 方法：`DELETE`
+- 路径：`/api/meta/categories/{id}`
+
+请求示例（仅本级）：
+
+```http
+DELETE /api/meta/categories/8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1?cascade=false&confirm=false&operator=alice HTTP/1.1
+```
+
+响应示例（200）：
+
+```json
+{
+  "id": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+  "cascade": false,
+  "deletedCount": 1
+}
+```
+
+请求示例（级联）：
+
+```http
+DELETE /api/meta/categories/f1e1f3f8-80c3-4702-a4c1-2f9f5a34ad5a?cascade=true&confirm=true&operator=alice HTTP/1.1
+```
+
+响应示例（200）：
+
+```json
+{
+  "id": "f1e1f3f8-80c3-4702-a4c1-2f9f5a34ad5a",
+  "cascade": true,
+  "deletedCount": 12
+}
+```
+
+### 8.11 联调示例（失败）
+
+#### 8.11.1 存在子节点但未确认级联
+
+响应示例（409）：
+
+```json
+{
+  "timestamp": "2026-03-09T10:00:00+08:00",
+  "status": 409,
+  "error": "Conflict",
+  "code": "CATEGORY_HAS_CHILDREN",
+  "message": "category has children, please confirm cascade deletion with cascade=true&confirm=true"
+}
+```
+
+#### 8.11.2 分类不存在
+
+响应示例（404）：
+
+```json
+{
+  "timestamp": "2026-03-09T10:01:00+08:00",
+  "status": 404,
+  "error": "Not Found",
+  "code": "CATEGORY_NOT_FOUND",
+  "message": "category not found: id=00000000-0000-0000-0000-000000000000"
+}
+```
+
+#### 8.11.3 编码或业务域非法
+
+响应示例（400）：
+
+```json
+{
+  "timestamp": "2026-03-09T10:02:00+08:00",
+  "status": 400,
+  "error": "Bad Request",
+  "code": "INVALID_ARGUMENT",
+  "message": "unsupported businessDomain: UNKNOWN"
+}
+```

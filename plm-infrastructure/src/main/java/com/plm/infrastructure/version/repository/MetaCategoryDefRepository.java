@@ -26,6 +26,33 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
         List<MetaCategoryDef> findByParentIdOrderBySortOrderAscCodeKeyAsc(UUID parentId);
         List<MetaCategoryDef> findByParentIdInOrderBySortOrderAscCodeKeyAsc(Collection<UUID> parentIds);
 
+        @Query("""
+            select count(d)
+            from MetaCategoryDef d
+            where d.parent.id = :parentId
+              and (d.status is null or lower(d.status) <> 'deleted')
+            """)
+        long countActiveChildren(@Param("parentId") UUID parentId);
+
+        @Query("""
+            select coalesce(max(d.sortOrder), 0)
+            from MetaCategoryDef d
+            where ((:parentId is null and d.parent is null)
+                or (:parentId is not null and d.parent.id = :parentId))
+              and (d.status is null or lower(d.status) <> 'deleted')
+            """)
+        Integer findMaxSortByParentId(@Param("parentId") UUID parentId);
+
+        @Query("""
+            select d
+            from MetaCategoryDef d
+            where ((:parentId is null and d.parent is null)
+                or (:parentId is not null and d.parent.id = :parentId))
+              and (d.status is null or lower(d.status) <> 'deleted')
+            order by d.sortOrder asc, d.codeKey asc
+            """)
+        List<MetaCategoryDef> findActiveSiblingsByParentId(@Param("parentId") UUID parentId);
+
     // 批量查询已有的 codeKey，降低并发导入时逐条 exists 造成的竞态/性能问题
     List<MetaCategoryDef> findByCodeKeyIn(Collection<String> codeKeys);
 
