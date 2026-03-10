@@ -20,6 +20,11 @@ public class MetaCategoryCrudController {
         this.crudService = crudService;
     }
 
+    @GetMapping("/{id}")
+    public MetaCategoryDetailDto detail(@PathVariable("id") UUID id) {
+        return crudService.detail(id);
+    }
+
     @PostMapping
     public MetaCategoryDetailDto create(
             @RequestBody CreateCategoryRequestDto request,

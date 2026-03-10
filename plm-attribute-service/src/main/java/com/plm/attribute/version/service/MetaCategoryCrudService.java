@@ -8,6 +8,7 @@ import com.plm.attribute.version.exception.CategoryNotFoundException;
 import com.plm.common.api.dto.CreateCategoryRequestDto;
 import com.plm.common.api.dto.MetaCategoryDetailDto;
 import com.plm.common.api.dto.MetaCategoryLatestVersionDto;
+import com.plm.common.api.dto.MetaCategoryVersionHistoryDto;
 import com.plm.common.api.dto.UpdateCategoryRequestDto;
 import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
@@ -265,24 +266,43 @@ public class MetaCategoryCrudService {
         MetaCategoryDef def = loadExisting(id);
         MetaCategoryVersion latest = versionRepository.findLatestByDef(def)
                 .orElseThrow(() -> new IllegalArgumentException("category has no latest version: id=" + id));
+        List<MetaCategoryVersion> versions = versionRepository.findByCategoryDefOrderByVersionNoAsc(def);
 
         List<MetaCategoryDef> ancestors = hierarchyRepository.findAncestorsByDescendant(id);
         MetaCategoryDef root = ancestors.isEmpty() ? def : ancestors.get(0);
+        MetaCategoryDef parent = def.getParent();
+
+        String parentName = null;
+        if (parent != null) {
+            parentName = versionRepository.findLatestByDef(parent)
+                .map(MetaCategoryVersion::getDisplayName)
+                .orElse(parent.getCodeKey());
+        }
+        String rootName = versionRepository.findLatestByDef(root)
+            .map(MetaCategoryVersion::getDisplayName)
+            .orElse(root.getCodeKey());
 
         MetaCategoryDetailDto dto = new MetaCategoryDetailDto();
         dto.setId(def.getId());
         dto.setCode(def.getCodeKey());
         dto.setBusinessDomain(def.getBusinessDomain());
         dto.setStatus(mapDbStatusToApi(def.getStatus()));
-        dto.setParentId(def.getParent() == null ? null : def.getParent().getId());
+        dto.setParentId(parent == null ? null : parent.getId());
+        dto.setParentCode(parent == null ? null : parent.getCodeKey());
+        dto.setParentName(parentName);
         dto.setRootId(root == null ? def.getId() : root.getId());
         dto.setRootCode(root == null ? def.getCodeKey() : root.getCodeKey());
+        dto.setRootName(rootName);
         dto.setPath(def.getPath());
         dto.setDepth(def.getDepth());
         dto.setLevel(depthToLevel(def.getDepth(), resolveRootDepthBase()));
         dto.setSort(def.getSortOrder());
+        dto.setDescription(readDescription(latest.getStructureJson()));
         dto.setCreatedBy(def.getCreatedBy());
         dto.setCreatedAt(def.getCreatedAt());
+        dto.setModifiedBy(latest.getCreatedBy());
+        dto.setModifiedAt(latest.getCreatedAt());
+        dto.setVersion(latest.getVersionNo());
 
         MetaCategoryLatestVersionDto latestDto = new MetaCategoryLatestVersionDto();
         latestDto.setVersionNo(latest.getVersionNo());
@@ -291,6 +311,22 @@ public class MetaCategoryCrudService {
         latestDto.setDescription(readDescription(latest.getStructureJson()));
         latestDto.setUpdatedBy(latest.getCreatedBy());
         dto.setLatestVersion(latestDto);
+
+        List<MetaCategoryVersionHistoryDto> history = versions.stream()
+                .sorted(Comparator.comparing(MetaCategoryVersion::getVersionNo).reversed())
+                .map(v -> {
+                    MetaCategoryVersionHistoryDto h = new MetaCategoryVersionHistoryDto();
+                    h.setVersionNo(v.getVersionNo());
+                    h.setVersionDate(v.getCreatedAt());
+                    h.setName(v.getDisplayName());
+                    h.setDescription(readDescription(v.getStructureJson()));
+                    h.setUpdatedBy(v.getCreatedBy());
+                    h.setLatest(Boolean.TRUE.equals(v.getIsLatest()));
+                    return h;
+                })
+                .toList();
+        dto.setHistoryVersions(history);
+
         return dto;
     }
 

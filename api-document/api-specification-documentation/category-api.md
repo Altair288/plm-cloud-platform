@@ -281,10 +281,90 @@
 
 | 功能 | 方法 | 路径 | 说明 |
 |---|---|---|---|
+| 分类详情 | `GET` | `/api/meta/categories/{id}` | 返回完整详细信息（含当前版本与历史版本） |
 | 创建分类 | `POST` | `/api/meta/categories` | 新增 def + v1 version |
 | 全量编辑 | `PUT` | `/api/meta/categories/{id}` | 按全量语义更新 |
 | 局部编辑 | `PATCH` | `/api/meta/categories/{id}` | 按局部语义更新 |
 | 删除分类 | `DELETE` | `/api/meta/categories/{id}` | 软删除；支持可选级联 |
+
+### 8.2.1 分类详情接口（新增）
+
+- 方法：`GET`
+- 路径：`/api/meta/categories/{id}`
+
+路径参数：
+
+- `id`：分类 ID（UUID）。
+
+返回字段覆盖：
+
+- 编码与名称：`code`、`latestVersion.name`。
+- 业务与状态：`businessDomain`、`status`。
+- 上下级关系：`parentId/parentCode/parentName`、`rootId/rootCode/rootName`。
+- 结构信息：`path`、`level`、`depth`、`sort`。
+- 说明信息：`description`。
+- 审计信息：`createdBy/createdAt`、`modifiedBy/modifiedAt`。
+- 版本信息：`version`、`latestVersion`、`historyVersions`。
+
+响应示例（200）：
+
+```json
+{
+  "id": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+  "code": "27121504",
+  "businessDomain": "MATERIAL",
+  "status": "EFFECTIVE",
+  "parentId": "f40e8e8e-b2f6-4f75-a6d2-f4254e91dbf7",
+  "parentCode": "271215",
+  "parentName": "Nuts",
+  "rootId": "f1e1f3f8-80c3-4702-a4c1-2f9f5a34ad5a",
+  "rootCode": "27",
+  "rootName": "Tools and General Machinery",
+  "path": "/27/2712/271215/27121504",
+  "level": 4,
+  "depth": 3,
+  "sort": 12,
+  "description": "仅更新描述",
+  "createdBy": "alice",
+  "createdAt": "2026-03-09T09:10:00Z",
+  "modifiedBy": "bob",
+  "modifiedAt": "2026-03-09T09:40:00Z",
+  "version": 3,
+  "latestVersion": {
+    "versionNo": 3,
+    "versionDate": "2026-03-09T09:40:00Z",
+    "name": "Machine screws and bolts",
+    "description": "仅更新描述",
+    "updatedBy": "bob"
+  },
+  "historyVersions": [
+    {
+      "versionNo": 3,
+      "versionDate": "2026-03-09T09:40:00Z",
+      "name": "Machine screws and bolts",
+      "description": "仅更新描述",
+      "updatedBy": "bob",
+      "latest": true
+    },
+    {
+      "versionNo": 2,
+      "versionDate": "2026-03-09T09:25:00Z",
+      "name": "Machine screws and bolts",
+      "description": "更新描述",
+      "updatedBy": "bob",
+      "latest": false
+    },
+    {
+      "versionNo": 1,
+      "versionDate": "2026-03-09T09:10:00Z",
+      "name": "Machine screws",
+      "description": "用于连接紧固件分类",
+      "updatedBy": "alice",
+      "latest": false
+    }
+  ]
+}
+```
 
 ### 8.3 请求字段（写接口）
 
