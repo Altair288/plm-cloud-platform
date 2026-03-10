@@ -128,7 +128,11 @@ public class MetaCategoryGenericQueryService {
         }
         List<MetaCategoryDef> children = defRepository.findByParentIdInOrderBySortOrderAscCodeKeyAsc(req.getParentIds());
         String status = normalizeStatus(req.getStatus());
-        if (status != null && !status.isBlank()) {
+        if ("ALL".equalsIgnoreCase(status)) {
+            children = children.stream()
+                .filter(d -> d.getStatus() == null || !"deleted".equalsIgnoreCase(d.getStatus()))
+                .toList();
+        } else if (status != null && !status.isBlank()) {
             children = children.stream()
                     .filter(d -> d.getStatus() != null && d.getStatus().equalsIgnoreCase(status))
                     .toList();
@@ -271,6 +275,6 @@ public class MetaCategoryGenericQueryService {
 
     private String normalizeStatus(String status) {
         String normalized = trimToNull(status);
-        return normalized == null ? "ACTIVE" : normalized;
+        return normalized == null ? "ALL" : normalized;
     }
 }

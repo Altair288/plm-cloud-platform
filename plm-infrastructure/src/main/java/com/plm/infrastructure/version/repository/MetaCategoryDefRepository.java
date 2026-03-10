@@ -103,7 +103,13 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                             ((:parentId is null and d.parent is null)
                                 or (:parentId is not null and d.parent.id = :parentId))
                             and (:depth is null or d.depth = :depth)
-                            and (:status is null or :status = '' or lower(d.status) = lower(:status))
+                            and (
+                                ((:status is null or :status = '' or lower(:status) = 'all')
+                                    and (d.status is null or lower(d.status) <> 'deleted'))
+                                or
+                                ((:status is not null and :status <> '' and lower(:status) <> 'all')
+                                    and lower(coalesce(d.status, '')) = lower(:status))
+                            )
                             and (:keyword is null or :keyword = ''
                                 or lower(d.codeKey) like lower(concat('%', :keyword, '%'))
                                 or lower(coalesce(v.displayName, '')) like lower(concat('%', :keyword, '%')))
@@ -118,7 +124,13 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                             ((:parentId is null and d.parent is null)
                                 or (:parentId is not null and d.parent.id = :parentId))
                             and (:depth is null or d.depth = :depth)
-                            and (:status is null or :status = '' or lower(d.status) = lower(:status))
+                            and (
+                                ((:status is null or :status = '' or lower(:status) = 'all')
+                                    and (d.status is null or lower(d.status) <> 'deleted'))
+                                or
+                                ((:status is not null and :status <> '' and lower(:status) <> 'all')
+                                    and lower(coalesce(d.status, '')) = lower(:status))
+                            )
                             and (:keyword is null or :keyword = ''
                                 or lower(d.codeKey) like lower(concat('%', :keyword, '%'))
                                 or lower(coalesce(v.displayName, '')) like lower(concat('%', :keyword, '%')))
@@ -139,7 +151,13 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                         left join MetaCategoryVersion v
                             on v.categoryDef = d and v.isLatest = true
                         where
-                            (:status is null or :status = '' or lower(d.status) = lower(:status))
+                            (
+                                ((:status is null or :status = '' or lower(:status) = 'all')
+                                    and (d.status is null or lower(d.status) <> 'deleted'))
+                                or
+                                ((:status is not null and :status <> '' and lower(:status) <> 'all')
+                                    and lower(coalesce(d.status, '')) = lower(:status))
+                            )
                             and (:keyword is not null and :keyword <> '')
                             and (
                                 lower(d.codeKey) like lower(concat('%', :keyword, '%'))
@@ -164,7 +182,13 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                         left join MetaCategoryVersion v
                             on v.categoryDef = d and v.isLatest = true
                         where
-                            (:status is null or :status = '' or lower(d.status) = lower(:status))
+                            (
+                                ((:status is null or :status = '' or lower(:status) = 'all')
+                                    and (d.status is null or lower(d.status) <> 'deleted'))
+                                or
+                                ((:status is not null and :status <> '' and lower(:status) <> 'all')
+                                    and lower(coalesce(d.status, '')) = lower(:status))
+                            )
                             and (:keyword is not null and :keyword <> '')
                             and (
                                 lower(d.codeKey) like lower(concat('%', :keyword, '%'))

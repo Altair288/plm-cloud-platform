@@ -1,6 +1,6 @@
 # 分类通用 API 文档（plm-attribute-service）
 
-更新时间：2026-02-28
+更新时间：2026-03-10
 
 > 本文为分类接口正式文档。
 >
@@ -75,7 +75,7 @@
 | parentId | UUID | 否 | null | 父节点 ID；为空查询根节点 |
 | level | int | 否 | - | 层级（从 1 开始） |
 | keyword | string | 否 | - | 当前层关键字过滤（编码/名称） |
-| status | string | 否 | ACTIVE | 状态过滤 |
+| status | string | 否 | ACTIVE | 状态过滤；支持 `ACTIVE/INACTIVE/DRAFT/ALL`，其中 `ALL` 表示“除 deleted 外全部状态” |
 | page | int | 否 | 0 | 0-based |
 | size | int | 否 | 50 | 每页大小 |
 
@@ -111,7 +111,7 @@
 | keyword | string | 是 | - | 编码/名称关键字 |
 | scopeNodeId | UUID | 否 | - | 限定在该节点子树内 |
 | maxDepth | int | 否 | - | 相对 `scopeNodeId` 的向下深度 |
-| status | string | 否 | ACTIVE | 状态过滤 |
+| status | string | 否 | ACTIVE | 状态过滤；支持 `ACTIVE/INACTIVE/DRAFT/ALL`，其中 `ALL` 表示“除 deleted 外全部状态” |
 | page | int | 否 | 0 | 0-based |
 | size | int | 否 | 20 | 每页大小 |
 
@@ -295,8 +295,7 @@
   "businessDomain": "MATERIAL",
   "parentId": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
   "status": "CREATED",
-  "description": "用于连接紧固件分类",
-  "sort": 120
+  "description": "用于连接紧固件分类"
 }
 ```
 
@@ -308,7 +307,18 @@
 - `parentId`：父分类 ID，可为空（根节点）。
 - `status`：接口语义状态（见 8.4）。
 - `description`：写入 `meta_category_version.structure_json.description`。
-- `sort`：排序值，写入 `meta_category_def.sort_order`。
+- `sort`：可选；若不传由系统自动分配（同级最大值 + 1）。
+
+### 8.3.1 排序规则（自动化）
+
+- 创建时：`sort` 缺省自动分配为同级 `max(sort) + 1`。
+- 同级拖拽或改序时：按目标顺序自动重排为连续序号（1..N）。
+- 跨父节点移动时：
+  - 节点自动插入目标父级同级序列，
+  - 旧父级与新父级都执行连续重排（1..N）。
+- 删除时：删除节点后，原父级同级序列自动重排（1..N）。
+
+说明：管理端不建议让用户手填排序值，优先使用拖拽与系统自动重排。
 
 ### 8.4 状态映射（写接口）
 
@@ -357,6 +367,12 @@
 - 1~7 章节：通用分类查询接口（既有内容）。
 - 8 章节：本次新增 CRUD 与主标识演进（增量内容）。
 
+### 8.9.1 管理态状态查询（新增）
+
+- 管理界面查询建议显式传 `status=ALL`。
+- `ALL` 语义：返回 `draft/active/inactive`，排除 `deleted`。
+- 业务展示界面可继续使用 `status=ACTIVE` 只看生效分类。
+
 ### 8.10 联调示例（成功）
 
 #### 8.10.1 创建分类
@@ -378,8 +394,7 @@ Content-Type: application/json
   "businessDomain": "MATERIAL",
   "parentId": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
   "status": "CREATED",
-  "description": "用于连接紧固件分类",
-  "sort": 120
+  "description": "用于连接紧固件分类"
 }
 ```
 
@@ -397,7 +412,7 @@ Content-Type: application/json
   "path": "/27/2712/271215/27121504",
   "level": 4,
   "depth": 3,
-  "sort": 120,
+  "sort": 57,
   "createdBy": "alice",
   "createdAt": "2026-03-09T09:10:00Z",
   "latestVersion": {
@@ -428,8 +443,7 @@ Content-Type: application/json
   "businessDomain": "MATERIAL",
   "parentId": "f40e8e8e-b2f6-4f75-a6d2-f4254e91dbf7",
   "status": "EFFECTIVE",
-  "description": "更新描述",
-  "sort": 130
+  "description": "更新描述"
 }
 ```
 
@@ -447,7 +461,7 @@ Content-Type: application/json
   "path": "/27/2712/271215/27121504",
   "level": 4,
   "depth": 3,
-  "sort": 130,
+  "sort": 12,
   "createdBy": "alice",
   "createdAt": "2026-03-09T09:10:00Z",
   "latestVersion": {
@@ -492,7 +506,7 @@ Content-Type: application/json
   "path": "/27/2712/271215/27121504",
   "level": 4,
   "depth": 3,
-  "sort": 130,
+  "sort": 12,
   "createdBy": "alice",
   "createdAt": "2026-03-09T09:10:00Z",
   "latestVersion": {
@@ -585,3 +599,16 @@ DELETE /api/meta/categories/f1e1f3f8-80c3-4702-a4c1-2f9f5a34ad5a?cascade=true&co
   "message": "unsupported businessDomain: UNKNOWN"
 }
 ```
+
+#### 8.11.4 管理态查询全部状态
+
+请求示例：
+
+```http
+GET /api/meta/categories/nodes?taxonomy=UNSPSC&level=1&status=ALL&page=0&size=200 HTTP/1.1
+```
+
+说明：
+
+- 返回 `draft/active/inactive`。
+- 不返回 `deleted`。
