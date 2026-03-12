@@ -8,7 +8,10 @@ import com.plm.attribute.version.exception.CategoryNotFoundException;
 import com.plm.common.api.dto.CreateCategoryRequestDto;
 import com.plm.common.api.dto.MetaCategoryDetailDto;
 import com.plm.common.api.dto.MetaCategoryLatestVersionDto;
+import com.plm.common.api.dto.MetaCategoryVersionCompareDiffDto;
+import com.plm.common.api.dto.MetaCategoryVersionCompareDto;
 import com.plm.common.api.dto.MetaCategoryVersionHistoryDto;
+import com.plm.common.api.dto.MetaCategoryVersionSnapshotDto;
 import com.plm.common.api.dto.UpdateCategoryRequestDto;
 import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
@@ -28,6 +31,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -316,6 +321,7 @@ public class MetaCategoryCrudService {
                 .sorted(Comparator.comparing(MetaCategoryVersion::getVersionNo).reversed())
                 .map(v -> {
                     MetaCategoryVersionHistoryDto h = new MetaCategoryVersionHistoryDto();
+                    h.setVersionId(v.getId());
                     h.setVersionNo(v.getVersionNo());
                     h.setVersionDate(v.getCreatedAt());
                     h.setName(v.getDisplayName());
@@ -328,6 +334,65 @@ public class MetaCategoryCrudService {
         dto.setHistoryVersions(history);
 
         return dto;
+    }
+
+    @Transactional(readOnly = true)
+    public MetaCategoryVersionCompareDto compareVersions(UUID categoryId, UUID baseVersionId, UUID targetVersionId) {
+        if (baseVersionId == null) {
+            throw new IllegalArgumentException("baseVersionId is required");
+        }
+        if (targetVersionId == null) {
+            throw new IllegalArgumentException("targetVersionId is required");
+        }
+
+        MetaCategoryDef def = loadExisting(categoryId);
+        MetaCategoryVersion baseVersion = loadVersion(baseVersionId);
+        MetaCategoryVersion targetVersion = loadVersion(targetVersionId);
+
+        ensureVersionBelongsToCategory(def, baseVersion, "baseVersionId");
+        ensureVersionBelongsToCategory(def, targetVersion, "targetVersionId");
+
+        MetaCategoryVersionSnapshotDto baseSnapshot = toVersionSnapshot(baseVersion);
+        MetaCategoryVersionSnapshotDto targetSnapshot = toVersionSnapshot(targetVersion);
+
+        boolean nameChanged = !Objects.equals(baseSnapshot.getName(), targetSnapshot.getName());
+        boolean descriptionChanged = !Objects.equals(baseSnapshot.getDescription(), targetSnapshot.getDescription());
+        List<String> structureChangedPaths = new ArrayList<>();
+        collectJsonDiffPaths(
+                parseStructureJson(baseVersion.getStructureJson()),
+                parseStructureJson(targetVersion.getStructureJson()),
+                "structureJson",
+                structureChangedPaths
+        );
+        boolean structureChanged = !structureChangedPaths.isEmpty();
+
+        List<String> changedFields = new ArrayList<>();
+        if (nameChanged) {
+            changedFields.add("name");
+        }
+        if (descriptionChanged) {
+            changedFields.add("description");
+        }
+        if (structureChanged) {
+            changedFields.add("structureJson");
+        }
+
+        MetaCategoryVersionCompareDiffDto diff = new MetaCategoryVersionCompareDiffDto();
+        diff.setSameVersion(baseVersion.getId().equals(targetVersion.getId()));
+        diff.setNameChanged(nameChanged);
+        diff.setDescriptionChanged(descriptionChanged);
+        diff.setStructureChanged(structureChanged);
+        diff.setStructureChangedPaths(structureChangedPaths);
+        diff.setChangedFields(changedFields);
+
+        MetaCategoryVersionCompareDto result = new MetaCategoryVersionCompareDto();
+        result.setCategoryId(def.getId());
+        result.setCategoryCode(def.getCodeKey());
+        result.setBusinessDomain(def.getBusinessDomain());
+        result.setBaseVersion(baseSnapshot);
+        result.setTargetVersion(targetSnapshot);
+        result.setDiff(diff);
+        return result;
     }
 
     private void rebuildTreeAndClosure() {
@@ -631,6 +696,77 @@ public class MetaCategoryCrudService {
         List<UUID> descendants = hierarchyRepository.findDescendantIdsIncludingSelf(currentId);
         if (descendants.contains(nextParentId)) {
             throw new IllegalArgumentException("parentId cannot be a descendant of current node");
+        }
+    }
+
+    private MetaCategoryVersion loadVersion(UUID versionId) {
+        return versionRepository.findById(versionId)
+                .orElseThrow(() -> new IllegalArgumentException("category version not found: id=" + versionId));
+    }
+
+    private void ensureVersionBelongsToCategory(MetaCategoryDef def, MetaCategoryVersion version, String fieldName) {
+        if (version.getCategoryDef() == null || version.getCategoryDef().getId() == null) {
+            throw new IllegalArgumentException(fieldName + " is invalid: category version missing categoryDef");
+        }
+        if (!def.getId().equals(version.getCategoryDef().getId())) {
+            throw new IllegalArgumentException(fieldName + " does not belong to category: categoryId=" + def.getId());
+        }
+    }
+
+    private MetaCategoryVersionSnapshotDto toVersionSnapshot(MetaCategoryVersion version) {
+        MetaCategoryVersionSnapshotDto dto = new MetaCategoryVersionSnapshotDto();
+        dto.setVersionId(version.getId());
+        dto.setVersionNo(version.getVersionNo());
+        dto.setVersionDate(version.getCreatedAt());
+        dto.setName(version.getDisplayName());
+        dto.setDescription(readDescription(version.getStructureJson()));
+        dto.setUpdatedBy(version.getCreatedBy());
+        return dto;
+    }
+
+    private JsonNode parseStructureJson(String structureJson) {
+        String normalized = trimToNull(structureJson);
+        if (normalized == null) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(normalized);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private void collectJsonDiffPaths(JsonNode baseNode, JsonNode targetNode, String currentPath, List<String> changedPaths) {
+        if (baseNode == null && targetNode == null) {
+            return;
+        }
+        if (baseNode == null || targetNode == null) {
+            changedPaths.add(currentPath);
+            return;
+        }
+
+        if (baseNode.isObject() && targetNode.isObject()) {
+            Set<String> allFields = new TreeSet<>();
+            baseNode.fieldNames().forEachRemaining(allFields::add);
+            targetNode.fieldNames().forEachRemaining(allFields::add);
+            for (String field : allFields) {
+                collectJsonDiffPaths(baseNode.get(field), targetNode.get(field), currentPath + "." + field, changedPaths);
+            }
+            return;
+        }
+
+        if (baseNode.isArray() && targetNode.isArray()) {
+            int maxSize = Math.max(baseNode.size(), targetNode.size());
+            for (int i = 0; i < maxSize; i++) {
+                JsonNode left = i < baseNode.size() ? baseNode.get(i) : null;
+                JsonNode right = i < targetNode.size() ? targetNode.get(i) : null;
+                collectJsonDiffPaths(left, right, currentPath + "[" + i + "]", changedPaths);
+            }
+            return;
+        }
+
+        if (!baseNode.equals(targetNode)) {
+            changedPaths.add(currentPath);
         }
     }
 

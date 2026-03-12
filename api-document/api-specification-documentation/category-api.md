@@ -27,6 +27,7 @@
 | 通用搜索（返回完整路径） | GET /api/meta/categories/search | ✅ | 返回 path 与 pathNodes |
 | 批量查询子节点 | POST /api/meta/categories/nodes:children-batch | ✅ | 降低前端 N 次展开请求 |
 | 分类详情 | GET /api/meta/categories/{id} | ✅ | 返回完整详情与历史版本 |
+| 分类版本详细对比 | GET /api/meta/categories/{id}/versions/compare | ✅ | 传 baseVersionId/targetVersionId 返回两版本详情与差异 |
 | 创建分类 | POST /api/meta/categories | ✅ | 主标识语义：businessDomain + code |
 | 全量更新 | PUT /api/meta/categories/{id} | ✅ | 内容变化新增版本 |
 | 局部更新 | PATCH /api/meta/categories/{id} | ✅ | 局部更新语义 |
@@ -134,6 +135,52 @@ Query 参数
 ```
 
 响应：Map<parentId, List<MetaCategoryNodeDto>>
+
+### 4.5 分类版本详细对比
+
+- 方法：GET
+- 路径：/api/meta/categories/{id}/versions/compare
+
+Query 参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---:|---|
+| baseVersionId | UUID | 是 | 基线版本 ID |
+| targetVersionId | UUID | 是 | 目标版本 ID |
+
+响应示例
+
+```json
+{
+  "categoryId": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+  "categoryCode": "27121504",
+  "businessDomain": "MATERIAL",
+  "baseVersion": {
+    "versionId": "4ca456f1-1a5f-4e64-9bf0-5f6c75437d9a",
+    "versionNo": 2,
+    "versionDate": "2026-03-10T10:00:00Z",
+    "name": "Machine screws",
+    "description": "旧描述",
+    "updatedBy": "alice"
+  },
+  "targetVersion": {
+    "versionId": "9df774b4-1216-4bfa-8a5f-43d35c1f4828",
+    "versionNo": 3,
+    "versionDate": "2026-03-12T11:30:00Z",
+    "name": "Machine screws",
+    "description": "新描述",
+    "updatedBy": "bob"
+  },
+  "diff": {
+    "sameVersion": false,
+    "nameChanged": false,
+    "descriptionChanged": true,
+    "structureChanged": true,
+    "structureChangedPaths": ["structureJson.description"],
+    "changedFields": ["description", "structureJson"]
+  }
+}
+```
 
 ---
 

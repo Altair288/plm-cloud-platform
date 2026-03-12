@@ -3,6 +3,7 @@ package com.plm.attribute.version.controller;
 import com.plm.attribute.version.service.MetaCategoryCrudService;
 import com.plm.common.api.dto.CreateCategoryRequestDto;
 import com.plm.common.api.dto.MetaCategoryDetailDto;
+import com.plm.common.api.dto.MetaCategoryVersionCompareDto;
 import com.plm.common.api.dto.UpdateCategoryRequestDto;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,6 +24,14 @@ public class MetaCategoryCrudController {
     @GetMapping("/{id}")
     public MetaCategoryDetailDto detail(@PathVariable("id") UUID id) {
         return crudService.detail(id);
+    }
+
+    @GetMapping("/{id}/versions/compare")
+    public MetaCategoryVersionCompareDto compareVersions(
+            @PathVariable("id") UUID id,
+            @RequestParam("baseVersionId") UUID baseVersionId,
+            @RequestParam("targetVersionId") UUID targetVersionId) {
+        return crudService.compareVersions(id, baseVersionId, targetVersionId);
     }
 
     @PostMapping
