@@ -2,7 +2,10 @@ package com.plm.attribute.version.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.plm.common.api.dto.*;
+import com.plm.common.api.dto.MetaDictionaryBatchRequestDto;
+import com.plm.common.api.dto.MetaDictionaryBatchResponseDto;
+import com.plm.common.api.dto.MetaDictionaryDto;
+import com.plm.common.api.dto.MetaDictionaryEntryDto;
 import com.plm.common.version.domain.MetaDictionaryDef;
 import com.plm.common.version.domain.MetaDictionaryItem;
 import com.plm.common.version.domain.MetaDictionaryScene;
@@ -24,25 +27,19 @@ import java.util.Set;
 public class MetaDictionaryService {
 
     private static final String DEFAULT_LOCALE = "zh-CN";
-    private static final String STATUS_DELETED = "deleted";
-    private static final String SOURCE_SERVICE = "SERVICE";
-    private static final String DICT_META_TAXONOMY = "META_TAXONOMY";
 
     private final MetaDictionaryDefRepository dictionaryDefRepository;
     private final MetaDictionaryItemRepository dictionaryItemRepository;
     private final MetaDictionarySceneRepository dictionarySceneRepository;
-    private final MetaCategoryGenericQueryService categoryQueryService;
     private final ObjectMapper objectMapper;
 
     public MetaDictionaryService(MetaDictionaryDefRepository dictionaryDefRepository,
                                  MetaDictionaryItemRepository dictionaryItemRepository,
                                  MetaDictionarySceneRepository dictionarySceneRepository,
-                                 MetaCategoryGenericQueryService categoryQueryService,
                                  ObjectMapper objectMapper) {
         this.dictionaryDefRepository = dictionaryDefRepository;
         this.dictionaryItemRepository = dictionaryItemRepository;
         this.dictionarySceneRepository = dictionarySceneRepository;
-        this.categoryQueryService = categoryQueryService;
         this.objectMapper = objectMapper;
     }
 
@@ -102,11 +99,6 @@ public class MetaDictionaryService {
         dto.setSource(def.getSourceType());
         dto.setLocale(def.getLocale());
 
-        if (isServiceTaxonomy(def)) {
-            dto.setEntries(buildTaxonomyEntries());
-            return dto;
-        }
-
         List<MetaDictionaryItem> entityItems = dictionaryItemRepository
                 .findByDictionaryDefIdOrderBySort(def.getId(), includeDisabled);
         List<MetaDictionaryEntryDto> entries = new ArrayList<>(entityItems.size());
@@ -140,22 +132,6 @@ public class MetaDictionaryService {
                         ? java.util.Optional.empty()
                         : dictionarySceneRepository.findActiveBySceneCodeAndLocale(sceneCode, DEFAULT_LOCALE))
                 .orElseThrow(() -> new IllegalArgumentException("dictionary scene not found: sceneCode=" + sceneCode + ", locale=" + normalizedLocale));
-    }
-
-    private boolean isServiceTaxonomy(MetaDictionaryDef def) {
-        return SOURCE_SERVICE.equalsIgnoreCase(def.getSourceType())
-                && DICT_META_TAXONOMY.equalsIgnoreCase(def.getDictCode());
-    }
-
-    private List<MetaDictionaryEntryDto> buildTaxonomyEntries() {
-        MetaTaxonomyDto taxonomy = categoryQueryService.taxonomy("UNSPSC");
-        MetaDictionaryEntryDto entry = new MetaDictionaryEntryDto();
-        entry.setKey(taxonomy.getCode());
-        entry.setValue(taxonomy.getCode());
-        entry.setLabel(taxonomy.getName());
-        entry.setOrder(1);
-        entry.setEnabled(!STATUS_DELETED.equalsIgnoreCase(taxonomy.getStatus()));
-        return List.of(entry);
     }
 
     private Map<String, Object> parseExtra(String extraJson) {

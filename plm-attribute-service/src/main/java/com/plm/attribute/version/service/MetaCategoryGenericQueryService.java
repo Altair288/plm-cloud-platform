@@ -13,17 +13,22 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 @Service
 @Transactional(readOnly = true)
 public class MetaCategoryGenericQueryService {
 
-    private enum Taxonomy {
-        UNSPSC
+    private enum BusinessDomain {
+        PRODUCT,
+        MATERIAL,
+        BOM,
+        PROCESS,
+        TEST,
+        EXPERIMENT
     }
 
-    private static final String SUPPORTED_TAXONOMY = Taxonomy.UNSPSC.name();
     private final MetaCategoryDefRepository defRepository;
     private final MetaCategoryVersionRepository versionRepository;
     private final CategoryHierarchyRepository hierarchyRepository;
@@ -36,16 +41,17 @@ public class MetaCategoryGenericQueryService {
         this.hierarchyRepository = hierarchyRepository;
     }
 
-    public Page<MetaCategoryNodeDto> listNodes(String taxonomy,
+    public Page<MetaCategoryNodeDto> listNodes(String businessDomain,
                                                UUID parentId,
                                                Integer level,
                                                String keyword,
                                                String status,
                                                Pageable pageable) {
-        requireSupportedTaxonomy(taxonomy);
+        String normalizedBusinessDomain = normalizeBusinessDomain(businessDomain);
         short rootDepthBase = resolveRootDepthBase();
         Short depth = level == null ? null : toDepth(level, rootDepthBase);
         Page<MetaCategoryDef> page = defRepository.findNodePage(
+                normalizedBusinessDomain,
                 parentId,
                 depth,
                 normalizeStatus(status),
@@ -57,10 +63,13 @@ public class MetaCategoryGenericQueryService {
         return page.map(def -> toNodeDto(def, titleById.get(def.getId()), childCountById, rootDepthBase));
     }
 
-    public List<MetaCategoryNodeDto> path(UUID id, String taxonomy) {
-        requireSupportedTaxonomy(taxonomy);
+    public List<MetaCategoryNodeDto> path(UUID id, String businessDomain) {
+        String normalizedBusinessDomain = normalizeBusinessDomain(businessDomain);
         MetaCategoryDef target = defRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("category not found: id=" + id));
+        if (!normalizedBusinessDomain.equalsIgnoreCase(target.getBusinessDomain())) {
+            throw new IllegalArgumentException("category not found in businessDomain: id=" + id + ", businessDomain=" + normalizedBusinessDomain);
+        }
 
         List<MetaCategoryDef> defs = hierarchyRepository.findAncestorsByDescendant(target.getId());
         if (defs.isEmpty()) {
@@ -72,13 +81,13 @@ public class MetaCategoryGenericQueryService {
         return defs.stream().map(d -> toNodeDto(d, titleById.get(d.getId()), childCountById, rootDepthBase)).toList();
     }
 
-    public Page<MetaCategorySearchItemDto> search(String taxonomy,
+    public Page<MetaCategorySearchItemDto> search(String businessDomain,
                                                   String keyword,
                                                   UUID scopeNodeId,
                                                   Integer maxDepth,
                                                   String status,
                                                   Pageable pageable) {
-        requireSupportedTaxonomy(taxonomy);
+        String normalizedBusinessDomain = normalizeBusinessDomain(businessDomain);
         String kw = trimToNull(keyword);
         if (kw == null) {
             return Page.empty(pageable);
@@ -89,9 +98,12 @@ public class MetaCategoryGenericQueryService {
         if (scopeNodeId != null) {
             scope = defRepository.findById(scopeNodeId)
                     .orElseThrow(() -> new IllegalArgumentException("scope node not found: id=" + scopeNodeId));
+            if (!normalizedBusinessDomain.equalsIgnoreCase(scope.getBusinessDomain())) {
+                throw new IllegalArgumentException("scope node not found in businessDomain: id=" + scopeNodeId + ", businessDomain=" + normalizedBusinessDomain);
+            }
         }
 
-        Page<MetaCategoryDef> page = defRepository.searchGeneric(kw, scopeNodeId, normalizeStatus(status), pageable);
+        Page<MetaCategoryDef> page = defRepository.searchGeneric(normalizedBusinessDomain, kw, scopeNodeId, normalizeStatus(status), pageable);
         if (maxDepth != null && maxDepth > 0 && scope != null && scope.getDepth() != null) {
             short scopeDepth = scope.getDepth();
             List<MetaCategoryDef> filtered = page.getContent().stream()
@@ -122,11 +134,14 @@ public class MetaCategoryGenericQueryService {
     }
 
     public Map<UUID, List<MetaCategoryNodeDto>> childrenBatch(MetaCategoryChildrenBatchRequestDto req) {
-        requireSupportedTaxonomy(req == null ? null : req.getTaxonomy());
+        String normalizedBusinessDomain = normalizeBusinessDomain(req == null ? null : req.getBusinessDomain());
         if (req == null || req.getParentIds() == null || req.getParentIds().isEmpty()) {
             return Collections.emptyMap();
         }
         List<MetaCategoryDef> children = defRepository.findByParentIdInOrderBySortOrderAscCodeKeyAsc(req.getParentIds());
+        children = children.stream()
+                .filter(d -> normalizedBusinessDomain.equalsIgnoreCase(d.getBusinessDomain()))
+                .toList();
         String status = normalizeStatus(req.getStatus());
         if ("ALL".equalsIgnoreCase(status)) {
             children = children.stream()
@@ -157,28 +172,13 @@ public class MetaCategoryGenericQueryService {
         return result;
     }
 
-    public MetaTaxonomyDto taxonomy(String code) {
-        requireSupportedTaxonomy(code);
-        MetaTaxonomyDto dto = new MetaTaxonomyDto();
-        dto.setCode(SUPPORTED_TAXONOMY);
-        dto.setName(SUPPORTED_TAXONOMY);
-        dto.setStatus("ACTIVE");
-        dto.setLevelConfigs(List.of(
-                new MetaTaxonomyLevelConfigDto(1, "Segment"),
-                new MetaTaxonomyLevelConfigDto(2, "Family"),
-                new MetaTaxonomyLevelConfigDto(3, "Class"),
-                new MetaTaxonomyLevelConfigDto(4, "Commodity")
-        ));
-        return dto;
-    }
-
     private MetaCategoryNodeDto toNodeDto(MetaCategoryDef def,
                                           String latestTitle,
                                           Map<UUID, Long> childCountById,
                                           short rootDepthBase) {
         MetaCategoryNodeDto dto = new MetaCategoryNodeDto();
         dto.setId(def.getId());
-        dto.setTaxonomy(SUPPORTED_TAXONOMY);
+        dto.setBusinessDomain(def.getBusinessDomain());
         dto.setCode(def.getCodeKey());
         dto.setName((latestTitle != null && !latestTitle.isBlank()) ? latestTitle : def.getCodeKey());
         dto.setLevel(depthToLevel(def.getDepth(), rootDepthBase));
@@ -233,12 +233,15 @@ public class MetaCategoryGenericQueryService {
         return map;
     }
 
-    private void requireSupportedTaxonomy(String taxonomy) {
-        if (taxonomy == null || taxonomy.isBlank()) {
-            throw new IllegalArgumentException("taxonomy is required");
+    private String normalizeBusinessDomain(String businessDomain) {
+        if (businessDomain == null || businessDomain.isBlank()) {
+            throw new IllegalArgumentException("businessDomain is required");
         }
-        if (!SUPPORTED_TAXONOMY.equalsIgnoreCase(taxonomy.trim())) {
-            throw new IllegalArgumentException("taxonomy not supported: " + taxonomy);
+        String normalized = businessDomain.trim().toUpperCase(Locale.ROOT);
+        try {
+            return BusinessDomain.valueOf(normalized).name();
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("businessDomain not supported: " + businessDomain);
         }
     }
 

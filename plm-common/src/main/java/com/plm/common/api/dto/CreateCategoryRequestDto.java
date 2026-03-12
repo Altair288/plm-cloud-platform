@@ -13,5 +13,4 @@ public class CreateCategoryRequestDto {
     private String status;
     private String description;
     private Integer sort;
-    private String taxonomy;
 }

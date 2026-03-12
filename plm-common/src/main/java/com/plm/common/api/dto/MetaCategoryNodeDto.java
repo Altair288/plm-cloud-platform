@@ -8,7 +8,7 @@ import java.util.UUID;
 @Data
 public class MetaCategoryNodeDto {
     private UUID id;
-    private String taxonomy;
+    private String businessDomain;
     private String code;
     private String name;
     private Integer level;

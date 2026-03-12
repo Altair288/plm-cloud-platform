@@ -7,7 +7,7 @@ import java.util.UUID;
 
 @Data
 public class MetaCategoryChildrenBatchRequestDto {
-    private String taxonomy;
+    private String businessDomain;
     private List<UUID> parentIds;
     private String status;
 }

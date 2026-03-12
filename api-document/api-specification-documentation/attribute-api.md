@@ -1,12 +1,12 @@
 # 属性相关 API 文档（plm-attribute-service）
 
-更新时间：2026-02-05
+更新时间：2026-03-12
 
 > 本文覆盖“属性元数据（Meta Attribute Def/Version）”的查询与写入接口；旧版 `/api/attributes` 已移除。
 >
 > 约定：
 >
-> - `categoryCode` 使用 UNSPSC 分类的 `codeKey`（例如：`44120000`）。
+> - `categoryCode` 使用业务域内分类的 `codeKey`（例如：`44120000`）。
 > - `attrKey` 对应 `meta_attribute_def.key`（即属性编码）。
 
 ---
@@ -198,7 +198,7 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---:|---|---|
-| categoryCode | string | 是 | - | UNSPSC 分类 codeKey |
+| categoryCode | string | 是 | - | 业务域内分类 codeKey |
 | createdBy | string | 否 | system | 兜底操作人（如果没传 header） |
 | includeValues | boolean | 否 | true | 当前保留参数：manageService 暂时固定返回 includeValues=true |
 
@@ -354,7 +354,7 @@ curl -X PUT "http://localhost:8080/api/meta/attribute-defs/color?categoryCode=44
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---:|---|---|
-| categoryCode | string | 是 | - | UNSPSC 分类 codeKey |
+| categoryCode | string | 是 | - | 业务域内分类 codeKey |
 | createdBy | string | 否 | system | 兜底操作人（如果没传 header） |
 
 **Header（可选）**
@@ -416,10 +416,9 @@ curl -X POST "http://localhost:8080/api/meta/attributes/import?createdBy=system"
 
 ---
 
-## 附录：与属性联动的通用分类浏览/搜索（完整迁移后）
+## 附录：与属性联动的通用分类浏览/搜索（taxonomy 已下线）
 
-- `GET /api/meta/categories/nodes?taxonomy=UNSPSC&parentId=...&page=0&size=50`
-- `GET /api/meta/categories/nodes/{id}/path?taxonomy=UNSPSC`
-- `GET /api/meta/categories/search?taxonomy=UNSPSC&keyword=...&scopeNodeId=...&page=0&size=20`
-- `POST /api/meta/categories/nodes:children-batch`
-- `GET /api/meta/taxonomies/UNSPSC`
+- `GET /api/meta/categories/nodes?businessDomain=MATERIAL&parentId=...&page=0&size=50`
+- `GET /api/meta/categories/nodes/{id}/path?businessDomain=MATERIAL`
+- `GET /api/meta/categories/search?businessDomain=MATERIAL&keyword=...&scopeNodeId=...&page=0&size=20`
+- `POST /api/meta/categories/nodes:children-batch`（body 中传 `businessDomain`）

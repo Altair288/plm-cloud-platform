@@ -25,7 +25,7 @@ public class MetaCategoryGenericQueryController {
 
     @GetMapping("/nodes")
     public Page<MetaCategoryNodeDto> nodes(
-            @RequestParam("taxonomy") String taxonomy,
+            @RequestParam("businessDomain") String businessDomain,
             @RequestParam(value = "parentId", required = false) UUID parentId,
             @RequestParam(value = "level", required = false) Integer level,
             @RequestParam(value = "keyword", required = false) String keyword,
@@ -33,19 +33,19 @@ public class MetaCategoryGenericQueryController {
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "50") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        return queryService.listNodes(taxonomy, parentId, level, keyword, status, pageable);
+        return queryService.listNodes(businessDomain, parentId, level, keyword, status, pageable);
     }
 
     @GetMapping("/nodes/{id}/path")
     public List<MetaCategoryNodeDto> path(
             @PathVariable("id") UUID id,
-            @RequestParam("taxonomy") String taxonomy) {
-        return queryService.path(id, taxonomy);
+            @RequestParam("businessDomain") String businessDomain) {
+        return queryService.path(id, businessDomain);
     }
 
     @GetMapping("/search")
     public Page<MetaCategorySearchItemDto> search(
-            @RequestParam("taxonomy") String taxonomy,
+            @RequestParam("businessDomain") String businessDomain,
             @RequestParam("keyword") String keyword,
             @RequestParam(value = "scopeNodeId", required = false) UUID scopeNodeId,
             @RequestParam(value = "maxDepth", required = false) Integer maxDepth,
@@ -53,7 +53,7 @@ public class MetaCategoryGenericQueryController {
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        return queryService.search(taxonomy, keyword, scopeNodeId, maxDepth, status, pageable);
+        return queryService.search(businessDomain, keyword, scopeNodeId, maxDepth, status, pageable);
     }
 
     @PostMapping("/nodes:children-batch")

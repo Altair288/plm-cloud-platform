@@ -100,6 +100,8 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                         left join MetaCategoryVersion v
                             on v.categoryDef = d and v.isLatest = true
                         where
+                            d.businessDomain = :businessDomain
+                            and
                             ((:parentId is null and d.parent is null)
                                 or (:parentId is not null and d.parent.id = :parentId))
                             and (:depth is null or d.depth = :depth)
@@ -121,6 +123,8 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                         left join MetaCategoryVersion v
                             on v.categoryDef = d and v.isLatest = true
                         where
+                            d.businessDomain = :businessDomain
+                            and
                             ((:parentId is null and d.parent is null)
                                 or (:parentId is not null and d.parent.id = :parentId))
                             and (:depth is null or d.depth = :depth)
@@ -137,6 +141,7 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                         """
         )
         Page<MetaCategoryDef> findNodePage(
+            @Param("businessDomain") String businessDomain,
                 @Param("parentId") UUID parentId,
                 @Param("depth") Short depth,
                 @Param("status") String status,
@@ -151,6 +156,8 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                         left join MetaCategoryVersion v
                             on v.categoryDef = d and v.isLatest = true
                         where
+                            d.businessDomain = :businessDomain
+                            and
                             (
                                 ((:status is null or :status = '' or lower(:status) = 'all')
                                     and (d.status is null or lower(d.status) <> 'deleted'))
@@ -182,6 +189,8 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                         left join MetaCategoryVersion v
                             on v.categoryDef = d and v.isLatest = true
                         where
+                            d.businessDomain = :businessDomain
+                            and
                             (
                                 ((:status is null or :status = '' or lower(:status) = 'all')
                                     and (d.status is null or lower(d.status) <> 'deleted'))
@@ -204,6 +213,7 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
                         """
         )
         Page<MetaCategoryDef> searchGeneric(
+            @Param("businessDomain") String businessDomain,
                 @Param("keyword") String keyword,
                 @Param("scopeId") UUID scopeId,
                 @Param("status") String status,
