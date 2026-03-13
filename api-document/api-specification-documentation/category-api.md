@@ -1,6 +1,6 @@
 # 分类通用 API 文档（plm-attribute-service）
 
-更新时间：2026-03-12
+更新时间：2026-03-13
 
 > 本文为分类接口正式文档（已完成 taxonomy 移除重构）。
 >
@@ -32,6 +32,7 @@
 | 全量更新 | PUT /api/meta/categories/{id} | ✅ | 内容变化新增版本 |
 | 局部更新 | PATCH /api/meta/categories/{id} | ✅ | 局部更新语义 |
 | 删除分类 | DELETE /api/meta/categories/{id} | ✅ | 软删除，支持可选级联 |
+| 批量删除分类 | POST /api/meta/categories:batch-delete | ✅ | 支持 dryRun、atomic 和逐项结果 |
 | taxonomy 元数据 | GET /api/meta/taxonomies/{code} | ❌（已下线） | 已移除 |
 
 ---
@@ -196,6 +197,113 @@ Query 参数
 - 删除语义：
   - 默认 cascade=false。
   - 有子节点时需 cascade=true&confirm=true。
+
+### 5.1 批量删除分类
+
+- 方法：POST
+- 路径：/api/meta/categories:batch-delete
+
+请求体参数
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|---|---|---:|---|---|
+| ids | UUID[] | 是 | - | 分类 ID 列表；去重后最多 200 条 |
+| cascade | boolean | 否 | false | 是否级联删除子树 |
+| confirm | boolean | 否 | false | 级联确认；有子节点时必须与 cascade 一起为 true |
+| atomic | boolean | 否 | false | true=整批事务，false=逐项独立事务 |
+| dryRun | boolean | 否 | false | true=仅预检，不落库 |
+| operator | string | 否 | null | 操作人 |
+
+请求体示例
+
+```json
+{
+  "ids": [
+    "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+    "cae7a410-f951-4780-bad1-3c15ebed4dd4"
+  ],
+  "cascade": true,
+  "confirm": true,
+  "atomic": false,
+  "dryRun": false,
+  "operator": "admin"
+}
+```
+
+响应结构：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| total | int | 本次处理总条目数（去重后） |
+| successCount | int | 成功条目数 |
+| failureCount | int | 失败条目数 |
+| deletedCount | int | 实际删除总数（dryRun 固定为 0） |
+| totalWouldDeleteCount | int | 预计将删除总数（仅 dryRun 有值） |
+| atomic | boolean | 实际执行模式 |
+| dryRun | boolean | 是否预检 |
+| results | array | 逐项结果 |
+
+results[i] 字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | UUID | 对应请求条目 ID |
+| success | boolean | 该条是否成功 |
+| deletedCount | int | 该条实际删除数量 |
+| wouldDeleteCount | int | 该条预检将删除数量（仅 dryRun） |
+| code | string | 结果码（见下文） |
+| message | string | 补充信息 |
+
+响应示例（non-atomic，部分成功）：
+
+```json
+{
+  "total": 2,
+  "successCount": 1,
+  "failureCount": 1,
+  "deletedCount": 1,
+  "totalWouldDeleteCount": 0,
+  "atomic": false,
+  "dryRun": false,
+  "results": [
+    {
+      "id": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+      "success": true,
+      "deletedCount": 1,
+      "wouldDeleteCount": null,
+      "code": null,
+      "message": null
+    },
+    {
+      "id": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
+      "success": false,
+      "deletedCount": 0,
+      "wouldDeleteCount": null,
+      "code": "CATEGORY_NOT_FOUND",
+      "message": "category not found: id=cae7a410-f951-4780-bad1-3c15ebed4dd4"
+    }
+  ]
+}
+```
+
+执行语义：
+
+- `results` 为逐项执行结果。
+- `dryRun=true`：只做校验与影响评估，不做任何写入。
+- `atomic=false` 时失败项会回滚且不影响其他项。
+- `atomic=true` 时任一失败会触发整批回滚。
+
+批量删除结果码（results.code）：
+
+| code | 场景 |
+|---|---|
+| ALREADY_DELETED | 目标已是 deleted，视为成功但影响数为 0 |
+| CATEGORY_HAS_CHILDREN | 非法级联删除（有子节点但 cascade/confirm 未满足） |
+| CATEGORY_NOT_FOUND | 分类不存在 |
+| INVALID_ARGUMENT | 参数错误（如 ids 为空、含 null、超过 200） |
+| ATOMIC_ROLLBACK | atomic 模式下，失败前已执行条目被整体回滚 |
+| ATOMIC_ABORTED | atomic 模式下，失败后未执行条目被中止 |
+| INTERNAL_ERROR | 未归类系统异常 |
 
 ---
 

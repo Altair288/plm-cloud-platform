@@ -2,6 +2,8 @@ package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaCategoryCrudService;
 import com.plm.common.api.dto.CreateCategoryRequestDto;
+import com.plm.common.api.dto.MetaCategoryBatchDeleteRequestDto;
+import com.plm.common.api.dto.MetaCategoryBatchDeleteResponseDto;
 import com.plm.common.api.dto.MetaCategoryDetailDto;
 import com.plm.common.api.dto.MetaCategoryVersionCompareDto;
 import com.plm.common.api.dto.UpdateCategoryRequestDto;
@@ -69,5 +71,11 @@ public class MetaCategoryCrudController {
         body.put("cascade", cascade);
         body.put("deletedCount", deletedCount);
         return body;
+    }
+
+    @PostMapping(":batch-delete")
+    public MetaCategoryBatchDeleteResponseDto batchDelete(
+            @RequestBody MetaCategoryBatchDeleteRequestDto request) {
+        return crudService.batchDelete(request);
     }
 }

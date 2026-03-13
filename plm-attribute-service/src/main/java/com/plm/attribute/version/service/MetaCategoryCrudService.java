@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.plm.attribute.version.exception.CategoryConflictException;
 import com.plm.attribute.version.exception.CategoryNotFoundException;
+import com.plm.common.api.dto.MetaCategoryBatchDeleteItemResultDto;
+import com.plm.common.api.dto.MetaCategoryBatchDeleteRequestDto;
+import com.plm.common.api.dto.MetaCategoryBatchDeleteResponseDto;
 import com.plm.common.api.dto.CreateCategoryRequestDto;
 import com.plm.common.api.dto.MetaCategoryDetailDto;
 import com.plm.common.api.dto.MetaCategoryLatestVersionDto;
@@ -21,11 +24,16 @@ import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -43,11 +51,17 @@ public class MetaCategoryCrudService {
     private static final String STATUS_ACTIVE = "active";
     private static final String STATUS_INACTIVE = "inactive";
     private static final String STATUS_DELETED = "deleted";
+    private static final int BATCH_DELETE_MAX_SIZE = 200;
+    private static final String CODE_ALREADY_DELETED = "ALREADY_DELETED";
+    private static final String CODE_ATOMIC_ROLLBACK = "ATOMIC_ROLLBACK";
+    private static final String CODE_ATOMIC_ABORTED = "ATOMIC_ABORTED";
 
     private final MetaCategoryDefRepository defRepository;
     private final MetaCategoryVersionRepository versionRepository;
     private final CategoryHierarchyRepository hierarchyRepository;
     private final MetaCategoryHierarchyService hierarchyService;
+    private final TransactionTemplate requiredTxTemplate;
+    private final TransactionTemplate requiresNewTxTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private enum BusinessDomain {
@@ -62,11 +76,17 @@ public class MetaCategoryCrudService {
     public MetaCategoryCrudService(MetaCategoryDefRepository defRepository,
                                    MetaCategoryVersionRepository versionRepository,
                                    CategoryHierarchyRepository hierarchyRepository,
-                                   MetaCategoryHierarchyService hierarchyService) {
+                                   MetaCategoryHierarchyService hierarchyService,
+                                   PlatformTransactionManager transactionManager) {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
         this.hierarchyRepository = hierarchyRepository;
         this.hierarchyService = hierarchyService;
+
+        this.requiredTxTemplate = new TransactionTemplate(transactionManager);
+        DefaultTransactionDefinition requiresNewDefinition = new DefaultTransactionDefinition();
+        requiresNewDefinition.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.requiresNewTxTemplate = new TransactionTemplate(transactionManager, requiresNewDefinition);
     }
 
     @Transactional
@@ -264,6 +284,28 @@ public class MetaCategoryCrudService {
         refreshParentLeafIfNeeded(oldParent);
         normalizeSiblingOrders(oldParent == null ? null : oldParent.getId());
         return changed;
+    }
+
+    public MetaCategoryBatchDeleteResponseDto batchDelete(MetaCategoryBatchDeleteRequestDto request) {
+        if (request == null) {
+            throw new IllegalArgumentException("request body is required");
+        }
+
+        List<UUID> ids = normalizeBatchIds(request.getIds());
+        boolean cascade = Boolean.TRUE.equals(request.getCascade());
+        boolean confirm = Boolean.TRUE.equals(request.getConfirm());
+        boolean atomic = Boolean.TRUE.equals(request.getAtomic());
+        boolean dryRun = Boolean.TRUE.equals(request.getDryRun());
+        String operator = request.getOperator();
+
+        if (dryRun) {
+            return batchDeleteDryRun(ids, cascade, confirm);
+        }
+
+        if (atomic) {
+            return batchDeleteAtomic(ids, cascade, confirm, operator);
+        }
+        return batchDeleteNonAtomic(ids, cascade, confirm, operator);
     }
 
     @Transactional(readOnly = true)
@@ -773,6 +815,243 @@ public class MetaCategoryCrudService {
     private MetaCategoryDef loadExisting(UUID id) {
         return defRepository.findById(id)
                 .orElseThrow(() -> new CategoryNotFoundException("category not found: id=" + id));
+    }
+
+    private MetaCategoryBatchDeleteResponseDto batchDeleteDryRun(List<UUID> ids, boolean cascade, boolean confirm) {
+        List<MetaCategoryBatchDeleteItemResultDto> results = new ArrayList<>();
+        int successCount = 0;
+        int failureCount = 0;
+        int totalWouldDeleteCount = 0;
+
+        for (UUID id : ids) {
+            try {
+                int wouldDeleteCount = estimateDeleteCount(id, cascade, confirm);
+                MetaCategoryBatchDeleteItemResultDto item = new MetaCategoryBatchDeleteItemResultDto();
+                item.setId(id);
+                item.setSuccess(Boolean.TRUE);
+                item.setWouldDeleteCount(wouldDeleteCount);
+                if (wouldDeleteCount == 0) {
+                    item.setCode(CODE_ALREADY_DELETED);
+                    item.setMessage("category is already deleted");
+                }
+                results.add(item);
+                successCount++;
+                totalWouldDeleteCount += wouldDeleteCount;
+            } catch (RuntimeException ex) {
+                results.add(buildFailureItem(id, ex));
+                failureCount++;
+            }
+        }
+
+        MetaCategoryBatchDeleteResponseDto response = new MetaCategoryBatchDeleteResponseDto();
+        response.setTotal(ids.size());
+        response.setSuccessCount(successCount);
+        response.setFailureCount(failureCount);
+        response.setDeletedCount(0);
+        response.setTotalWouldDeleteCount(totalWouldDeleteCount);
+        response.setAtomic(Boolean.FALSE);
+        response.setDryRun(Boolean.TRUE);
+        response.setResults(results);
+        return response;
+    }
+
+    private MetaCategoryBatchDeleteResponseDto batchDeleteNonAtomic(List<UUID> ids, boolean cascade, boolean confirm, String operator) {
+        List<MetaCategoryBatchDeleteItemResultDto> results = new ArrayList<>();
+        int successCount = 0;
+        int failureCount = 0;
+        int totalDeletedCount = 0;
+
+        for (UUID id : ids) {
+            try {
+                Integer deletedCount = requiresNewTxTemplate.execute(status -> delete(id, cascade, confirm, operator));
+                int affected = deletedCount == null ? 0 : deletedCount;
+                MetaCategoryBatchDeleteItemResultDto item = new MetaCategoryBatchDeleteItemResultDto();
+                item.setId(id);
+                item.setSuccess(Boolean.TRUE);
+                item.setDeletedCount(affected);
+                if (affected == 0) {
+                    item.setCode(CODE_ALREADY_DELETED);
+                    item.setMessage("category is already deleted");
+                }
+                results.add(item);
+                successCount++;
+                totalDeletedCount += affected;
+            } catch (RuntimeException ex) {
+                results.add(buildFailureItem(id, ex));
+                failureCount++;
+            }
+        }
+
+        MetaCategoryBatchDeleteResponseDto response = new MetaCategoryBatchDeleteResponseDto();
+        response.setTotal(ids.size());
+        response.setSuccessCount(successCount);
+        response.setFailureCount(failureCount);
+        response.setDeletedCount(totalDeletedCount);
+        response.setTotalWouldDeleteCount(0);
+        response.setAtomic(Boolean.FALSE);
+        response.setDryRun(Boolean.FALSE);
+        response.setResults(results);
+        return response;
+    }
+
+    private MetaCategoryBatchDeleteResponseDto batchDeleteAtomic(List<UUID> ids, boolean cascade, boolean confirm, String operator) {
+        List<UUID> committedIds = new ArrayList<>();
+        Map<UUID, Integer> deletedCountMap = new HashMap<>();
+        UUID[] failedId = new UUID[1];
+        RuntimeException[] failedException = new RuntimeException[1];
+
+        try {
+            requiresNewTxTemplate.executeWithoutResult(status -> {
+                for (UUID id : ids) {
+                    try {
+                        int affected = delete(id, cascade, confirm, operator);
+                        committedIds.add(id);
+                        deletedCountMap.put(id, affected);
+                    } catch (RuntimeException ex) {
+                        failedId[0] = id;
+                        failedException[0] = ex;
+                        status.setRollbackOnly();
+                        throw ex;
+                    }
+                }
+            });
+        } catch (RuntimeException ex) {
+            List<MetaCategoryBatchDeleteItemResultDto> results = new ArrayList<>();
+            for (UUID id : ids) {
+                if (failedId[0] != null && failedId[0].equals(id)) {
+                    results.add(buildFailureItem(id, failedException[0] == null ? ex : failedException[0]));
+                    continue;
+                }
+
+                MetaCategoryBatchDeleteItemResultDto item = new MetaCategoryBatchDeleteItemResultDto();
+                item.setId(id);
+                item.setSuccess(Boolean.FALSE);
+                item.setDeletedCount(0);
+                if (committedIds.contains(id)) {
+                    item.setCode(CODE_ATOMIC_ROLLBACK);
+                    item.setMessage("atomic rollback triggered by failure in same batch");
+                } else {
+                    item.setCode(CODE_ATOMIC_ABORTED);
+                    item.setMessage("batch aborted due to atomic rollback");
+                }
+                results.add(item);
+            }
+
+            MetaCategoryBatchDeleteResponseDto response = new MetaCategoryBatchDeleteResponseDto();
+            response.setTotal(ids.size());
+            response.setSuccessCount(0);
+            response.setFailureCount(ids.size());
+            response.setDeletedCount(0);
+            response.setTotalWouldDeleteCount(0);
+            response.setAtomic(Boolean.TRUE);
+            response.setDryRun(Boolean.FALSE);
+            response.setResults(results);
+            return response;
+        }
+
+        List<MetaCategoryBatchDeleteItemResultDto> results = new ArrayList<>();
+        int totalDeletedCount = 0;
+        for (UUID id : ids) {
+            int affected = deletedCountMap.getOrDefault(id, 0);
+            MetaCategoryBatchDeleteItemResultDto item = new MetaCategoryBatchDeleteItemResultDto();
+            item.setId(id);
+            item.setSuccess(Boolean.TRUE);
+            item.setDeletedCount(affected);
+            if (affected == 0) {
+                item.setCode(CODE_ALREADY_DELETED);
+                item.setMessage("category is already deleted");
+            }
+            totalDeletedCount += affected;
+            results.add(item);
+        }
+
+        MetaCategoryBatchDeleteResponseDto response = new MetaCategoryBatchDeleteResponseDto();
+        response.setTotal(ids.size());
+        response.setSuccessCount(ids.size());
+        response.setFailureCount(0);
+        response.setDeletedCount(totalDeletedCount);
+        response.setTotalWouldDeleteCount(0);
+        response.setAtomic(Boolean.TRUE);
+        response.setDryRun(Boolean.FALSE);
+        response.setResults(results);
+        return response;
+    }
+
+    private int estimateDeleteCount(UUID id, boolean cascade, boolean confirm) {
+        MetaCategoryDef def = loadExisting(id);
+        if (isDeleted(def)) {
+            return 0;
+        }
+
+        long directChildren = hierarchyRepository.countDirectChildren(id);
+        if (directChildren > 0 && (!cascade || !confirm)) {
+            throw new CategoryConflictException(
+                    "CATEGORY_HAS_CHILDREN",
+                    "category has children, please confirm cascade deletion with cascade=true&confirm=true"
+            );
+        }
+
+        if (!cascade) {
+            return 1;
+        }
+
+        List<UUID> descendantIds = hierarchyRepository.findDescendantIdsIncludingSelf(id);
+        if (descendantIds.isEmpty()) {
+            descendantIds = List.of(id);
+        }
+        List<MetaCategoryDef> targets = defRepository.findAllById(descendantIds);
+        int count = 0;
+        for (MetaCategoryDef target : targets) {
+            if (!isDeleted(target)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private List<UUID> normalizeBatchIds(List<UUID> rawIds) {
+        if (rawIds == null || rawIds.isEmpty()) {
+            throw new IllegalArgumentException("ids is required");
+        }
+        if (rawIds.size() > BATCH_DELETE_MAX_SIZE) {
+            throw new IllegalArgumentException("ids size must be <= " + BATCH_DELETE_MAX_SIZE);
+        }
+
+        LinkedHashSet<UUID> deDuplicated = new LinkedHashSet<>();
+        for (UUID id : rawIds) {
+            if (id == null) {
+                throw new IllegalArgumentException("ids contains null item");
+            }
+            deDuplicated.add(id);
+        }
+
+        if (deDuplicated.isEmpty()) {
+            throw new IllegalArgumentException("ids is required");
+        }
+        return new ArrayList<>(deDuplicated);
+    }
+
+    private MetaCategoryBatchDeleteItemResultDto buildFailureItem(UUID id, RuntimeException ex) {
+        MetaCategoryBatchDeleteItemResultDto item = new MetaCategoryBatchDeleteItemResultDto();
+        item.setId(id);
+        item.setSuccess(Boolean.FALSE);
+        item.setDeletedCount(0);
+        item.setCode(resolveBatchErrorCode(ex));
+        item.setMessage(ex == null ? "unknown error" : ex.getMessage());
+        return item;
+    }
+
+    private String resolveBatchErrorCode(RuntimeException ex) {
+        if (ex instanceof CategoryConflictException conflict) {
+            return conflict.getCode();
+        }
+        if (ex instanceof CategoryNotFoundException) {
+            return "CATEGORY_NOT_FOUND";
+        }
+        if (ex instanceof IllegalArgumentException) {
+            return "INVALID_ARGUMENT";
+        }
+        return "INTERNAL_ERROR";
     }
 
     private void ensureParentActive(MetaCategoryDef parent) {
