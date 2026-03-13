@@ -5,7 +5,7 @@
 
 ## 1. 背景
 
-本次新增了分类批量删除接口（/api/meta/categories:batch-delete）的集成测试，重点验证两类事务语义：
+本次新增了分类批量删除接口（/api/meta/categories/batch-delete）的集成测试，重点验证两类事务语义：
 
 - non-atomic：单项失败不影响其他项提交
 - atomic：任一项失败触发整批回滚

@@ -73,7 +73,7 @@ public class MetaCategoryCrudController {
         return body;
     }
 
-    @PostMapping(":batch-delete")
+    @PostMapping("/batch-delete")
     public MetaCategoryBatchDeleteResponseDto batchDelete(
             @RequestBody MetaCategoryBatchDeleteRequestDto request) {
         return crudService.batchDelete(request);

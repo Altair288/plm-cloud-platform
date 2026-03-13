@@ -29,7 +29,7 @@
 ### 3.1 路由与方法
 
 - 方法：POST
-- 路径：/api/meta/categories:batch-delete
+- 路径：/api/meta/categories/batch-delete
 
 说明：
 

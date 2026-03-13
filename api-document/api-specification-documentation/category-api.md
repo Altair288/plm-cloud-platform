@@ -32,7 +32,7 @@
 | 全量更新 | PUT /api/meta/categories/{id} | ✅ | 内容变化新增版本 |
 | 局部更新 | PATCH /api/meta/categories/{id} | ✅ | 局部更新语义 |
 | 删除分类 | DELETE /api/meta/categories/{id} | ✅ | 软删除，支持可选级联 |
-| 批量删除分类 | POST /api/meta/categories:batch-delete | ✅ | 支持 dryRun、atomic 和逐项结果 |
+| 批量删除分类 | POST /api/meta/categories/batch-delete | ✅ | 支持 dryRun、atomic 和逐项结果 |
 | taxonomy 元数据 | GET /api/meta/taxonomies/{code} | ❌（已下线） | 已移除 |
 
 ---
@@ -201,7 +201,7 @@ Query 参数
 ### 5.1 批量删除分类
 
 - 方法：POST
-- 路径：/api/meta/categories:batch-delete
+- 路径：/api/meta/categories/batch-delete
 
 请求体参数
 
