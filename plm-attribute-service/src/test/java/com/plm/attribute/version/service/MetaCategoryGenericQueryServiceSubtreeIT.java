@@ -28,6 +28,8 @@ import java.util.List;
 @Transactional
 class MetaCategoryGenericQueryServiceSubtreeIT {
 
+    private static final short TEST_ROOT_DEPTH = 1;
+
     @Autowired
     private MetaCategoryGenericQueryService queryService;
 
@@ -42,9 +44,9 @@ class MetaCategoryGenericQueryServiceSubtreeIT {
 
     @Test
     void subtree_flat_shouldTruncateByNodeLimit() {
-        MetaCategoryDef root = createNode("MATERIAL", "IT-SUBTREE-ROOT-1", null, "active", 0, (short) 0, false);
-        MetaCategoryDef childA = createNode("MATERIAL", "IT-SUBTREE-CHILD-1A", root, "active", 10, (short) 1, true);
-        MetaCategoryDef childB = createNode("MATERIAL", "IT-SUBTREE-CHILD-1B", root, "active", 20, (short) 1, true);
+        MetaCategoryDef root = createNode("MATERIAL", "IT-SUBTREE-ROOT-1", null, "active", 0, TEST_ROOT_DEPTH, false);
+        MetaCategoryDef childA = createNode("MATERIAL", "IT-SUBTREE-CHILD-1A", root, "active", 10, (short) (TEST_ROOT_DEPTH + 1), true);
+        MetaCategoryDef childB = createNode("MATERIAL", "IT-SUBTREE-CHILD-1B", root, "active", 20, (short) (TEST_ROOT_DEPTH + 1), true);
         createClosure(root, List.of(root, childA, childB));
 
         MetaCategorySubtreeRequestDto request = new MetaCategorySubtreeRequestDto();
@@ -67,9 +69,9 @@ class MetaCategoryGenericQueryServiceSubtreeIT {
 
     @Test
     void subtree_flat_statusAll_shouldExcludeDeleted() {
-        MetaCategoryDef root = createNode("MATERIAL", "IT-SUBTREE-ROOT-2", null, "active", 0, (short) 0, false);
-        MetaCategoryDef childDraft = createNode("MATERIAL", "IT-SUBTREE-CHILD-2A", root, "draft", 10, (short) 1, true);
-        MetaCategoryDef childDeleted = createNode("MATERIAL", "IT-SUBTREE-CHILD-2B", root, "deleted", 20, (short) 1, true);
+        MetaCategoryDef root = createNode("MATERIAL", "IT-SUBTREE-ROOT-2", null, "active", 0, TEST_ROOT_DEPTH, false);
+        MetaCategoryDef childDraft = createNode("MATERIAL", "IT-SUBTREE-CHILD-2A", root, "draft", 10, (short) (TEST_ROOT_DEPTH + 1), true);
+        MetaCategoryDef childDeleted = createNode("MATERIAL", "IT-SUBTREE-CHILD-2B", root, "deleted", 20, (short) (TEST_ROOT_DEPTH + 1), true);
         createClosure(root, List.of(root, childDraft, childDeleted));
 
         MetaCategorySubtreeRequestDto request = new MetaCategorySubtreeRequestDto();
@@ -91,9 +93,9 @@ class MetaCategoryGenericQueryServiceSubtreeIT {
 
     @Test
     void subtree_tree_shouldBuildNestedChildren() {
-        MetaCategoryDef root = createNode("MATERIAL", "IT-SUBTREE-ROOT-3", null, "active", 0, (short) 0, false);
-        MetaCategoryDef child = createNode("MATERIAL", "IT-SUBTREE-CHILD-3A", root, "active", 10, (short) 1, false);
-        MetaCategoryDef grandchild = createNode("MATERIAL", "IT-SUBTREE-GRAND-3A", child, "active", 10, (short) 2, true);
+        MetaCategoryDef root = createNode("MATERIAL", "IT-SUBTREE-ROOT-3", null, "active", 0, TEST_ROOT_DEPTH, false);
+        MetaCategoryDef child = createNode("MATERIAL", "IT-SUBTREE-CHILD-3A", root, "active", 10, (short) (TEST_ROOT_DEPTH + 1), false);
+        MetaCategoryDef grandchild = createNode("MATERIAL", "IT-SUBTREE-GRAND-3A", child, "active", 10, (short) (TEST_ROOT_DEPTH + 2), true);
         createClosure(root, List.of(root, child, grandchild));
 
         MetaCategorySubtreeRequestDto request = new MetaCategorySubtreeRequestDto();
@@ -118,9 +120,9 @@ class MetaCategoryGenericQueryServiceSubtreeIT {
 
     @Test
     void subtree_flat_shouldRespectMaxDepth() {
-        MetaCategoryDef root = createNode("MATERIAL", "IT-SUBTREE-ROOT-4", null, "active", 0, (short) 0, false);
-        MetaCategoryDef child = createNode("MATERIAL", "IT-SUBTREE-CHILD-4A", root, "active", 10, (short) 1, false);
-        MetaCategoryDef grandchild = createNode("MATERIAL", "IT-SUBTREE-GRAND-4A", child, "active", 10, (short) 2, true);
+        MetaCategoryDef root = createNode("MATERIAL", "IT-SUBTREE-ROOT-4", null, "active", 0, TEST_ROOT_DEPTH, false);
+        MetaCategoryDef child = createNode("MATERIAL", "IT-SUBTREE-CHILD-4A", root, "active", 10, (short) (TEST_ROOT_DEPTH + 1), false);
+        MetaCategoryDef grandchild = createNode("MATERIAL", "IT-SUBTREE-GRAND-4A", child, "active", 10, (short) (TEST_ROOT_DEPTH + 2), true);
         createClosure(root, List.of(root, child, grandchild));
 
         MetaCategorySubtreeRequestDto request = new MetaCategorySubtreeRequestDto();
@@ -158,6 +160,7 @@ class MetaCategoryGenericQueryServiceSubtreeIT {
         def.setDepth(depth);
         def.setIsLeaf(leaf);
         def.setPath(buildPath(parent, code));
+        def.setFullPathName(parent == null ? code : parent.getFullPathName() + "/" + code);
         def.setCreatedBy("it-subtree");
         def = defRepository.save(def);
 

@@ -26,6 +26,7 @@
 | 查询节点路径（面包屑回显） | GET /api/meta/categories/nodes/{id}/path | ✅ | 返回从根到当前节点有序列表 |
 | 通用搜索（返回完整路径） | GET /api/meta/categories/search | ✅ | 返回 path 与 pathNodes |
 | 批量查询子节点 | POST /api/meta/categories/nodes:children-batch | ✅ | 降低前端 N 次展开请求 |
+| 查询分类完整子树 | POST /api/meta/categories/nodes/subtree | ✅ | 支持 FLAT/TREE、includeRoot、maxDepth、nodeLimit |
 | 分类详情 | GET /api/meta/categories/{id} | ✅ | 返回完整详情与历史版本 |
 | 分类版本详细对比 | GET /api/meta/categories/{id}/versions/compare | ✅ | 传 baseVersionId/targetVersionId 返回两版本详情与差异 |
 | 创建分类 | POST /api/meta/categories | ✅ | 主标识语义：businessDomain + code |
@@ -144,7 +145,85 @@ Query 参数
 
 响应：Map<parentId, List<MetaCategoryNodeDto>>
 
-### 4.5 分类版本详细对比
+### 4.5 查询分类完整子树
+
+- 方法：POST
+- 路径：/api/meta/categories/nodes/subtree
+
+请求体参数
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|---|---|---:|---|---|
+| parentId | UUID | 是 | - | 子树起点分类 ID |
+| includeRoot | boolean | 否 | true | 是否包含起点节点 |
+| maxDepth | int | 否 | -1 | 最大向下深度；-1 表示不限制 |
+| status | string | 否 | ACTIVE | 状态过滤；支持 ACTIVE/INACTIVE/DRAFT/ALL |
+| mode | string | 否 | FLAT | 返回结构；支持 FLAT/TREE |
+| nodeLimit | int | 否 | 2000 | 单次返回节点上限 |
+
+请求体示例
+
+```json
+{
+  "parentId": "6513139a-4899-4808-8751-bb0b3eaeb0a8",
+  "includeRoot": true,
+  "maxDepth": -1,
+  "status": "ALL",
+  "mode": "FLAT",
+  "nodeLimit": 2000
+}
+```
+
+响应要点
+
+- 统一返回 `parentId/mode/totalNodes/truncated/depthReached/data`
+- `mode=FLAT` 返回扁平节点列表，便于前端勾选、去重和冲突预检
+- `mode=TREE` 返回嵌套树结构，便于前端直接渲染批量选择树
+- 当结果超出 `nodeLimit` 时返回 `truncated=true` 和提示消息
+
+响应示例
+
+```json
+{
+    "parentId": "6513139a-4899-4808-8751-bb0b3eaeb0a8",
+    "mode": "FLAT",
+    "totalNodes": 31,
+    "truncated": false,
+    "depthReached": 2,
+    "message": null,
+    "data": [
+        {
+            "id": "6513139a-4899-4808-8751-bb0b3eaeb0a8",
+            "parentId": "48d7d333-ed77-4942-b784-a6ae5f7edd30",
+            "businessDomain": "MATERIAL",
+            "code": "10100000",
+            "name": "活动物",
+            "status": "ACTIVE",
+            "level": 3,
+            "depth": 0,
+            "path": "/A/10000000/10100000",
+            "hasChildren": true,
+            "leaf": false,
+            "sort": 0
+        },
+        {
+            "id": "348b4385-6378-4628-9d63-f157b92f3649",
+            "parentId": "6513139a-4899-4808-8751-bb0b3eaeb0a8",
+            "businessDomain": "MATERIAL",
+            "code": "10101500",
+            "name": "家畜类",
+            "status": "ACTIVE",
+            "level": 4,
+            "depth": 1,
+            "path": "/A/10000000/10100000/10101500",
+            "hasChildren": true,
+            "leaf": false,
+            "sort": 0
+        }
+    ]
+}
+
+### 4.6 分类版本详细对比
 
 - 方法：GET
 - 路径：/api/meta/categories/{id}/versions/compare

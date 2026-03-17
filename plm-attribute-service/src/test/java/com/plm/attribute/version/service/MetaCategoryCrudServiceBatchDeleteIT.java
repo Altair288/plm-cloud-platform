@@ -26,6 +26,8 @@ import java.util.UUID;
 @Transactional
 class MetaCategoryCrudServiceBatchDeleteIT {
 
+    private static final short TEST_ROOT_DEPTH = 1;
+
     @Autowired
     private MetaCategoryCrudService crudService;
 
@@ -88,12 +90,16 @@ class MetaCategoryCrudServiceBatchDeleteIT {
         definition.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         TransactionTemplate template = new TransactionTemplate(transactionManager, definition);
         return template.execute(status -> {
+            String code = "IT-BATCH-" + UUID.randomUUID();
             MetaCategoryDef def = new MetaCategoryDef();
             def.setBusinessDomain("MATERIAL");
-            def.setCodeKey("IT-BATCH-" + UUID.randomUUID());
+            def.setCodeKey(code);
             def.setStatus("active");
             def.setSortOrder(1);
+            def.setDepth(TEST_ROOT_DEPTH);
             def.setIsLeaf(true);
+            def.setPath("/" + code);
+            def.setFullPathName(code);
             def.setCreatedBy("it-test");
             return defRepository.save(def);
         });
