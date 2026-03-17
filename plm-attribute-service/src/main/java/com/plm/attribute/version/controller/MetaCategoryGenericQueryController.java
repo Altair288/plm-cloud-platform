@@ -4,6 +4,8 @@ import com.plm.attribute.version.service.MetaCategoryGenericQueryService;
 import com.plm.common.api.dto.MetaCategoryChildrenBatchRequestDto;
 import com.plm.common.api.dto.MetaCategoryNodeDto;
 import com.plm.common.api.dto.MetaCategorySearchItemDto;
+import com.plm.common.api.dto.MetaCategorySubtreeRequestDto;
+import com.plm.common.api.dto.MetaCategorySubtreeResponseDto;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -60,5 +62,10 @@ public class MetaCategoryGenericQueryController {
     public Map<UUID, List<MetaCategoryNodeDto>> childrenBatch(
             @RequestBody MetaCategoryChildrenBatchRequestDto request) {
         return queryService.childrenBatch(request);
+    }
+
+    @PostMapping("/nodes/subtree")
+    public MetaCategorySubtreeResponseDto subtree(@RequestBody MetaCategorySubtreeRequestDto request) {
+        return queryService.subtree(request);
     }
 }

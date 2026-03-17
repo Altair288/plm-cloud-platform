@@ -1,6 +1,7 @@
 package com.plm.attribute.version.service;
 
 import com.plm.common.api.dto.*;
+import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;
 import com.plm.infrastructure.version.repository.CategoryHierarchyRepository;
@@ -8,6 +9,7 @@ import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +21,9 @@ import java.util.stream.Collectors;
 @Service
 @Transactional(readOnly = true)
 public class MetaCategoryGenericQueryService {
+
+    private static final int SUBTREE_DEFAULT_NODE_LIMIT = 2000;
+    private static final int SUBTREE_MAX_NODE_LIMIT = 10000;
 
     private enum BusinessDomain {
         PRODUCT,
@@ -172,6 +177,85 @@ public class MetaCategoryGenericQueryService {
         return result;
     }
 
+    public MetaCategorySubtreeResponseDto subtree(MetaCategorySubtreeRequestDto request) {
+        if (request == null) {
+            throw new IllegalArgumentException("request body is required");
+        }
+        if (request.getParentId() == null) {
+            throw new IllegalArgumentException("parentId is required");
+        }
+
+        MetaCategoryDef root = defRepository.findById(request.getParentId())
+                .orElseThrow(() -> new IllegalArgumentException("category not found: id=" + request.getParentId()));
+
+        boolean includeRoot = request.getIncludeRoot() == null || request.getIncludeRoot();
+        int maxDepth = normalizeSubtreeMaxDepth(request.getMaxDepth());
+        int nodeLimit = normalizeSubtreeNodeLimit(request.getNodeLimit());
+        String mode = normalizeSubtreeMode(request.getMode());
+        String status = normalizeSubtreeStatus(request.getStatus());
+        int dbReadLimit = Math.min(nodeLimit + 1, SUBTREE_MAX_NODE_LIMIT);
+        Pageable limitPageable = PageRequest.of(0, dbReadLimit);
+
+        List<CategoryHierarchy> closureRows = hierarchyRepository.findSubtreeByAncestor(
+                root.getId(),
+                includeRoot,
+                maxDepth,
+                status,
+                limitPageable);
+        List<SubtreeNodeHolder> holders = new ArrayList<>();
+        for (CategoryHierarchy row : closureRows) {
+            if (row == null || row.getDescendantDef() == null || row.getDistance() == null) {
+                continue;
+            }
+            MetaCategoryDef def = row.getDescendantDef();
+            holders.add(new SubtreeNodeHolder(def, row.getDistance().intValue()));
+        }
+
+        boolean truncated = holders.size() > nodeLimit;
+        if (truncated) {
+            holders = new ArrayList<>(holders.subList(0, nodeLimit));
+        }
+
+        List<MetaCategoryDef> defs = holders.stream().map(SubtreeNodeHolder::def).toList();
+        Map<UUID, String> titleById = loadLatestTitles(defs);
+        Map<UUID, Long> childCountById = loadDirectChildCounts(defs);
+        short rootDepthBase = resolveRootDepthBase();
+
+        Object data;
+        int depthReached = 0;
+
+        if ("TREE".equals(mode)) {
+            TreeBuildResult treeBuildResult = buildTreeData(holders, titleById, childCountById, rootDepthBase, includeRoot, root.getId());
+            data = treeBuildResult.data();
+            depthReached = treeBuildResult.depthReached();
+        } else {
+            List<MetaCategorySubtreeFlatNodeDto> flatData = new ArrayList<>();
+            for (SubtreeNodeHolder holder : holders) {
+                MetaCategorySubtreeFlatNodeDto item = toSubtreeFlatNodeDto(
+                        holder.def(),
+                        titleById.get(holder.def().getId()),
+                        childCountById,
+                        rootDepthBase,
+                        holder.relativeDepth());
+                flatData.add(item);
+                depthReached = Math.max(depthReached, holder.relativeDepth());
+            }
+            data = flatData;
+        }
+
+        MetaCategorySubtreeResponseDto response = new MetaCategorySubtreeResponseDto();
+        response.setParentId(root.getId());
+        response.setMode(mode);
+        response.setTotalNodes(holders.size());
+        response.setTruncated(truncated);
+        response.setDepthReached(depthReached);
+        if (truncated) {
+            response.setMessage("subtree result truncated by nodeLimit=" + nodeLimit);
+        }
+        response.setData(data);
+        return response;
+    }
+
     private MetaCategoryNodeDto toNodeDto(MetaCategoryDef def,
                                           String latestTitle,
                                           Map<UUID, Long> childCountById,
@@ -279,5 +363,141 @@ public class MetaCategoryGenericQueryService {
     private String normalizeStatus(String status) {
         String normalized = trimToNull(status);
         return normalized == null ? "ALL" : normalized;
+    }
+
+    private int normalizeSubtreeNodeLimit(Integer nodeLimit) {
+        int resolved = nodeLimit == null ? SUBTREE_DEFAULT_NODE_LIMIT : nodeLimit;
+        if (resolved <= 0) {
+            throw new IllegalArgumentException("nodeLimit must be greater than 0");
+        }
+        if (resolved > SUBTREE_MAX_NODE_LIMIT) {
+            throw new IllegalArgumentException("nodeLimit must be <= " + SUBTREE_MAX_NODE_LIMIT);
+        }
+        return resolved;
+    }
+
+    private int normalizeSubtreeMaxDepth(Integer maxDepth) {
+        if (maxDepth == null) {
+            return -1;
+        }
+        if (maxDepth < -1) {
+            throw new IllegalArgumentException("maxDepth must be >= -1");
+        }
+        return maxDepth;
+    }
+
+    private String normalizeSubtreeMode(String mode) {
+        String normalized = trimToNull(mode);
+        if (normalized == null) {
+            return "FLAT";
+        }
+        String upper = normalized.toUpperCase(Locale.ROOT);
+        if (!"FLAT".equals(upper) && !"TREE".equals(upper)) {
+            throw new IllegalArgumentException("mode not supported: " + mode);
+        }
+        return upper;
+    }
+
+    private String normalizeSubtreeStatus(String status) {
+        String normalized = trimToNull(status);
+        String resolved = normalized == null ? "ACTIVE" : normalized.toUpperCase(Locale.ROOT);
+        if (!"ALL".equals(resolved)
+                && !"ACTIVE".equals(resolved)
+                && !"INACTIVE".equals(resolved)
+                && !"DRAFT".equals(resolved)) {
+            throw new IllegalArgumentException("status not supported: " + status);
+        }
+        return switch (resolved) {
+            case "ACTIVE" -> "active";
+            case "INACTIVE" -> "inactive";
+            case "DRAFT" -> "draft";
+            case "ALL" -> "ALL";
+            default -> throw new IllegalArgumentException("status not supported: " + status);
+        };
+    }
+
+    private MetaCategorySubtreeFlatNodeDto toSubtreeFlatNodeDto(MetaCategoryDef def,
+                                                                 String latestTitle,
+                                                                 Map<UUID, Long> childCountById,
+                                                                 short rootDepthBase,
+                                                                 int relativeDepth) {
+        MetaCategorySubtreeFlatNodeDto dto = new MetaCategorySubtreeFlatNodeDto();
+        dto.setId(def.getId());
+        dto.setParentId(def.getParent() == null ? null : def.getParent().getId());
+        dto.setBusinessDomain(def.getBusinessDomain());
+        dto.setCode(def.getCodeKey());
+        dto.setName((latestTitle != null && !latestTitle.isBlank()) ? latestTitle : def.getCodeKey());
+        dto.setStatus(def.getStatus() == null ? null : def.getStatus().toUpperCase(Locale.ROOT));
+        dto.setLevel(depthToLevel(def.getDepth(), rootDepthBase));
+        dto.setDepth(relativeDepth);
+        dto.setPath(def.getPath());
+        long directChildren = childCountById.getOrDefault(def.getId(), 0L);
+        boolean hasChildren = directChildren > 0 || Boolean.FALSE.equals(def.getIsLeaf());
+        dto.setHasChildren(hasChildren);
+        dto.setLeaf(!hasChildren);
+        dto.setSort(def.getSortOrder());
+        return dto;
+    }
+
+    private MetaCategorySubtreeTreeNodeDto toSubtreeTreeNodeDto(MetaCategorySubtreeFlatNodeDto flatNode) {
+        MetaCategorySubtreeTreeNodeDto node = new MetaCategorySubtreeTreeNodeDto();
+        node.setId(flatNode.getId());
+        node.setParentId(flatNode.getParentId());
+        node.setBusinessDomain(flatNode.getBusinessDomain());
+        node.setCode(flatNode.getCode());
+        node.setName(flatNode.getName());
+        node.setStatus(flatNode.getStatus());
+        node.setLevel(flatNode.getLevel());
+        node.setDepth(flatNode.getDepth());
+        node.setPath(flatNode.getPath());
+        node.setHasChildren(flatNode.getHasChildren());
+        node.setLeaf(flatNode.getLeaf());
+        node.setSort(flatNode.getSort());
+        return node;
+    }
+
+    private TreeBuildResult buildTreeData(List<SubtreeNodeHolder> holders,
+                                          Map<UUID, String> titleById,
+                                          Map<UUID, Long> childCountById,
+                                          short rootDepthBase,
+                                          boolean includeRoot,
+                                          UUID rootId) {
+        Map<UUID, MetaCategorySubtreeTreeNodeDto> nodeById = new LinkedHashMap<>();
+        int depthReached = 0;
+
+        for (SubtreeNodeHolder holder : holders) {
+            MetaCategorySubtreeFlatNodeDto flatNode = toSubtreeFlatNodeDto(
+                    holder.def(),
+                    titleById.get(holder.def().getId()),
+                    childCountById,
+                    rootDepthBase,
+                    holder.relativeDepth());
+            nodeById.put(flatNode.getId(), toSubtreeTreeNodeDto(flatNode));
+            depthReached = Math.max(depthReached, holder.relativeDepth());
+        }
+
+        List<MetaCategorySubtreeTreeNodeDto> roots = new ArrayList<>();
+        for (MetaCategorySubtreeTreeNodeDto node : nodeById.values()) {
+            UUID parentId = node.getParentId();
+            if (parentId != null && nodeById.containsKey(parentId)) {
+                nodeById.get(parentId).getChildren().add(node);
+                continue;
+            }
+            roots.add(node);
+        }
+
+        Object data;
+        if (includeRoot && nodeById.containsKey(rootId)) {
+            data = nodeById.get(rootId);
+        } else {
+            data = roots;
+        }
+        return new TreeBuildResult(data, depthReached);
+    }
+
+    private record SubtreeNodeHolder(MetaCategoryDef def, int relativeDepth) {
+    }
+
+    private record TreeBuildResult(Object data, int depthReached) {
     }
 }
