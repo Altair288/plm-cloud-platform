@@ -95,7 +95,7 @@
 ### 4.2 字段定义
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
+| --- | --- | ---: | --- | --- |
 | businessDomain | string | 是 | - | 本次批处理所属业务域 |
 | action | string | 是 | - | MOVE 或 COPY |
 | targetParentId | UUID | 否 | null | 批次默认目标父节点；可被单项覆盖 |
@@ -108,7 +108,7 @@
 operations[i] 字段：
 
 | 字段 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
+| --- | --- | ---: | --- |
 | clientOperationId | string | 否 | 前端操作流水号，用于结果回填 |
 | sourceNodeId | UUID | 是 | 源根节点 ID |
 | targetParentId | UUID | 否 | 单项目标父节点，优先级高于批次默认 targetParentId |
@@ -116,7 +116,7 @@ operations[i] 字段：
 copyOptions 字段：
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
+| --- | --- | ---: | --- | --- |
 | versionPolicy | string | 否 | CURRENT_ONLY | 是否复制历史版本 |
 | codePolicy | string | 否 | AUTO_SUFFIX | 编码冲突策略 |
 | namePolicy | string | 否 | KEEP | 名称冲突策略 |
@@ -339,7 +339,7 @@ versionPolicy 首期只支持：
 ### 8.2 结果级错误
 
 | code | 场景 |
-|---|---|
+| --- | --- |
 | CATEGORY_NOT_FOUND | 源节点不存在 |
 | CATEGORY_TARGET_PARENT_NOT_FOUND | 目标父节点不存在 |
 | CATEGORY_TARGET_IS_SELF | 目标父节点就是源节点自身 |
@@ -424,7 +424,7 @@ versionPolicy 首期只支持：
 ### 9.1 响应字段说明
 
 | 字段 | 类型 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | total | int | 提交的总操作数 |
 | successCount | int | 成功项数 |
 | failureCount | int | 失败项数 |
@@ -439,7 +439,7 @@ versionPolicy 首期只支持：
 results[i] 关键字段：
 
 | 字段 | 类型 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | clientOperationId | string | 对应前端操作流水号 |
 | sourceNodeId | UUID | 原始源节点 |
 | normalizedSourceNodeId | UUID | 归一化后实际生效的源节点 |
