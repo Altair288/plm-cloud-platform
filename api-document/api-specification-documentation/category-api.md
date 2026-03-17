@@ -1,6 +1,6 @@
 # 分类通用 API 文档（plm-attribute-service）
 
-更新时间：2026-03-13
+更新时间：2026-03-17
 
 > 本文为分类接口正式文档（已完成 taxonomy 移除重构）。
 >
@@ -33,7 +33,14 @@
 | 局部更新 | PATCH /api/meta/categories/{id} | ✅ | 局部更新语义 |
 | 删除分类 | DELETE /api/meta/categories/{id} | ✅ | 软删除，支持可选级联 |
 | 批量删除分类 | POST /api/meta/categories/batch-delete | ✅ | 支持 dryRun、atomic 和逐项结果 |
+| 批量移动/复制分类 | POST /api/meta/categories/batch-transfer | ✅ | 支持 MOVE/COPY、dryRun、atomic、逐项结果 |
 | taxonomy 元数据 | GET /api/meta/taxonomies/{code} | ❌（已下线） | 已移除 |
+
+---
+
+## 2.1 专项文档
+
+- 分类批量移动/复制接口专项文档：./category-batch-transfer-api.md
 
 ---
 
@@ -304,6 +311,13 @@ results[i] 字段：
 | ATOMIC_ROLLBACK | atomic 模式下，失败前已执行条目被整体回滚 |
 | ATOMIC_ABORTED | atomic 模式下，失败后未执行条目被中止 |
 | INTERNAL_ERROR | 未归类系统异常 |
+
+### 5.2 批量移动/复制分类
+
+- 方法：POST
+- 路径：/api/meta/categories/batch-transfer
+
+详细协议、结果码与响应字段请参见专项文档：./category-batch-transfer-api.md
 
 ---
 

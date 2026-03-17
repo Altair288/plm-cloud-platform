@@ -46,6 +46,9 @@ public class MetaCategoryDef {
     @Column(name = "external_code", length = 64)
     private String externalCode;
 
+    @Column(name = "copied_from_category_id")
+    private UUID copiedFromCategoryId; // 记录复制来源的 categoryDefId，方便追踪和数据迁移
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

@@ -22,6 +22,7 @@ public class MetaCategoryDetailDto {
     private Integer level;
     private Short depth;
     private Integer sort;
+    private UUID copiedFromCategoryId;
     private String description;
     private String createdBy;
     private OffsetDateTime createdAt;

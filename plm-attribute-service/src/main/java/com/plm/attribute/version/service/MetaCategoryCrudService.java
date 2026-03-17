@@ -5,10 +5,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.plm.attribute.version.exception.CategoryConflictException;
 import com.plm.attribute.version.exception.CategoryNotFoundException;
+import com.plm.common.api.dto.MetaCategoryBatchCopyOptionsDto;
 import com.plm.common.api.dto.MetaCategoryBatchDeleteItemResultDto;
 import com.plm.common.api.dto.MetaCategoryBatchDeleteRequestDto;
 import com.plm.common.api.dto.MetaCategoryBatchDeleteResponseDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferItemResultDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferOperationDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferRequestDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferResponseDto;
 import com.plm.common.api.dto.CreateCategoryRequestDto;
+import com.plm.common.api.dto.MetaCategoryCodeMappingDto;
+import com.plm.common.api.dto.MetaCategoryCopySourceMappingDto;
 import com.plm.common.api.dto.MetaCategoryDetailDto;
 import com.plm.common.api.dto.MetaCategoryLatestVersionDto;
 import com.plm.common.api.dto.MetaCategoryVersionCompareDiffDto;
@@ -33,6 +40,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -51,10 +60,20 @@ public class MetaCategoryCrudService {
     private static final String STATUS_ACTIVE = "active";
     private static final String STATUS_INACTIVE = "inactive";
     private static final String STATUS_DELETED = "deleted";
+    private static final short ROOT_DEPTH_BASE = 1;
     private static final int BATCH_DELETE_MAX_SIZE = 200;
     private static final String CODE_ALREADY_DELETED = "ALREADY_DELETED";
     private static final String CODE_ATOMIC_ROLLBACK = "ATOMIC_ROLLBACK";
     private static final String CODE_ATOMIC_ABORTED = "ATOMIC_ABORTED";
+    private static final int BATCH_TRANSFER_MAX_SIZE = 200;
+    private static final String ACTION_MOVE = "MOVE";
+    private static final String ACTION_COPY = "COPY";
+    private static final String CODE_SOURCE_OVERLAP_NORMALIZED = "SOURCE_OVERLAP_NORMALIZED";
+
+    private static final Comparator<MetaCategoryDef> CATEGORY_TREE_ORDER = Comparator
+            .comparing((MetaCategoryDef def) -> def.getDepth() == null ? Short.MAX_VALUE : def.getDepth())
+            .thenComparing(def -> def.getSortOrder() == null ? Integer.MAX_VALUE : def.getSortOrder())
+            .thenComparing(MetaCategoryDef::getCodeKey);
 
     private final MetaCategoryDefRepository defRepository;
     private final MetaCategoryVersionRepository versionRepository;
@@ -71,6 +90,111 @@ public class MetaCategoryCrudService {
         PROCESS,
         TEST,
         EXPERIMENT
+    }
+
+    private static final class CopyOptionsResolved {
+        private final String versionPolicy;
+        private final String codePolicy;
+        private final String namePolicy;
+        private final String defaultStatus;
+
+        private CopyOptionsResolved(String versionPolicy, String codePolicy, String namePolicy, String defaultStatus) {
+            this.versionPolicy = versionPolicy;
+            this.codePolicy = codePolicy;
+            this.namePolicy = namePolicy;
+            this.defaultStatus = defaultStatus;
+        }
+    }
+
+    private static final class TransferOperationContext {
+        private final int index;
+        private final String clientOperationId;
+        private final UUID sourceNodeId;
+        private final UUID targetParentId;
+
+        private TransferOperationContext(int index, String clientOperationId, UUID sourceNodeId, UUID targetParentId) {
+            this.index = index;
+            this.clientOperationId = clientOperationId;
+            this.sourceNodeId = sourceNodeId;
+            this.targetParentId = targetParentId;
+        }
+    }
+
+    private static final class TransferPlanItem {
+        private final TransferOperationContext operation;
+        private final String action;
+        private UUID normalizedSourceNodeId;
+        private Integer affectedNodeCount;
+        private String failureCode;
+        private String failureMessage;
+        private List<String> warnings = new ArrayList<>();
+        private boolean normalized;
+
+        private TransferPlanItem(TransferOperationContext operation, String action) {
+            this.operation = operation;
+            this.action = action;
+            this.normalizedSourceNodeId = operation.sourceNodeId;
+            this.affectedNodeCount = 0;
+        }
+
+        private boolean hasFailure() {
+            return failureCode != null;
+        }
+    }
+
+    private static final class TransferPlan {
+        private final String businessDomain;
+        private final String action;
+        private final boolean dryRun;
+        private final boolean atomic;
+        private final String operator;
+        private final CopyOptionsResolved copyOptions;
+        private final List<TransferPlanItem> items;
+        private final List<String> warnings;
+
+        private TransferPlan(String businessDomain,
+                             String action,
+                             boolean dryRun,
+                             boolean atomic,
+                             String operator,
+                             CopyOptionsResolved copyOptions,
+                             List<TransferPlanItem> items,
+                             List<String> warnings) {
+            this.businessDomain = businessDomain;
+            this.action = action;
+            this.dryRun = dryRun;
+            this.atomic = atomic;
+            this.operator = operator;
+            this.copyOptions = copyOptions;
+            this.items = items;
+            this.warnings = warnings;
+        }
+    }
+
+    private static final class TransferExecutionOutcome {
+        private final int affectedNodeCount;
+        private final List<UUID> movedIds;
+        private final UUID createdRootId;
+        private final List<UUID> createdIds;
+        private final UUID copiedFromCategoryId;
+        private final List<MetaCategoryCopySourceMappingDto> sourceMappings;
+        private final List<MetaCategoryCodeMappingDto> codeMappings;
+
+        private TransferExecutionOutcome(int affectedNodeCount,
+                                         List<UUID> movedIds,
+                                         UUID createdRootId,
+                                         List<UUID> createdIds,
+                                         UUID copiedFromCategoryId,
+                                         List<MetaCategoryCopySourceMappingDto> sourceMappings,
+                                         List<MetaCategoryCodeMappingDto> codeMappings) {
+            this.affectedNodeCount = affectedNodeCount;
+            this.movedIds = movedIds;
+            this.createdRootId = createdRootId;
+            this.createdIds = createdIds;
+            this.copiedFromCategoryId = copiedFromCategoryId;
+            this.sourceMappings = sourceMappings;
+            this.codeMappings = codeMappings;
+        }
     }
 
     public MetaCategoryCrudService(MetaCategoryDefRepository defRepository,
@@ -308,6 +432,22 @@ public class MetaCategoryCrudService {
         return batchDeleteNonAtomic(ids, cascade, confirm, operator);
     }
 
+    public MetaCategoryBatchTransferResponseDto batchTransfer(MetaCategoryBatchTransferRequestDto request) {
+        if (request == null) {
+            throw new IllegalArgumentException("request body is required");
+        }
+
+        TransferPlan plan = prepareTransferPlan(request);
+        if (plan.dryRun) {
+            return buildTransferResponse(plan, buildDryRunResults(plan));
+        }
+
+        if (plan.atomic) {
+            return batchTransferAtomic(plan);
+        }
+        return batchTransferNonAtomic(plan);
+    }
+
     @Transactional(readOnly = true)
     public MetaCategoryDetailDto detail(UUID id) {
         MetaCategoryDef def = loadExisting(id);
@@ -342,8 +482,9 @@ public class MetaCategoryCrudService {
         dto.setRootName(rootName);
         dto.setPath(def.getPath());
         dto.setDepth(def.getDepth());
-        dto.setLevel(depthToLevel(def.getDepth(), resolveRootDepthBase()));
+        dto.setLevel(resolveLevel(def.getPath(), def.getDepth()));
         dto.setSort(def.getSortOrder());
+        dto.setCopiedFromCategoryId(def.getCopiedFromCategoryId());
         dto.setDescription(readDescription(latest.getStructureJson()));
         dto.setCreatedBy(def.getCreatedBy());
         dto.setCreatedAt(def.getCreatedAt());
@@ -478,7 +619,7 @@ public class MetaCategoryCrudService {
 
             if (parent == null || !byId.containsKey(parent.getId())) {
                 current.setPath("/" + current.getCodeKey());
-                current.setDepth((short) 0);
+                current.setDepth(ROOT_DEPTH_BASE);
                 current.setFullPathName(currentName);
             } else {
                 String parentPath = parent.getPath() == null ? "/" + parent.getCodeKey() : parent.getPath();
@@ -550,7 +691,7 @@ public class MetaCategoryCrudService {
         String rootName = latestTitleOrCode(root, latestNameByDefId);
         if (newParent == null) {
             root.setPath("/" + root.getCodeKey());
-            root.setDepth(resolveRootDepthBase());
+            root.setDepth(ROOT_DEPTH_BASE);
             root.setFullPathName(rootName);
         } else {
             String parentPath = newParent.getPath();
@@ -677,7 +818,7 @@ public class MetaCategoryCrudService {
     private void applyCreateNodeMeta(MetaCategoryDef def, MetaCategoryDef parent, String displayName) {
         if (parent == null) {
             def.setPath("/" + def.getCodeKey());
-            def.setDepth(resolveRootDepthBase());
+            def.setDepth(ROOT_DEPTH_BASE);
             def.setFullPathName(displayName);
             def.setIsLeaf(Boolean.TRUE);
             defRepository.save(def);
@@ -744,6 +885,573 @@ public class MetaCategoryCrudService {
     private MetaCategoryVersion loadVersion(UUID versionId) {
         return versionRepository.findById(versionId)
                 .orElseThrow(() -> new IllegalArgumentException("category version not found: id=" + versionId));
+    }
+
+    private TransferPlan prepareTransferPlan(MetaCategoryBatchTransferRequestDto request) {
+        String businessDomain = normalizeBusinessDomain(request.getBusinessDomain());
+        String action = normalizeTransferAction(request.getAction());
+        boolean dryRun = Boolean.TRUE.equals(request.getDryRun());
+        boolean atomic = Boolean.TRUE.equals(request.getAtomic());
+        String operator = normalizeOperator(request.getOperator());
+        CopyOptionsResolved copyOptions = resolveCopyOptions(action, request.getCopyOptions());
+        List<TransferOperationContext> operations = normalizeTransferOperations(request.getOperations(), request.getTargetParentId());
+
+        Map<UUID, MetaCategoryDef> sourceMap = loadCategoryMap(operations.stream().map(op -> op.sourceNodeId).toList());
+        Map<UUID, MetaCategoryDef> targetMap = loadCategoryMap(
+                operations.stream().map(op -> op.targetParentId).filter(Objects::nonNull).toList()
+        );
+        Map<UUID, Set<UUID>> descendantMap = loadDescendantMap(sourceMap.keySet());
+
+        List<TransferPlanItem> items = new ArrayList<>();
+        for (TransferOperationContext operation : operations) {
+            TransferPlanItem item = new TransferPlanItem(operation, action);
+            MetaCategoryDef source = sourceMap.get(operation.sourceNodeId);
+            MetaCategoryDef target = operation.targetParentId == null ? null : targetMap.get(operation.targetParentId);
+            validatePlanItem(item, source, target, businessDomain, descendantMap);
+            if (!item.hasFailure()) {
+                item.affectedNodeCount = descendantMap.getOrDefault(operation.sourceNodeId, Set.of(operation.sourceNodeId)).size();
+            }
+            items.add(item);
+        }
+
+        applySourceOverlapRules(items, descendantMap);
+
+        int normalizedCount = (int) items.stream().filter(item -> item.normalized).count();
+        List<String> warnings = normalizedCount == 0
+                ? List.of()
+                : List.of(normalizedCount + " child operation normalized because ancestor already included");
+
+        return new TransferPlan(businessDomain, action, dryRun, atomic, operator, copyOptions, items, warnings);
+    }
+
+    private MetaCategoryBatchTransferResponseDto batchTransferNonAtomic(TransferPlan plan) {
+        List<MetaCategoryBatchTransferItemResultDto> results = new ArrayList<>();
+        for (TransferPlanItem item : plan.items) {
+            if (item.hasFailure()) {
+                results.add(buildTransferFailureResult(item, item.failureCode, item.failureMessage));
+                continue;
+            }
+            if (item.normalized) {
+                results.add(buildTransferNormalizedResult(item));
+                continue;
+            }
+            try {
+                TransferExecutionOutcome outcome = requiresNewTxTemplate.execute(status -> executeTransfer(plan, item));
+                results.add(buildTransferSuccessResult(item, outcome));
+            } catch (RuntimeException ex) {
+                results.add(buildTransferFailureResult(item, resolveBatchErrorCode(ex), ex.getMessage()));
+            }
+        }
+        return buildTransferResponse(plan, results);
+    }
+
+    private MetaCategoryBatchTransferResponseDto batchTransferAtomic(TransferPlan plan) {
+        List<TransferPlanItem> failedItems = plan.items.stream().filter(TransferPlanItem::hasFailure).toList();
+        if (!failedItems.isEmpty()) {
+            List<MetaCategoryBatchTransferItemResultDto> results = new ArrayList<>();
+            for (TransferPlanItem item : plan.items) {
+                if (item.hasFailure()) {
+                    results.add(buildTransferFailureResult(item, item.failureCode, item.failureMessage));
+                } else {
+                    results.add(buildTransferFailureResult(item, CODE_ATOMIC_ABORTED, "batch aborted due to atomic rollback"));
+                }
+            }
+            return buildTransferResponse(plan, results);
+        }
+
+        List<TransferPlanItem> executedItems = new ArrayList<>();
+        Map<Integer, TransferExecutionOutcome> outcomes = new HashMap<>();
+        TransferPlanItem[] failedAt = new TransferPlanItem[1];
+        RuntimeException[] failedException = new RuntimeException[1];
+
+        try {
+            requiresNewTxTemplate.executeWithoutResult(status -> {
+                for (TransferPlanItem item : plan.items) {
+                    if (item.normalized) {
+                        continue;
+                    }
+                    try {
+                        TransferExecutionOutcome outcome = executeTransfer(plan, item);
+                        executedItems.add(item);
+                        outcomes.put(item.operation.index, outcome);
+                    } catch (RuntimeException ex) {
+                        failedAt[0] = item;
+                        failedException[0] = ex;
+                        status.setRollbackOnly();
+                        throw ex;
+                    }
+                }
+            });
+        } catch (RuntimeException ex) {
+            List<MetaCategoryBatchTransferItemResultDto> results = new ArrayList<>();
+            for (TransferPlanItem item : plan.items) {
+                if (item == failedAt[0]) {
+                    results.add(buildTransferFailureResult(item, resolveBatchErrorCode(failedException[0]), failedException[0].getMessage()));
+                } else if (executedItems.contains(item)) {
+                    results.add(buildTransferFailureResult(item, CODE_ATOMIC_ROLLBACK, "atomic rollback triggered by failure in same batch"));
+                } else {
+                    results.add(buildTransferFailureResult(item, CODE_ATOMIC_ABORTED, "batch aborted due to atomic rollback"));
+                }
+            }
+            return buildTransferResponse(plan, results);
+        }
+
+        List<MetaCategoryBatchTransferItemResultDto> results = new ArrayList<>();
+        for (TransferPlanItem item : plan.items) {
+            if (item.normalized) {
+                results.add(buildTransferNormalizedResult(item));
+            } else {
+                results.add(buildTransferSuccessResult(item, outcomes.get(item.operation.index)));
+            }
+        }
+        return buildTransferResponse(plan, results);
+    }
+
+    private List<MetaCategoryBatchTransferItemResultDto> buildDryRunResults(TransferPlan plan) {
+        List<MetaCategoryBatchTransferItemResultDto> results = new ArrayList<>();
+        for (TransferPlanItem item : plan.items) {
+            if (item.hasFailure()) {
+                results.add(buildTransferFailureResult(item, item.failureCode, item.failureMessage));
+            } else if (item.normalized) {
+                results.add(buildTransferNormalizedResult(item));
+            } else {
+                MetaCategoryBatchTransferItemResultDto result = baseTransferResult(item);
+                result.setSuccess(Boolean.TRUE);
+                result.setAffectedNodeCount(item.affectedNodeCount);
+                results.add(result);
+            }
+        }
+        return results;
+    }
+
+    private TransferExecutionOutcome executeTransfer(TransferPlan plan, TransferPlanItem item) {
+        return switch (plan.action) {
+            case ACTION_MOVE -> executeMove(plan.businessDomain, item.operation.sourceNodeId, item.operation.targetParentId);
+            case ACTION_COPY -> executeCopy(plan.businessDomain, item.operation.sourceNodeId, item.operation.targetParentId, plan.copyOptions, plan.operator);
+            default -> throw new IllegalArgumentException("unsupported action: " + plan.action);
+        };
+    }
+
+    private TransferExecutionOutcome executeMove(String businessDomain, UUID sourceId, UUID targetParentId) {
+        MetaCategoryDef source = loadActiveCategory(sourceId, "CATEGORY_NOT_FOUND");
+        MetaCategoryDef targetParent = targetParentId == null ? null : loadActiveCategory(targetParentId, "CATEGORY_TARGET_PARENT_NOT_FOUND");
+        validateSourceAndTarget(source, targetParent, businessDomain);
+
+        List<UUID> movedIds = hierarchyRepository.findDescendantIdsIncludingSelf(sourceId);
+        if (movedIds.isEmpty()) {
+            movedIds = List.of(sourceId);
+        }
+
+        MetaCategoryDef oldParent = source.getParent();
+        source.setParent(targetParent);
+        source.setSortOrder(nextSort(targetParentId));
+        defRepository.save(source);
+        applyParentMove(source, oldParent);
+
+        return new TransferExecutionOutcome(
+                movedIds.size(),
+                movedIds,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    private TransferExecutionOutcome executeCopy(String businessDomain,
+                                                 UUID sourceId,
+                                                 UUID targetParentId,
+                                                 CopyOptionsResolved options,
+                                                 String operator) {
+        MetaCategoryDef source = loadActiveCategory(sourceId, "CATEGORY_NOT_FOUND");
+        MetaCategoryDef targetParent = targetParentId == null ? null : loadActiveCategory(targetParentId, "CATEGORY_TARGET_PARENT_NOT_FOUND");
+        validateSourceAndTarget(source, targetParent, businessDomain);
+
+        List<MetaCategoryDef> subtree = new ArrayList<>();
+        subtree.add(source);
+        subtree.addAll(hierarchyRepository.findDescendantDefs(source.getId()));
+        subtree = subtree.stream().distinct().sorted(CATEGORY_TREE_ORDER).toList();
+
+        Map<UUID, MetaCategoryVersion> latestVersionByDefId = versionRepository.findByCategoryDefInAndIsLatestTrue(subtree).stream()
+                .filter(version -> version.getCategoryDef() != null && version.getCategoryDef().getId() != null)
+                .collect(Collectors.toMap(version -> version.getCategoryDef().getId(), version -> version, (left, right) -> left));
+
+        Map<UUID, MetaCategoryDef> copiedBySourceId = new LinkedHashMap<>();
+        List<UUID> createdIds = new ArrayList<>();
+        List<MetaCategoryCopySourceMappingDto> sourceMappings = new ArrayList<>();
+        List<MetaCategoryCodeMappingDto> codeMappings = new ArrayList<>();
+        LinkedHashSet<UUID> parentIdsToNormalize = new LinkedHashSet<>();
+        parentIdsToNormalize.add(targetParentId);
+
+        for (MetaCategoryDef current : subtree) {
+            MetaCategoryVersion currentVersion = latestVersionByDefId.get(current.getId());
+            if (currentVersion == null) {
+                throw new IllegalArgumentException("category has no latest version: id=" + current.getId());
+            }
+
+            MetaCategoryDef copiedParent = current.getId().equals(source.getId())
+                    ? targetParent
+                    : copiedBySourceId.get(current.getParent().getId());
+            String copiedCode = generateCopyCode(businessDomain, current.getCodeKey());
+
+            MetaCategoryDef copied = new MetaCategoryDef();
+            copied.setBusinessDomain(businessDomain);
+            copied.setCodeKey(copiedCode);
+            copied.setStatus(options.defaultStatus);
+            copied.setParent(copiedParent);
+            copied.setSortOrder(current.getId().equals(source.getId()) ? nextSort(targetParentId) : current.getSortOrder());
+            copied.setIsLeaf(Boolean.TRUE.equals(current.getIsLeaf()));
+            copied.setExternalCode(current.getExternalCode());
+            copied.setCopiedFromCategoryId(current.getId());
+            copied.setCreatedBy(operator);
+            defRepository.save(copied);
+
+            MetaCategoryVersion copiedVersion = new MetaCategoryVersion();
+            copiedVersion.setCategoryDef(copied);
+            copiedVersion.setVersionNo(1);
+            copiedVersion.setDisplayName(resolveCopyDisplayName(currentVersion, options));
+            copiedVersion.setRuleResolvedCodePrefix(currentVersion.getRuleResolvedCodePrefix());
+            copiedVersion.setStructureJson(currentVersion.getStructureJson());
+            copiedVersion.setHash(currentVersion.getHash());
+            copiedVersion.setIsLatest(Boolean.TRUE);
+            copiedVersion.setCreatedBy(operator);
+            versionRepository.save(copiedVersion);
+
+            applyCreateNodeMeta(copied, copiedParent, copiedVersion.getDisplayName());
+            insertClosureForNewNode(copied, copiedParent);
+
+            copiedBySourceId.put(current.getId(), copied);
+            createdIds.add(copied.getId());
+            parentIdsToNormalize.add(copied.getId());
+
+            MetaCategoryCopySourceMappingDto sourceMapping = new MetaCategoryCopySourceMappingDto();
+            sourceMapping.setSourceNodeId(current.getId());
+            sourceMapping.setCreatedNodeId(copied.getId());
+            sourceMapping.setCopiedFromCategoryId(current.getId());
+            sourceMappings.add(sourceMapping);
+
+            MetaCategoryCodeMappingDto codeMapping = new MetaCategoryCodeMappingDto();
+            codeMapping.setSourceCode(current.getCodeKey());
+            codeMapping.setCreatedCode(copiedCode);
+            codeMappings.add(codeMapping);
+        }
+
+        refreshParentLeafIfNeeded(targetParent);
+        for (UUID parentId : parentIdsToNormalize) {
+            normalizeSiblingOrders(parentId);
+        }
+
+        MetaCategoryDef copiedRoot = copiedBySourceId.get(source.getId());
+        return new TransferExecutionOutcome(
+                createdIds.size(),
+                null,
+                copiedRoot == null ? null : copiedRoot.getId(),
+                createdIds,
+                source.getId(),
+                sourceMappings,
+                codeMappings
+        );
+    }
+
+    private String resolveCopyDisplayName(MetaCategoryVersion version, CopyOptionsResolved options) {
+        if (!"KEEP".equals(options.namePolicy)) {
+            throw new IllegalArgumentException("unsupported namePolicy: " + options.namePolicy);
+        }
+        return version.getDisplayName();
+    }
+
+    private MetaCategoryDef loadActiveCategory(UUID id, String notFoundCode) {
+        MetaCategoryDef def = defRepository.findById(id)
+                .orElseThrow(() -> new CategoryConflictException(notFoundCode, "category not found: id=" + id));
+        if (isDeleted(def)) {
+            throw new CategoryConflictException("CATEGORY_DELETED", "category is deleted: id=" + id);
+        }
+        return def;
+    }
+
+    private void validateSourceAndTarget(MetaCategoryDef source, MetaCategoryDef targetParent, String businessDomain) {
+        if (!Objects.equals(source.getBusinessDomain(), businessDomain)) {
+            throw new CategoryConflictException("CATEGORY_DOMAIN_MISMATCH", "source and request businessDomain mismatch: sourceId=" + source.getId());
+        }
+        if (targetParent != null) {
+            if (!Objects.equals(targetParent.getBusinessDomain(), businessDomain)) {
+                throw new CategoryConflictException("CATEGORY_DOMAIN_MISMATCH", "target parent and request businessDomain mismatch: targetParentId=" + targetParent.getId());
+            }
+            if (source.getId().equals(targetParent.getId())) {
+                throw new CategoryConflictException("CATEGORY_TARGET_IS_SELF", "target parent cannot be self");
+            }
+            ensureNoCycle(source.getId(), targetParent.getId());
+        }
+    }
+
+    private CopyOptionsResolved resolveCopyOptions(String action, MetaCategoryBatchCopyOptionsDto copyOptions) {
+        if (!ACTION_COPY.equals(action)) {
+            return null;
+        }
+        String versionPolicy = normalizeOption(copyOptions == null ? null : copyOptions.getVersionPolicy(), "CURRENT_ONLY");
+        String codePolicy = normalizeOption(copyOptions == null ? null : copyOptions.getCodePolicy(), "AUTO_SUFFIX");
+        String namePolicy = normalizeOption(copyOptions == null ? null : copyOptions.getNamePolicy(), "KEEP");
+        String defaultStatus = normalizeCopyDefaultStatus(copyOptions == null ? null : copyOptions.getDefaultStatus());
+
+        if (!"CURRENT_ONLY".equals(versionPolicy)) {
+            throw new IllegalArgumentException("unsupported versionPolicy: " + versionPolicy);
+        }
+        if (!"AUTO_SUFFIX".equals(codePolicy)) {
+            throw new IllegalArgumentException("unsupported codePolicy: " + codePolicy);
+        }
+        if (!"KEEP".equals(namePolicy)) {
+            throw new IllegalArgumentException("unsupported namePolicy: " + namePolicy);
+        }
+        return new CopyOptionsResolved(versionPolicy, codePolicy, namePolicy, defaultStatus);
+    }
+
+    private String normalizeCopyDefaultStatus(String defaultStatus) {
+        String normalized = trimToNull(defaultStatus);
+        if (normalized == null) {
+            return STATUS_DRAFT;
+        }
+        return switch (normalized.toUpperCase(Locale.ROOT)) {
+            case "DRAFT", "CREATED" -> STATUS_DRAFT;
+            case "ACTIVE", "EFFECTIVE" -> STATUS_ACTIVE;
+            case "INACTIVE", "INVALID" -> STATUS_INACTIVE;
+            default -> throw new IllegalArgumentException("unsupported defaultStatus: " + defaultStatus);
+        };
+    }
+
+    private String normalizeTransferAction(String action) {
+        String normalized = normalizeOption(action, null);
+        if (normalized == null) {
+            throw new IllegalArgumentException("action is required");
+        }
+        if (!ACTION_MOVE.equals(normalized) && !ACTION_COPY.equals(normalized)) {
+            throw new IllegalArgumentException("unsupported action: " + action);
+        }
+        return normalized;
+    }
+
+    private String normalizeOption(String value, String defaultValue) {
+        String normalized = trimToNull(value);
+        return normalized == null ? defaultValue : normalized.toUpperCase(Locale.ROOT);
+    }
+
+    private List<TransferOperationContext> normalizeTransferOperations(List<MetaCategoryBatchTransferOperationDto> operations, UUID batchTargetParentId) {
+        if (operations == null || operations.isEmpty()) {
+            throw new IllegalArgumentException("operations is required");
+        }
+        if (operations.size() > BATCH_TRANSFER_MAX_SIZE) {
+            throw new IllegalArgumentException("operations size must be <= " + BATCH_TRANSFER_MAX_SIZE);
+        }
+
+        List<TransferOperationContext> normalized = new ArrayList<>();
+        for (int i = 0; i < operations.size(); i++) {
+            MetaCategoryBatchTransferOperationDto operation = operations.get(i);
+            if (operation == null || operation.getSourceNodeId() == null) {
+                throw new IllegalArgumentException("operations contains item with missing sourceNodeId");
+            }
+            normalized.add(new TransferOperationContext(
+                    i,
+                    trimToNull(operation.getClientOperationId()),
+                    operation.getSourceNodeId(),
+                    operation.getTargetParentId() == null ? batchTargetParentId : operation.getTargetParentId()
+            ));
+        }
+        return normalized;
+    }
+
+    private Map<UUID, MetaCategoryDef> loadCategoryMap(List<UUID> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, MetaCategoryDef> map = new HashMap<>();
+        for (MetaCategoryDef def : defRepository.findAllById(ids)) {
+            map.put(def.getId(), def);
+        }
+        return map;
+    }
+
+    private Map<UUID, Set<UUID>> loadDescendantMap(Set<UUID> sourceIds) {
+        Map<UUID, Set<UUID>> descendantMap = new HashMap<>();
+        for (UUID sourceId : sourceIds) {
+            descendantMap.put(sourceId, new LinkedHashSet<>(hierarchyRepository.findDescendantIdsIncludingSelf(sourceId)));
+        }
+        return descendantMap;
+    }
+
+    private void validatePlanItem(TransferPlanItem item,
+                                  MetaCategoryDef source,
+                                  MetaCategoryDef target,
+                                  String businessDomain,
+                                  Map<UUID, Set<UUID>> descendantMap) {
+        if (source == null) {
+            item.failureCode = "CATEGORY_NOT_FOUND";
+            item.failureMessage = "source category not found: id=" + item.operation.sourceNodeId;
+            return;
+        }
+        if (isDeleted(source)) {
+            item.failureCode = "CATEGORY_DELETED";
+            item.failureMessage = "source category is deleted: id=" + source.getId();
+            return;
+        }
+        if (!Objects.equals(source.getBusinessDomain(), businessDomain)) {
+            item.failureCode = "CATEGORY_DOMAIN_MISMATCH";
+            item.failureMessage = "source and request businessDomain mismatch: sourceId=" + source.getId();
+            return;
+        }
+        if (item.operation.targetParentId == null) {
+            return;
+        }
+        if (target == null) {
+            item.failureCode = "CATEGORY_TARGET_PARENT_NOT_FOUND";
+            item.failureMessage = "target parent not found: id=" + item.operation.targetParentId;
+            return;
+        }
+        if (isDeleted(target)) {
+            item.failureCode = "CATEGORY_DELETED";
+            item.failureMessage = "target parent is deleted: id=" + target.getId();
+            return;
+        }
+        if (!Objects.equals(target.getBusinessDomain(), businessDomain)) {
+            item.failureCode = "CATEGORY_DOMAIN_MISMATCH";
+            item.failureMessage = "target parent and request businessDomain mismatch: targetParentId=" + target.getId();
+            return;
+        }
+        if (source.getId().equals(target.getId())) {
+            item.failureCode = "CATEGORY_TARGET_IS_SELF";
+            item.failureMessage = "target parent cannot be self";
+            return;
+        }
+        if (descendantMap.getOrDefault(source.getId(), Set.of()).contains(target.getId())) {
+            item.failureCode = "CATEGORY_TARGET_IN_DESCENDANT";
+            item.failureMessage = "target parent is inside source subtree";
+        }
+    }
+
+    private void applySourceOverlapRules(List<TransferPlanItem> items, Map<UUID, Set<UUID>> descendantMap) {
+        List<TransferPlanItem> candidates = items.stream()
+                .filter(item -> !item.hasFailure())
+                .sorted(Comparator.comparingInt(this::safeAffectedNodeCount))
+                .toList();
+
+        for (TransferPlanItem item : candidates) {
+            if (item.hasFailure()) {
+                continue;
+            }
+            TransferPlanItem nearestAncestor = null;
+            for (TransferPlanItem other : candidates) {
+                if (item == other || other.hasFailure()) {
+                    continue;
+                }
+                Set<UUID> descendants = descendantMap.getOrDefault(other.operation.sourceNodeId, Set.of());
+                if (!descendants.contains(item.operation.sourceNodeId) || other.operation.sourceNodeId.equals(item.operation.sourceNodeId)) {
+                    continue;
+                }
+                if (nearestAncestor == null || safeAffectedNodeCount(nearestAncestor) > safeAffectedNodeCount(other)) {
+                    nearestAncestor = other;
+                }
+            }
+            if (nearestAncestor == null) {
+                continue;
+            }
+            if (Objects.equals(nearestAncestor.operation.targetParentId, item.operation.targetParentId)) {
+                item.normalized = true;
+                item.normalizedSourceNodeId = nearestAncestor.operation.sourceNodeId;
+                item.affectedNodeCount = 0;
+                item.warnings = List.of("normalized by ancestor operation");
+            } else {
+                item.failureCode = "CATEGORY_SOURCE_OVERLAP_TARGET_CONFLICT";
+                item.failureMessage = "ancestor and descendant operations target different parents";
+            }
+        }
+    }
+
+    private int safeAffectedNodeCount(TransferPlanItem item) {
+        if (item == null || item.affectedNodeCount == null) {
+            return Integer.MAX_VALUE;
+        }
+        return item.affectedNodeCount;
+    }
+
+    private MetaCategoryBatchTransferItemResultDto buildTransferSuccessResult(TransferPlanItem item, TransferExecutionOutcome outcome) {
+        MetaCategoryBatchTransferItemResultDto result = baseTransferResult(item);
+        result.setSuccess(Boolean.TRUE);
+        result.setAffectedNodeCount(outcome.affectedNodeCount);
+        result.setMovedIds(outcome.movedIds);
+        result.setCreatedRootId(outcome.createdRootId);
+        result.setCreatedIds(outcome.createdIds);
+        result.setCopiedFromCategoryId(outcome.copiedFromCategoryId);
+        result.setSourceMappings(outcome.sourceMappings);
+        result.setCodeMappings(outcome.codeMappings);
+        return result;
+    }
+
+    private MetaCategoryBatchTransferItemResultDto buildTransferNormalizedResult(TransferPlanItem item) {
+        MetaCategoryBatchTransferItemResultDto result = baseTransferResult(item);
+        result.setSuccess(Boolean.TRUE);
+        result.setAffectedNodeCount(0);
+        result.setCode(CODE_SOURCE_OVERLAP_NORMALIZED);
+        result.setMessage("source node skipped because ancestor already covers subtree");
+        result.setWarning(item.warnings);
+        return result;
+    }
+
+    private MetaCategoryBatchTransferItemResultDto buildTransferFailureResult(TransferPlanItem item, String code, String message) {
+        MetaCategoryBatchTransferItemResultDto result = baseTransferResult(item);
+        result.setSuccess(Boolean.FALSE);
+        result.setAffectedNodeCount(0);
+        result.setCode(code);
+        result.setMessage(message == null ? "unknown error" : message);
+        if (!item.warnings.isEmpty()) {
+            result.setWarning(item.warnings);
+        }
+        return result;
+    }
+
+    private MetaCategoryBatchTransferItemResultDto baseTransferResult(TransferPlanItem item) {
+        MetaCategoryBatchTransferItemResultDto result = new MetaCategoryBatchTransferItemResultDto();
+        result.setClientOperationId(item.operation.clientOperationId);
+        result.setSourceNodeId(item.operation.sourceNodeId);
+        result.setNormalizedSourceNodeId(item.normalizedSourceNodeId);
+        result.setTargetParentId(item.operation.targetParentId);
+        result.setAction(item.action);
+        return result;
+    }
+
+    private MetaCategoryBatchTransferResponseDto buildTransferResponse(TransferPlan plan,
+                                                                      List<MetaCategoryBatchTransferItemResultDto> results) {
+        MetaCategoryBatchTransferResponseDto response = new MetaCategoryBatchTransferResponseDto();
+        response.setTotal(results.size());
+        response.setSuccessCount((int) results.stream().filter(result -> Boolean.TRUE.equals(result.getSuccess())).count());
+        response.setFailureCount((int) results.stream().filter(result -> !Boolean.TRUE.equals(result.getSuccess())).count());
+        response.setNormalizedCount((int) results.stream().filter(result -> CODE_SOURCE_OVERLAP_NORMALIZED.equals(result.getCode())).count());
+        response.setMovedCount(results.stream()
+                .filter(result -> ACTION_MOVE.equals(result.getAction()) && Boolean.TRUE.equals(result.getSuccess()))
+                .map(result -> result.getAffectedNodeCount() == null ? 0 : result.getAffectedNodeCount())
+                .reduce(0, Integer::sum));
+        response.setCopiedCount(results.stream()
+                .filter(result -> ACTION_COPY.equals(result.getAction()) && Boolean.TRUE.equals(result.getSuccess()))
+                .map(result -> result.getAffectedNodeCount() == null ? 0 : result.getAffectedNodeCount())
+                .reduce(0, Integer::sum));
+        response.setAtomic(plan.atomic);
+        response.setDryRun(plan.dryRun);
+        response.setWarnings(plan.warnings);
+        response.setResults(results);
+        return response;
+    }
+
+    private String generateCopyCode(String businessDomain, String sourceCode) {
+        String baseCode = requireCode(sourceCode);
+        String copyPrefix = baseCode + "-COPY-";
+        Set<String> existingCopyCodes = new HashSet<>(
+                defRepository.findCodeKeysByBusinessDomainAndCodeKeyPrefix(businessDomain, copyPrefix)
+        );
+        for (int i = 1; i <= 999; i++) {
+            String candidate = baseCode + String.format(Locale.ROOT, "-COPY-%03d", i);
+            if (!existingCopyCodes.contains(candidate)) {
+                return candidate;
+            }
+        }
+        throw new CategoryConflictException("CATEGORY_CODE_CONFLICT", "unable to allocate copy code for source code=" + sourceCode);
     }
 
     private void ensureVersionBelongsToCategory(MetaCategoryDef def, MetaCategoryVersion version, String fieldName) {
@@ -1158,17 +1866,34 @@ public class MetaCategoryCrudService {
         }
     }
 
+    private Integer resolveLevel(String path, Short depth) {
+        Integer pathLevel = levelFromPath(path);
+        if (pathLevel != null) {
+            return pathLevel;
+        }
+        return depthToLevel(depth, ROOT_DEPTH_BASE);
+    }
+
+    private Integer levelFromPath(String path) {
+        String normalized = trimToNull(path);
+        if (normalized == null) {
+            return null;
+        }
+        int segments = 0;
+        for (String segment : normalized.split("/")) {
+            if (!segment.isBlank()) {
+                segments++;
+            }
+        }
+        return segments == 0 ? null : segments;
+    }
+
     private Integer depthToLevel(Short depth, short rootDepthBase) {
         if (depth == null) {
             return null;
         }
         int level = depth - rootDepthBase + 1;
         return Math.max(level, 1);
-    }
-
-    private short resolveRootDepthBase() {
-        Short minDepth = defRepository.findMinRootDepth();
-        return minDepth == null ? 0 : minDepth;
     }
 
     private String coalesceTrim(String value, String fallback) {

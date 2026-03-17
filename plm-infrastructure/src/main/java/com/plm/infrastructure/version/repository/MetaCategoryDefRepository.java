@@ -22,6 +22,11 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
             @Param("businessDomain") String businessDomain,
             @Param("codeKeys") Collection<String> codeKeys);
 
+        @Query("select d.codeKey from MetaCategoryDef d where d.businessDomain = :businessDomain and d.codeKey like concat(:prefix, '%')")
+        List<String> findCodeKeysByBusinessDomainAndCodeKeyPrefix(
+            @Param("businessDomain") String businessDomain,
+            @Param("prefix") String prefix);
+
         List<MetaCategoryDef> findByParentIsNullOrderBySortOrderAscCodeKeyAsc();
         List<MetaCategoryDef> findByParentIdOrderBySortOrderAscCodeKeyAsc(UUID parentId);
         List<MetaCategoryDef> findByParentIdInOrderBySortOrderAscCodeKeyAsc(Collection<UUID> parentIds);
