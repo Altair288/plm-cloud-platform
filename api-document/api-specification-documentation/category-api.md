@@ -1,6 +1,6 @@
 # 分类通用 API 文档（plm-attribute-service）
 
-更新时间：2026-03-17
+更新时间：2026-03-18
 
 > 本文为分类接口正式文档（已完成 taxonomy 移除重构）。
 >
@@ -35,6 +35,7 @@
 | 删除分类 | DELETE /api/meta/categories/{id} | ✅ | 软删除，支持可选级联 |
 | 批量删除分类 | POST /api/meta/categories/batch-delete | ✅ | 支持 dryRun、atomic 和逐项结果 |
 | 批量移动/复制分类 | POST /api/meta/categories/batch-transfer | ✅ | 支持 MOVE/COPY、dryRun、atomic、逐项结果 |
+| 拓扑感知批量移动分类 | POST /api/meta/categories/batch-transfer/topology | ✅ | 支持 MOVE、dependsOnOperationIds、descendant-first 拆分、dryRun 规划结果 |
 | taxonomy 元数据 | GET /api/meta/taxonomies/{code} | ❌（已下线） | 已移除 |
 
 ---
@@ -42,6 +43,7 @@
 ## 2.1 专项文档
 
 - 分类批量移动/复制接口专项文档：./category-batch-transfer-api.md
+- 分类拓扑感知批量移动接口专项文档：./category-batch-transfer-topology-api.md
 
 ---
 
