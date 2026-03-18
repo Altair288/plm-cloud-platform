@@ -56,6 +56,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -568,7 +569,16 @@ public class MetaCategoryCrudService {
                 }
             });
         } catch (RuntimeException ex) {
-            return buildTopologyResponse(plan, executedItems, failedAt[0], failedException[0]);
+            TopologyPlanItem effectiveFailedItem = failedAt[0];
+            RuntimeException effectiveFailure = failedException[0] == null ? ex : failedException[0];
+            if (effectiveFailedItem == null) {
+                if (!executedItems.isEmpty()) {
+                    effectiveFailedItem = executedItems.get(executedItems.size() - 1);
+                } else if (!plan.items.isEmpty()) {
+                    effectiveFailedItem = plan.items.get(0);
+                }
+            }
+            return buildTopologyResponse(plan, executedItems, effectiveFailedItem, effectiveFailure);
         }
 
         return buildTopologyResponse(plan);
@@ -876,8 +886,11 @@ public class MetaCategoryCrudService {
 
         List<MetaCategoryDef> newAncestors = hierarchyRepository.findAncestorsByDescendant(newParent.getId());
         if (newAncestors.isEmpty()) {
-            newAncestors = List.of(newParent);
+            newAncestors = List.of(defRepository.getReferenceById(newParent.getId()));
         }
+
+        Map<UUID, MetaCategoryDef> subtreeRefs = subtreeIds.stream()
+                .collect(Collectors.toMap(Function.identity(), defRepository::getReferenceById));
 
         List<CategoryHierarchy> rows = new ArrayList<>();
         for (MetaCategoryDef ancestor : newAncestors) {
@@ -890,7 +903,7 @@ public class MetaCategoryCrudService {
                 short distance = (short) Math.max(nodeDepth - ancestorDepth, 0);
                 CategoryHierarchy one = new CategoryHierarchy();
                 one.setAncestorDef(ancestor);
-                one.setDescendantDef(node);
+                one.setDescendantDef(subtreeRefs.get(node.getId()));
                 one.setDistance(distance);
                 rows.add(one);
             }
@@ -905,14 +918,17 @@ public class MetaCategoryCrudService {
         if (parent == null || parent.getId() == null) {
             return;
         }
-        if (isDeleted(parent)) {
+
+        MetaCategoryDef managedParent = defRepository.findById(parent.getId()).orElse(null);
+        if (managedParent == null || isDeleted(managedParent)) {
             return;
         }
-        boolean hasActiveChildren = defRepository.countActiveChildren(parent.getId()) > 0;
+
+        boolean hasActiveChildren = defRepository.countActiveChildren(managedParent.getId()) > 0;
         boolean nextLeaf = !hasActiveChildren;
-        if (!Objects.equals(parent.getIsLeaf(), nextLeaf)) {
-            parent.setIsLeaf(nextLeaf);
-            defRepository.save(parent);
+        if (!Objects.equals(managedParent.getIsLeaf(), nextLeaf)) {
+            managedParent.setIsLeaf(nextLeaf);
+            defRepository.save(managedParent);
         }
     }
 

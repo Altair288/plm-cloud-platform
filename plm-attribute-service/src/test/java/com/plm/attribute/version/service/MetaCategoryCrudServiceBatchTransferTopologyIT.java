@@ -40,10 +40,16 @@ class MetaCategoryCrudServiceBatchTransferTopologyIT {
     private static final short TEST_ROOT_DEPTH = 1;
 
     private static final class TopologyFixture {
+        private UUID workspaceRootId;
         private UUID rootAId;
         private UUID childBId;
         private UUID targetXId;
         private UUID targetYId;
+        private UUID targetXChildId;
+        private UUID targetYChildId;
+        private UUID sourceSiblingCId;
+        private UUID sourceSiblingCLeafId;
+        private UUID childBLeafId;
     }
 
     @Autowired
@@ -110,7 +116,7 @@ class MetaCategoryCrudServiceBatchTransferTopologyIT {
         MetaCategoryBatchTransferTopologyResponseDto response = crudService.batchTransferTopology(request);
 
         Assertions.assertEquals(2, response.getTotal());
-        Assertions.assertEquals(2, response.getSuccessCount());
+        Assertions.assertEquals(2, response.getSuccessCount(), String.valueOf(response));
         Assertions.assertEquals(0, response.getFailureCount());
         Assertions.assertEquals(List.of("op-b-to-y", "op-a-to-x"), response.getResolvedOrder());
         Assertions.assertEquals(2, response.getResults().size());
@@ -236,6 +242,74 @@ class MetaCategoryCrudServiceBatchTransferTopologyIT {
         Assertions.assertEquals(fixture.targetYId, movedB.getParent().getId());
     }
 
+    @Test
+    void batchTransferTopology_execute_shouldSupportImportedChildrenThenMoveAncestorTree() {
+        TopologyFixture fixture = createComplexTopologyFixture();
+
+        MetaCategoryBatchTransferTopologyRequestDto request = new MetaCategoryBatchTransferTopologyRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setAction("MOVE");
+        request.setDryRun(false);
+        request.setAtomic(true);
+        request.setOperator("it-transfer");
+        request.setOperations(List.of(
+                topologyOperation("op-c-to-x-child", fixture.sourceSiblingCId, fixture.targetXChildId, List.of(), fixture.rootAId),
+                topologyOperation("op-b-to-y-child", fixture.childBId, fixture.targetYChildId, List.of(), fixture.rootAId),
+                topologyOperation("op-root-a-to-target-x", fixture.rootAId, fixture.targetXId, List.of(
+                        "op-c-to-x-child",
+                        "op-b-to-y-child"
+                ), fixture.workspaceRootId)
+        ));
+
+        MetaCategoryBatchTransferTopologyResponseDto response = crudService.batchTransferTopology(request);
+
+        Assertions.assertEquals(3, response.getSuccessCount(), String.valueOf(response));
+        Assertions.assertEquals(0, response.getFailureCount(), String.valueOf(response));
+
+        MetaCategoryDef movedRoot = inNewTransaction(() -> defRepository.findById(fixture.rootAId).orElseThrow());
+        MetaCategoryDef movedB = inNewTransaction(() -> defRepository.findById(fixture.childBId).orElseThrow());
+        MetaCategoryDef movedC = inNewTransaction(() -> defRepository.findById(fixture.sourceSiblingCId).orElseThrow());
+        MetaCategoryDef movedBLeaf = inNewTransaction(() -> defRepository.findById(fixture.childBLeafId).orElseThrow());
+        MetaCategoryDef movedCLeaf = inNewTransaction(() -> defRepository.findById(fixture.sourceSiblingCLeafId).orElseThrow());
+
+        Assertions.assertEquals(fixture.targetXId, movedRoot.getParent().getId());
+        Assertions.assertEquals(fixture.targetYChildId, movedB.getParent().getId());
+        Assertions.assertEquals(fixture.targetXChildId, movedC.getParent().getId());
+        Assertions.assertEquals(fixture.childBId, movedBLeaf.getParent().getId());
+        Assertions.assertEquals(fixture.sourceSiblingCId, movedCLeaf.getParent().getId());
+    }
+
+    @Test
+    void batchTransferTopology_dryRun_shouldResolveImportedChildrenThenMoveAncestorTree() {
+        TopologyFixture fixture = createComplexTopologyFixture();
+
+        MetaCategoryBatchTransferTopologyRequestDto request = new MetaCategoryBatchTransferTopologyRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setAction("MOVE");
+        request.setDryRun(true);
+        request.setAtomic(true);
+        request.setOperator("it-transfer");
+        request.setOperations(List.of(
+                topologyOperation("op-c-to-x-child", fixture.sourceSiblingCId, fixture.targetXChildId, List.of(), fixture.rootAId),
+                topologyOperation("op-b-to-y-child", fixture.childBId, fixture.targetYChildId, List.of(), fixture.rootAId),
+                topologyOperation("op-root-a-to-target-x", fixture.rootAId, fixture.targetXId, List.of(
+                        "op-c-to-x-child",
+                        "op-b-to-y-child"
+                ), fixture.workspaceRootId)
+        ));
+
+        MetaCategoryBatchTransferTopologyResponseDto response = crudService.batchTransferTopology(request);
+
+        Assertions.assertEquals(3, response.getSuccessCount());
+        Assertions.assertEquals(0, response.getFailureCount());
+        Assertions.assertEquals(List.of(
+                "op-c-to-x-child",
+                "op-b-to-y-child",
+                "op-root-a-to-target-x"
+        ), response.getResolvedOrder());
+        Assertions.assertEquals(3, response.getFinalParentMappings().size());
+    }
+
     private TopologyFixture createTopologyFixture() {
         return inNewTransaction(() -> {
             TopologyFixture created = new TopologyFixture();
@@ -248,6 +322,47 @@ class MetaCategoryCrudServiceBatchTransferTopologyIT {
             created.childBId = childB.getId();
             created.targetXId = targetX.getId();
             created.targetYId = targetY.getId();
+            return created;
+        });
+    }
+
+    private TopologyFixture createComplexTopologyFixture() {
+        return inNewTransaction(() -> {
+            TopologyFixture created = new TopologyFixture();
+            MetaCategoryDef workspaceRoot = createNode("MATERIAL", uniqueCode("IT-TOPO-WORKSPACE"), null, "active", 1, TEST_ROOT_DEPTH, false);
+            MetaCategoryDef rootA = createNode("MATERIAL", uniqueCode("IT-TOPO-A-CPLX"), workspaceRoot, "active", 1, (short) (TEST_ROOT_DEPTH + 1), false);
+            MetaCategoryDef childB = createNode("MATERIAL", uniqueCode("IT-TOPO-B-CPLX"), rootA, "active", 1, (short) (TEST_ROOT_DEPTH + 2), false);
+            MetaCategoryDef childBLeaf = createNode("MATERIAL", uniqueCode("IT-TOPO-B-LEAF"), childB, "active", 1, (short) (TEST_ROOT_DEPTH + 3), true);
+            MetaCategoryDef childC = createNode("MATERIAL", uniqueCode("IT-TOPO-C-CPLX"), rootA, "active", 2, (short) (TEST_ROOT_DEPTH + 2), false);
+            MetaCategoryDef childCLeaf = createNode("MATERIAL", uniqueCode("IT-TOPO-C-LEAF"), childC, "active", 1, (short) (TEST_ROOT_DEPTH + 3), true);
+            MetaCategoryDef targetX = createNode("MATERIAL", uniqueCode("IT-TOPO-X-CPLX"), workspaceRoot, "active", 2, (short) (TEST_ROOT_DEPTH + 1), false);
+            MetaCategoryDef targetXChild = createNode("MATERIAL", uniqueCode("IT-TOPO-X-CHILD"), targetX, "active", 1, (short) (TEST_ROOT_DEPTH + 2), true);
+            MetaCategoryDef targetY = createNode("MATERIAL", uniqueCode("IT-TOPO-Y-CPLX"), rootA, "active", 3, (short) (TEST_ROOT_DEPTH + 2), false);
+            MetaCategoryDef targetYChild = createNode("MATERIAL", uniqueCode("IT-TOPO-Y-CHILD"), targetY, "active", 1, (short) (TEST_ROOT_DEPTH + 3), true);
+
+            saveClosureRows(List.of(
+                    workspaceRoot,
+                    rootA,
+                    childB,
+                    childBLeaf,
+                    childC,
+                    childCLeaf,
+                    targetX,
+                    targetXChild,
+                    targetY,
+                    targetYChild
+            ));
+
+            created.workspaceRootId = workspaceRoot.getId();
+            created.rootAId = rootA.getId();
+            created.childBId = childB.getId();
+            created.childBLeafId = childBLeaf.getId();
+            created.sourceSiblingCId = childC.getId();
+            created.sourceSiblingCLeafId = childCLeaf.getId();
+            created.targetXId = targetX.getId();
+            created.targetXChildId = targetXChild.getId();
+            created.targetYId = targetY.getId();
+            created.targetYChildId = targetYChild.getId();
             return created;
         });
     }

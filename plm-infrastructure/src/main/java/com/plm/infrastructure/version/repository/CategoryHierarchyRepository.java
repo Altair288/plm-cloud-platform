@@ -58,16 +58,16 @@ public interface CategoryHierarchyRepository extends JpaRepository<CategoryHiera
             @Param("status") String status,
             Pageable pageable);
 
-        @Modifying
-        @Query("""
-            delete from CategoryHierarchy h
-            where h.descendantDef.id in :descendantIds
-              and h.ancestorDef.id not in :internalAncestorIds
-            """)
-        int deleteExternalLinksForDescendants(
-            @Param("descendantIds") List<UUID> descendantIds,
-            @Param("internalAncestorIds") List<UUID> internalAncestorIds
-        );
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+        delete from CategoryHierarchy h
+        where h.descendantDef.id in :descendantIds
+          and h.ancestorDef.id not in :internalAncestorIds
+        """)
+    int deleteExternalLinksForDescendants(
+        @Param("descendantIds") List<UUID> descendantIds,
+        @Param("internalAncestorIds") List<UUID> internalAncestorIds
+    );
 
     @Query("""
             select h.ancestorDef
