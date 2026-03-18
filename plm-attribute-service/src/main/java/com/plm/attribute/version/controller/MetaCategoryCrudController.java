@@ -6,6 +6,8 @@ import com.plm.common.api.dto.MetaCategoryBatchDeleteRequestDto;
 import com.plm.common.api.dto.MetaCategoryBatchDeleteResponseDto;
 import com.plm.common.api.dto.MetaCategoryBatchTransferRequestDto;
 import com.plm.common.api.dto.MetaCategoryBatchTransferResponseDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyRequestDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyResponseDto;
 import com.plm.common.api.dto.MetaCategoryDetailDto;
 import com.plm.common.api.dto.MetaCategoryVersionCompareDto;
 import com.plm.common.api.dto.UpdateCategoryRequestDto;
@@ -85,5 +87,11 @@ public class MetaCategoryCrudController {
     public MetaCategoryBatchTransferResponseDto batchTransfer(
             @RequestBody MetaCategoryBatchTransferRequestDto request) {
         return crudService.batchTransfer(request);
+    }
+
+    @PostMapping("/batch-transfer/topology")
+    public MetaCategoryBatchTransferTopologyResponseDto batchTransferTopology(
+            @RequestBody MetaCategoryBatchTransferTopologyRequestDto request) {
+        return crudService.batchTransferTopology(request);
     }
 }

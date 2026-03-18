@@ -13,6 +13,11 @@ import com.plm.common.api.dto.MetaCategoryBatchTransferItemResultDto;
 import com.plm.common.api.dto.MetaCategoryBatchTransferOperationDto;
 import com.plm.common.api.dto.MetaCategoryBatchTransferRequestDto;
 import com.plm.common.api.dto.MetaCategoryBatchTransferResponseDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyFinalParentMappingDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyItemResultDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyOperationDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyRequestDto;
+import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyResponseDto;
 import com.plm.common.api.dto.CreateCategoryRequestDto;
 import com.plm.common.api.dto.MetaCategoryCodeMappingDto;
 import com.plm.common.api.dto.MetaCategoryCopySourceMappingDto;
@@ -69,6 +74,9 @@ public class MetaCategoryCrudService {
     private static final String ACTION_MOVE = "MOVE";
     private static final String ACTION_COPY = "COPY";
     private static final String CODE_SOURCE_OVERLAP_NORMALIZED = "SOURCE_OVERLAP_NORMALIZED";
+    private static final String PLANNING_MODE_TOPOLOGY_AWARE = "TOPOLOGY_AWARE";
+    private static final String ORDERING_STRATEGY_CLIENT_ORDER = "CLIENT_ORDER";
+    private static final String ORDERING_STRATEGY_TOPOLOGICAL_BOTTOM_UP = "TOPOLOGICAL_BOTTOM_UP";
 
     private static final Comparator<MetaCategoryDef> CATEGORY_TREE_ORDER = Comparator
             .comparing((MetaCategoryDef def) -> def.getDepth() == null ? Short.MAX_VALUE : def.getDepth())
@@ -194,6 +202,81 @@ public class MetaCategoryCrudService {
             this.copiedFromCategoryId = copiedFromCategoryId;
             this.sourceMappings = sourceMappings;
             this.codeMappings = codeMappings;
+        }
+    }
+
+    private static final class TopologyOperationContext {
+        private final int index;
+        private final String operationId;
+        private final UUID sourceNodeId;
+        private final UUID targetParentId;
+        private final List<String> dependsOnOperationIds;
+        private final boolean allowDescendantFirstSplit;
+        private final UUID expectedSourceParentId;
+
+        private TopologyOperationContext(int index,
+                                         String operationId,
+                                         UUID sourceNodeId,
+                                         UUID targetParentId,
+                                         List<String> dependsOnOperationIds,
+                                         boolean allowDescendantFirstSplit,
+                                         UUID expectedSourceParentId) {
+            this.index = index;
+            this.operationId = operationId;
+            this.sourceNodeId = sourceNodeId;
+            this.targetParentId = targetParentId;
+            this.dependsOnOperationIds = dependsOnOperationIds;
+            this.allowDescendantFirstSplit = allowDescendantFirstSplit;
+            this.expectedSourceParentId = expectedSourceParentId;
+        }
+    }
+
+    private static final class TopologyPlanItem {
+        private final TopologyOperationContext operation;
+        private UUID effectiveSourceParentIdBefore;
+        private UUID effectiveTargetParentId;
+        private final List<String> resolvedDependsOn = new ArrayList<>();
+        private String failureCode;
+        private String failureMessage;
+
+        private TopologyPlanItem(TopologyOperationContext operation) {
+            this.operation = operation;
+        }
+
+        private boolean hasFailure() {
+            return failureCode != null;
+        }
+    }
+
+    private static final class TopologyPlan {
+        private final String businessDomain;
+        private final boolean dryRun;
+        private final boolean atomic;
+        private final String planningMode;
+        private final String operator;
+        private final List<TopologyPlanItem> items;
+        private final List<String> planningWarnings;
+        private final List<String> resolvedOrder;
+        private final Map<UUID, UUID> finalParentMappings;
+
+        private TopologyPlan(String businessDomain,
+                             boolean dryRun,
+                             boolean atomic,
+                             String planningMode,
+                             String operator,
+                             List<TopologyPlanItem> items,
+                             List<String> planningWarnings,
+                             List<String> resolvedOrder,
+                             Map<UUID, UUID> finalParentMappings) {
+            this.businessDomain = businessDomain;
+            this.dryRun = dryRun;
+            this.atomic = atomic;
+            this.planningMode = planningMode;
+            this.operator = operator;
+            this.items = items;
+            this.planningWarnings = planningWarnings;
+            this.resolvedOrder = resolvedOrder;
+            this.finalParentMappings = finalParentMappings;
         }
     }
 
@@ -446,6 +529,49 @@ public class MetaCategoryCrudService {
             return batchTransferAtomic(plan);
         }
         return batchTransferNonAtomic(plan);
+    }
+
+    public MetaCategoryBatchTransferTopologyResponseDto batchTransferTopology(MetaCategoryBatchTransferTopologyRequestDto request) {
+        if (request == null) {
+            throw new IllegalArgumentException("request body is required");
+        }
+
+        TopologyPlan plan = prepareTopologyPlan(request);
+        if (plan.dryRun || plan.items.stream().anyMatch(TopologyPlanItem::hasFailure)) {
+            return buildTopologyResponse(plan);
+        }
+
+        List<TopologyPlanItem> executedItems = new ArrayList<>();
+        TopologyPlanItem[] failedAt = new TopologyPlanItem[1];
+        RuntimeException[] failedException = new RuntimeException[1];
+
+        try {
+            requiresNewTxTemplate.executeWithoutResult(status -> {
+                for (TopologyPlanItem item : plan.items) {
+                    try {
+                        MetaCategoryDef source = loadActiveCategory(item.operation.sourceNodeId, "CATEGORY_NOT_FOUND");
+                        UUID currentParentId = source.getParent() == null ? null : source.getParent().getId();
+                        if (!Objects.equals(currentParentId, item.effectiveSourceParentIdBefore)) {
+                            throw new CategoryConflictException(
+                                    "CATEGORY_EXPECTED_PARENT_MISMATCH",
+                                    "source parent changed since planning: sourceId=" + item.operation.sourceNodeId
+                            );
+                        }
+                        executeMove(plan.businessDomain, item.operation.sourceNodeId, item.operation.targetParentId);
+                        executedItems.add(item);
+                    } catch (RuntimeException ex) {
+                        failedAt[0] = item;
+                        failedException[0] = ex;
+                        status.setRollbackOnly();
+                        throw ex;
+                    }
+                }
+            });
+        } catch (RuntimeException ex) {
+            return buildTopologyResponse(plan, executedItems, failedAt[0], failedException[0]);
+        }
+
+        return buildTopologyResponse(plan);
     }
 
     @Transactional(readOnly = true)
@@ -891,7 +1017,7 @@ public class MetaCategoryCrudService {
         String businessDomain = normalizeBusinessDomain(request.getBusinessDomain());
         String action = normalizeTransferAction(request.getAction());
         boolean dryRun = Boolean.TRUE.equals(request.getDryRun());
-        boolean atomic = Boolean.TRUE.equals(request.getAtomic());
+        boolean atomic = resolveAtomicDefaultTrue(request.getAtomic());
         String operator = normalizeOperator(request.getOperator());
         CopyOptionsResolved copyOptions = resolveCopyOptions(action, request.getCopyOptions());
         List<TransferOperationContext> operations = normalizeTransferOperations(request.getOperations(), request.getTargetParentId());
@@ -924,6 +1050,69 @@ public class MetaCategoryCrudService {
         return new TransferPlan(businessDomain, action, dryRun, atomic, operator, copyOptions, items, warnings);
     }
 
+    private TopologyPlan prepareTopologyPlan(MetaCategoryBatchTransferTopologyRequestDto request) {
+        String businessDomain = normalizeBusinessDomain(request.getBusinessDomain());
+        String action = normalizeTransferAction(request.getAction());
+        if (!ACTION_MOVE.equals(action)) {
+            throw new CategoryConflictException("CATEGORY_TOPOLOGY_ACTION_UNSUPPORTED", "topology batch transfer only supports MOVE");
+        }
+
+        boolean dryRun = Boolean.TRUE.equals(request.getDryRun());
+        boolean atomic = resolveAtomicDefaultTrue(request.getAtomic());
+        if (!atomic) {
+            throw new IllegalArgumentException("atomic=false is not supported for topology batch transfer");
+        }
+
+        String planningMode = normalizeTopologyPlanningMode(request.getPlanningMode());
+        String orderingStrategy = normalizeTopologyOrderingStrategy(request.getOrderingStrategy());
+        boolean strictDependencyValidation = request.getStrictDependencyValidation() == null || Boolean.TRUE.equals(request.getStrictDependencyValidation());
+        String operator = normalizeOperator(request.getOperator());
+        List<TopologyOperationContext> operations = normalizeTopologyOperations(request.getOperations());
+
+        Map<String, TopologyPlanItem> itemByOperationId = new LinkedHashMap<>();
+        List<TopologyPlanItem> items = operations.stream().map(TopologyPlanItem::new).toList();
+        for (TopologyPlanItem item : items) {
+            itemByOperationId.put(item.operation.operationId, item);
+        }
+
+        Map<UUID, MetaCategoryDef> sourceMap = loadCategoryMap(operations.stream().map(op -> op.sourceNodeId).toList());
+        Map<UUID, MetaCategoryDef> targetMap = loadCategoryMap(operations.stream().map(op -> op.targetParentId).filter(Objects::nonNull).toList());
+        Map<UUID, Set<UUID>> descendantMap = loadDescendantMap(sourceMap.keySet());
+
+        for (TopologyPlanItem item : items) {
+            validateTopologyItem(item, sourceMap.get(item.operation.sourceNodeId), targetMap.get(item.operation.targetParentId), businessDomain);
+        }
+
+        validateTopologyDependencies(items, itemByOperationId, orderingStrategy, strictDependencyValidation);
+        validateTopologySplitOrdering(items, descendantMap);
+
+        Map<UUID, MetaCategoryDef> effectiveNodeMap = loadCategoryMapWithAncestors(collectTopologyRelevantIds(operations));
+        Map<UUID, UUID> effectiveParentMap = new HashMap<>();
+        for (MetaCategoryDef def : effectiveNodeMap.values()) {
+            effectiveParentMap.put(def.getId(), def.getParent() == null ? null : def.getParent().getId());
+        }
+
+        validateEffectiveTopologyTargets(items, itemByOperationId, effectiveParentMap);
+
+        List<String> resolvedOrder = new ArrayList<>();
+        Map<UUID, UUID> finalParentMappings = new LinkedHashMap<>();
+        for (TopologyPlanItem item : items) {
+            simulateTopologyItem(item, itemByOperationId, effectiveParentMap, resolvedOrder, finalParentMappings);
+        }
+
+        return new TopologyPlan(
+                businessDomain,
+                dryRun,
+                atomic,
+                planningMode,
+                operator,
+                items,
+                List.of(),
+                resolvedOrder,
+                finalParentMappings
+        );
+    }
+
     private MetaCategoryBatchTransferResponseDto batchTransferNonAtomic(TransferPlan plan) {
         List<MetaCategoryBatchTransferItemResultDto> results = new ArrayList<>();
         for (TransferPlanItem item : plan.items) {
@@ -943,6 +1132,357 @@ public class MetaCategoryCrudService {
             }
         }
         return buildTransferResponse(plan, results);
+    }
+
+    private void validateTopologyItem(TopologyPlanItem item,
+                                      MetaCategoryDef source,
+                                      MetaCategoryDef target,
+                                      String businessDomain) {
+        if (source == null) {
+            item.failureCode = "CATEGORY_NOT_FOUND";
+            item.failureMessage = "source category not found: id=" + item.operation.sourceNodeId;
+            return;
+        }
+        if (isDeleted(source)) {
+            item.failureCode = "CATEGORY_DELETED";
+            item.failureMessage = "source category is deleted: id=" + source.getId();
+            return;
+        }
+        if (!Objects.equals(source.getBusinessDomain(), businessDomain)) {
+            item.failureCode = "CATEGORY_DOMAIN_MISMATCH";
+            item.failureMessage = "source and request businessDomain mismatch: sourceId=" + source.getId();
+            return;
+        }
+
+        UUID currentParentId = source.getParent() == null ? null : source.getParent().getId();
+        if (item.operation.expectedSourceParentId != null
+            && !Objects.equals(currentParentId, item.operation.expectedSourceParentId)) {
+            item.failureCode = "CATEGORY_EXPECTED_PARENT_MISMATCH";
+            item.failureMessage = "source parent does not match expected parent: sourceId=" + source.getId();
+            return;
+        }
+
+        if (item.operation.targetParentId == null) {
+            return;
+        }
+        if (target == null) {
+            item.failureCode = "CATEGORY_TARGET_PARENT_NOT_FOUND";
+            item.failureMessage = "target parent not found: id=" + item.operation.targetParentId;
+            return;
+        }
+        if (isDeleted(target)) {
+            item.failureCode = "CATEGORY_DELETED";
+            item.failureMessage = "target parent is deleted: id=" + target.getId();
+            return;
+        }
+        if (!Objects.equals(target.getBusinessDomain(), businessDomain)) {
+            item.failureCode = "CATEGORY_DOMAIN_MISMATCH";
+            item.failureMessage = "target parent and request businessDomain mismatch: targetParentId=" + target.getId();
+            return;
+        }
+        if (source.getId().equals(target.getId())) {
+            item.failureCode = "CATEGORY_TARGET_IS_SELF";
+            item.failureMessage = "target parent cannot be self";
+        }
+    }
+
+    private void validateTopologyDependencies(List<TopologyPlanItem> items,
+                                              Map<String, TopologyPlanItem> itemByOperationId,
+                                              String orderingStrategy,
+                                              boolean strictDependencyValidation) {
+        for (TopologyPlanItem item : items) {
+            LinkedHashSet<String> dependencies = new LinkedHashSet<>();
+            for (String dependencyId : item.operation.dependsOnOperationIds) {
+                String normalized = trimToNull(dependencyId);
+                if (normalized == null) {
+                    continue;
+                }
+                if (normalized.equals(item.operation.operationId)) {
+                    item.failureCode = "CATEGORY_BATCH_DEPENDENCY_CYCLE";
+                    item.failureMessage = "operation cannot depend on itself: operationId=" + item.operation.operationId;
+                    break;
+                }
+                if (!itemByOperationId.containsKey(normalized)) {
+                    item.failureCode = "CATEGORY_DEPENDENCY_UNSATISFIED";
+                    item.failureMessage = "dependency operation not found: operationId=" + normalized;
+                    break;
+                }
+                dependencies.add(normalized);
+            }
+            item.resolvedDependsOn.clear();
+            item.resolvedDependsOn.addAll(dependencies);
+        }
+
+        detectTopologyDependencyCycles(items, itemByOperationId);
+
+        if (strictDependencyValidation && ORDERING_STRATEGY_CLIENT_ORDER.equals(orderingStrategy)) {
+            Map<String, Integer> operationIndexById = items.stream()
+                    .collect(Collectors.toMap(item -> item.operation.operationId, item -> item.operation.index));
+            for (TopologyPlanItem item : items) {
+                if (item.hasFailure()) {
+                    continue;
+                }
+                for (String dependencyId : item.resolvedDependsOn) {
+                    Integer dependencyIndex = operationIndexById.get(dependencyId);
+                    if (dependencyIndex != null && dependencyIndex >= item.operation.index) {
+                        item.failureCode = "CATEGORY_OPERATION_ORDER_INVALID";
+                        item.failureMessage = "dependency must appear before operation in CLIENT_ORDER: operationId=" + item.operation.operationId;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private void detectTopologyDependencyCycles(List<TopologyPlanItem> items,
+                                                Map<String, TopologyPlanItem> itemByOperationId) {
+        Set<String> visiting = new HashSet<>();
+        Set<String> visited = new HashSet<>();
+        Set<String> cycleNodes = new HashSet<>();
+
+        for (TopologyPlanItem item : items) {
+            dfsDetectTopologyDependencyCycle(item.operation.operationId, itemByOperationId, visiting, visited, cycleNodes);
+        }
+
+        if (!cycleNodes.isEmpty()) {
+            for (TopologyPlanItem item : items) {
+                if (cycleNodes.contains(item.operation.operationId)) {
+                    item.failureCode = "CATEGORY_BATCH_DEPENDENCY_CYCLE";
+                    item.failureMessage = "dependency cycle detected: operationId=" + item.operation.operationId;
+                }
+            }
+        }
+    }
+
+    private void dfsDetectTopologyDependencyCycle(String operationId,
+                                                  Map<String, TopologyPlanItem> itemByOperationId,
+                                                  Set<String> visiting,
+                                                  Set<String> visited,
+                                                  Set<String> cycleNodes) {
+        if (operationId == null || visited.contains(operationId) || cycleNodes.contains(operationId)) {
+            return;
+        }
+        if (!visiting.add(operationId)) {
+            cycleNodes.add(operationId);
+            return;
+        }
+
+        TopologyPlanItem item = itemByOperationId.get(operationId);
+        if (item != null) {
+            for (String dependencyId : item.resolvedDependsOn) {
+                if (visiting.contains(dependencyId)) {
+                    cycleNodes.add(operationId);
+                    cycleNodes.add(dependencyId);
+                    continue;
+                }
+                dfsDetectTopologyDependencyCycle(dependencyId, itemByOperationId, visiting, visited, cycleNodes);
+                if (cycleNodes.contains(dependencyId)) {
+                    cycleNodes.add(operationId);
+                }
+            }
+        }
+
+        visiting.remove(operationId);
+        visited.add(operationId);
+    }
+
+    private void validateTopologySplitOrdering(List<TopologyPlanItem> items, Map<UUID, Set<UUID>> descendantMap) {
+        for (TopologyPlanItem ancestorItem : items) {
+            if (ancestorItem.hasFailure()) {
+                continue;
+            }
+            for (TopologyPlanItem descendantItem : items) {
+                if (ancestorItem == descendantItem || descendantItem.hasFailure()) {
+                    continue;
+                }
+                if (!descendantMap.getOrDefault(ancestorItem.operation.sourceNodeId, Set.of()).contains(descendantItem.operation.sourceNodeId)) {
+                    continue;
+                }
+                // Lower index means the client placed the operation earlier in the batch.
+                // Descendant-first split requires the ancestor move to appear after its descendant move.
+                if (ancestorItem.operation.index < descendantItem.operation.index) {
+                    ancestorItem.failureCode = "CATEGORY_OPERATION_ORDER_INVALID";
+                    ancestorItem.failureMessage = "ancestor operation must be ordered after descendant operation: operationId=" + ancestorItem.operation.operationId;
+                    break;
+                }
+                if (!ancestorItem.operation.allowDescendantFirstSplit || !descendantItem.operation.allowDescendantFirstSplit) {
+                    ancestorItem.failureCode = "CATEGORY_OPERATION_ORDER_INVALID";
+                    ancestorItem.failureMessage = "descendant-first split requires allowDescendantFirstSplit=true: operationId=" + ancestorItem.operation.operationId;
+                    break;
+                }
+            }
+        }
+    }
+
+    private void validateEffectiveTopologyTargets(List<TopologyPlanItem> items,
+                                                  Map<String, TopologyPlanItem> itemByOperationId,
+                                                  Map<UUID, UUID> effectiveParentMap) {
+        Map<UUID, UUID> simulatedParentMap = new HashMap<>(effectiveParentMap);
+        for (TopologyPlanItem item : items) {
+            if (item.hasFailure()) {
+                continue;
+            }
+
+            boolean dependencyFailed = false;
+            for (String dependencyId : item.resolvedDependsOn) {
+                TopologyPlanItem dependencyItem = itemByOperationId.get(dependencyId);
+                if (dependencyItem != null && dependencyItem.hasFailure()) {
+                    dependencyFailed = true;
+                    break;
+                }
+            }
+            if (dependencyFailed || item.operation.targetParentId == null) {
+                continue;
+            }
+
+            if (isEffectiveDescendant(item.operation.targetParentId, item.operation.sourceNodeId, simulatedParentMap)) {
+                item.failureCode = "CATEGORY_EFFECTIVE_TARGET_IN_DESCENDANT";
+                item.failureMessage = "target parent is inside source subtree in effective tree";
+                continue;
+            }
+
+            simulatedParentMap.put(item.operation.sourceNodeId, item.operation.targetParentId);
+        }
+    }
+
+    private Set<UUID> collectTopologyRelevantIds(List<TopologyOperationContext> operations) {
+        LinkedHashSet<UUID> ids = new LinkedHashSet<>();
+        for (TopologyOperationContext operation : operations) {
+            ids.add(operation.sourceNodeId);
+            if (operation.targetParentId != null) {
+                ids.add(operation.targetParentId);
+            }
+        }
+        return ids;
+    }
+
+    private Map<UUID, MetaCategoryDef> loadCategoryMapWithAncestors(Set<UUID> ids) {
+        Map<UUID, MetaCategoryDef> map = new HashMap<>();
+        for (UUID id : ids) {
+            if (id == null) {
+                continue;
+            }
+            defRepository.findById(id).ifPresent(def -> map.put(def.getId(), def));
+            for (MetaCategoryDef ancestor : hierarchyRepository.findAncestorsByDescendant(id)) {
+                if (ancestor != null && ancestor.getId() != null) {
+                    map.putIfAbsent(ancestor.getId(), ancestor);
+                }
+            }
+        }
+        return map;
+    }
+
+    private void simulateTopologyItem(TopologyPlanItem item,
+                                      Map<String, TopologyPlanItem> itemByOperationId,
+                                      Map<UUID, UUID> effectiveParentMap,
+                                      List<String> resolvedOrder,
+                                      Map<UUID, UUID> finalParentMappings) {
+        if (item.hasFailure()) {
+            return;
+        }
+
+        for (String dependencyId : item.resolvedDependsOn) {
+            TopologyPlanItem dependencyItem = itemByOperationId.get(dependencyId);
+            if (dependencyItem != null && dependencyItem.hasFailure()) {
+                item.failureCode = "CATEGORY_DEPENDENCY_UNSATISFIED";
+                item.failureMessage = "dependency operation failed: operationId=" + dependencyId;
+                return;
+            }
+        }
+
+        item.effectiveSourceParentIdBefore = effectiveParentMap.get(item.operation.sourceNodeId);
+        item.effectiveTargetParentId = item.operation.targetParentId;
+
+        effectiveParentMap.put(item.operation.sourceNodeId, item.operation.targetParentId);
+        finalParentMappings.put(item.operation.sourceNodeId, item.operation.targetParentId);
+        resolvedOrder.add(item.operation.operationId);
+    }
+
+    private boolean resolveAtomicDefaultTrue(Boolean atomic) {
+        return atomic == null || Boolean.TRUE.equals(atomic);
+    }
+
+    private boolean isEffectiveDescendant(UUID nodeId, UUID possibleAncestorId, Map<UUID, UUID> effectiveParentMap) {
+        Set<UUID> visited = new HashSet<>();
+        UUID currentId = nodeId;
+        while (currentId != null && visited.add(currentId)) {
+            UUID parentId = effectiveParentMap.get(currentId);
+            if (Objects.equals(parentId, possibleAncestorId)) {
+                return true;
+            }
+            currentId = parentId;
+        }
+        return false;
+    }
+
+    private MetaCategoryBatchTransferTopologyResponseDto buildTopologyResponse(TopologyPlan plan) {
+        return buildTopologyResponse(plan, List.of(), null, null);
+    }
+
+    private MetaCategoryBatchTransferTopologyResponseDto buildTopologyResponse(TopologyPlan plan,
+                                                                              List<TopologyPlanItem> rolledBackItems,
+                                                                              TopologyPlanItem failedItem,
+                                                                              RuntimeException failedException) {
+        List<MetaCategoryBatchTransferTopologyItemResultDto> results = new ArrayList<>();
+        for (TopologyPlanItem item : plan.items) {
+            MetaCategoryBatchTransferTopologyItemResultDto result = new MetaCategoryBatchTransferTopologyItemResultDto();
+            result.setOperationId(item.operation.operationId);
+            result.setSourceNodeId(item.operation.sourceNodeId);
+            result.setTargetParentId(item.operation.targetParentId);
+            result.setEffectiveSourceParentIdBefore(item.effectiveSourceParentIdBefore);
+            result.setEffectiveTargetParentId(item.effectiveTargetParentId);
+
+            if (failedItem != null) {
+                if (item == failedItem) {
+                    result.setSuccess(Boolean.FALSE);
+                    result.setCode(resolveBatchErrorCode(failedException));
+                    result.setMessage(failedException == null ? "unknown error" : failedException.getMessage());
+                } else if (rolledBackItems.contains(item)) {
+                    result.setSuccess(Boolean.FALSE);
+                    result.setCode(CODE_ATOMIC_ROLLBACK);
+                    result.setMessage("atomic rollback triggered by failure in same batch");
+                } else {
+                    result.setSuccess(Boolean.FALSE);
+                    result.setCode(CODE_ATOMIC_ABORTED);
+                    result.setMessage("batch aborted due to atomic rollback");
+                }
+            } else if (item.hasFailure()) {
+                result.setSuccess(Boolean.FALSE);
+                result.setCode(item.failureCode);
+                result.setMessage(item.failureMessage);
+            } else {
+                result.setSuccess(Boolean.TRUE);
+            }
+            results.add(result);
+        }
+
+        MetaCategoryBatchTransferTopologyResponseDto response = new MetaCategoryBatchTransferTopologyResponseDto();
+        response.setTotal(results.size());
+        response.setSuccessCount((int) results.stream().filter(result -> Boolean.TRUE.equals(result.getSuccess())).count());
+        response.setFailureCount((int) results.stream().filter(result -> !Boolean.TRUE.equals(result.getSuccess())).count());
+        response.setAtomic(plan.atomic);
+        response.setDryRun(plan.dryRun);
+        response.setPlanningMode(plan.planningMode);
+        response.setResolvedOrder(plan.resolvedOrder);
+        response.setPlanningWarnings(plan.planningWarnings);
+        response.setFinalParentMappings(buildTopologyFinalParentMappings(plan));
+        response.setResults(results);
+        return response;
+    }
+
+    private List<MetaCategoryBatchTransferTopologyFinalParentMappingDto> buildTopologyFinalParentMappings(TopologyPlan plan) {
+        List<MetaCategoryBatchTransferTopologyFinalParentMappingDto> mappings = new ArrayList<>();
+        for (TopologyPlanItem item : plan.items) {
+            if (item.hasFailure() || !plan.finalParentMappings.containsKey(item.operation.sourceNodeId)) {
+                continue;
+            }
+            MetaCategoryBatchTransferTopologyFinalParentMappingDto mapping = new MetaCategoryBatchTransferTopologyFinalParentMappingDto();
+            mapping.setSourceNodeId(item.operation.sourceNodeId);
+            mapping.setFinalParentId(plan.finalParentMappings.get(item.operation.sourceNodeId));
+            mapping.setDependsOnResolved(item.resolvedDependsOn.isEmpty() ? List.of() : new ArrayList<>(item.resolvedDependsOn));
+            mappings.add(mapping);
+        }
+        return mappings;
     }
 
     private MetaCategoryBatchTransferResponseDto batchTransferAtomic(TransferPlan plan) {
@@ -1230,6 +1770,23 @@ public class MetaCategoryCrudService {
         return normalized;
     }
 
+    private String normalizeTopologyPlanningMode(String planningMode) {
+        String normalized = normalizeOption(planningMode, PLANNING_MODE_TOPOLOGY_AWARE);
+        if (!PLANNING_MODE_TOPOLOGY_AWARE.equals(normalized)) {
+            throw new IllegalArgumentException("unsupported planningMode: " + planningMode);
+        }
+        return normalized;
+    }
+
+    private String normalizeTopologyOrderingStrategy(String orderingStrategy) {
+        String normalized = normalizeOption(orderingStrategy, ORDERING_STRATEGY_CLIENT_ORDER);
+        if (!ORDERING_STRATEGY_CLIENT_ORDER.equals(normalized)
+                && !ORDERING_STRATEGY_TOPOLOGICAL_BOTTOM_UP.equals(normalized)) {
+            throw new IllegalArgumentException("unsupported orderingStrategy: " + orderingStrategy);
+        }
+        return normalized;
+    }
+
     private String normalizeOption(String value, String defaultValue) {
         String normalized = trimToNull(value);
         return normalized == null ? defaultValue : normalized.toUpperCase(Locale.ROOT);
@@ -1254,6 +1811,46 @@ public class MetaCategoryCrudService {
                     trimToNull(operation.getClientOperationId()),
                     operation.getSourceNodeId(),
                     operation.getTargetParentId() == null ? batchTargetParentId : operation.getTargetParentId()
+            ));
+        }
+        return normalized;
+    }
+
+    private List<TopologyOperationContext> normalizeTopologyOperations(List<MetaCategoryBatchTransferTopologyOperationDto> operations) {
+        if (operations == null || operations.isEmpty()) {
+            throw new IllegalArgumentException("operations is required");
+        }
+        if (operations.size() > BATCH_TRANSFER_MAX_SIZE) {
+            throw new IllegalArgumentException("operations size must be <= " + BATCH_TRANSFER_MAX_SIZE);
+        }
+
+        LinkedHashSet<String> operationIds = new LinkedHashSet<>();
+        LinkedHashSet<UUID> sourceIds = new LinkedHashSet<>();
+        List<TopologyOperationContext> normalized = new ArrayList<>();
+        for (int i = 0; i < operations.size(); i++) {
+            MetaCategoryBatchTransferTopologyOperationDto operation = operations.get(i);
+            if (operation == null || operation.getSourceNodeId() == null) {
+                throw new IllegalArgumentException("operations contains item with missing sourceNodeId");
+            }
+            String operationId = trimToNull(operation.getOperationId());
+            if (operationId == null) {
+                throw new IllegalArgumentException("operationId is required");
+            }
+            if (!operationIds.add(operationId)) {
+                throw new IllegalArgumentException("duplicate operationId: " + operationId);
+            }
+            if (!sourceIds.add(operation.getSourceNodeId())) {
+                throw new IllegalArgumentException("duplicate sourceNodeId: " + operation.getSourceNodeId());
+            }
+            List<String> dependsOn = operation.getDependsOnOperationIds() == null ? List.of() : new ArrayList<>(operation.getDependsOnOperationIds());
+            normalized.add(new TopologyOperationContext(
+                    i,
+                    operationId,
+                    operation.getSourceNodeId(),
+                    operation.getTargetParentId(),
+                    dependsOn,
+                    Boolean.TRUE.equals(operation.getAllowDescendantFirstSplit()),
+                    operation.getExpectedSourceParentId()
             ));
         }
         return normalized;

@@ -70,7 +70,7 @@
   "action": "COPY",
   "targetParentId": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
   "dryRun": false,
-  "atomic": false,
+  "atomic": true,
   "operator": "admin",
   "copyOptions": {
     "versionPolicy": "CURRENT_ONLY",
@@ -100,7 +100,7 @@
 | action | string | 是 | - | MOVE 或 COPY |
 | targetParentId | UUID | 否 | null | 批次默认目标父节点；可被单项覆盖 |
 | dryRun | boolean | 否 | false | true 仅预检，不落库 |
-| atomic | boolean | 否 | false | true 表示任一失败整批回滚 |
+| atomic | boolean | 否 | true | 默认 true；任一失败整批回滚 |
 | operator | string | 否 | null | 操作人 |
 | copyOptions | object | 否 | null | 仅 COPY 生效 |
 | operations | array | 是 | - | 批处理操作列表 |
@@ -499,6 +499,10 @@ sourceMappings[i] 建议结构：
 - 用户确认后再发正式请求。
 
 ### 11.2 atomic
+
+默认值结论：
+
+- batch-transfer 接口默认 atomic=true。
 
 - atomic=false：
   - 每个 operation 独立事务。
