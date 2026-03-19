@@ -1096,7 +1096,8 @@ public class MetaCategoryCrudService {
         Map<UUID, Set<UUID>> descendantMap = loadDescendantMap(sourceMap.keySet());
 
         for (TopologyPlanItem item : items) {
-            validateTopologyItem(item, sourceMap.get(item.operation.sourceNodeId), targetMap.get(item.operation.targetParentId), businessDomain);
+            MetaCategoryDef target = item.operation.targetParentId == null ? null : targetMap.get(item.operation.targetParentId);
+            validateTopologyItem(item, sourceMap.get(item.operation.sourceNodeId), target, businessDomain);
         }
 
         validateTopologyDependencies(items, itemByOperationId, orderingStrategy, strictDependencyValidation);

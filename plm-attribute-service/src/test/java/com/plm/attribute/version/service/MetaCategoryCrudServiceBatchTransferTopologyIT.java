@@ -243,6 +243,53 @@ class MetaCategoryCrudServiceBatchTransferTopologyIT {
     }
 
     @Test
+    void batchTransferTopology_execute_shouldMoveTreeToParentThenBackToRoot() {
+        TopologyFixture fixture = createTopologyFixture();
+
+        MetaCategoryBatchTransferTopologyRequestDto moveToParentRequest = new MetaCategoryBatchTransferTopologyRequestDto();
+        moveToParentRequest.setBusinessDomain("MATERIAL");
+        moveToParentRequest.setAction("MOVE");
+        moveToParentRequest.setDryRun(false);
+        moveToParentRequest.setAtomic(true);
+        moveToParentRequest.setOperator("it-transfer");
+        moveToParentRequest.setOperations(List.of(
+                topologyOperation("op-a-to-x", fixture.rootAId, fixture.targetXId, List.of(), null)
+        ));
+
+        MetaCategoryBatchTransferTopologyResponseDto moveToParentResponse = inNewTransaction(
+            () -> crudService.batchTransferTopology(moveToParentRequest)
+        );
+        Assertions.assertEquals(1, moveToParentResponse.getSuccessCount(), String.valueOf(moveToParentResponse));
+        Assertions.assertEquals(0, moveToParentResponse.getFailureCount(), String.valueOf(moveToParentResponse));
+
+        MetaCategoryDef movedUnderTarget = inNewTransaction(() -> defRepository.findById(fixture.rootAId).orElseThrow());
+        Assertions.assertEquals(fixture.targetXId, movedUnderTarget.getParent().getId());
+
+        MetaCategoryBatchTransferTopologyRequestDto moveBackToRootRequest = new MetaCategoryBatchTransferTopologyRequestDto();
+        moveBackToRootRequest.setBusinessDomain("MATERIAL");
+        moveBackToRootRequest.setAction("MOVE");
+        moveBackToRootRequest.setDryRun(false);
+        moveBackToRootRequest.setAtomic(true);
+        moveBackToRootRequest.setOperator("it-transfer");
+        moveBackToRootRequest.setOperations(List.of(
+                topologyOperation("op-a-back-to-root", fixture.rootAId, null, List.of(), fixture.targetXId)
+        ));
+
+        MetaCategoryBatchTransferTopologyResponseDto moveBackToRootResponse = inNewTransaction(
+            () -> crudService.batchTransferTopology(moveBackToRootRequest)
+        );
+        Assertions.assertEquals(1, moveBackToRootResponse.getSuccessCount(), String.valueOf(moveBackToRootResponse));
+        Assertions.assertEquals(0, moveBackToRootResponse.getFailureCount(), String.valueOf(moveBackToRootResponse));
+
+        MetaCategoryDef movedBackToRoot = inNewTransaction(() -> defRepository.findById(fixture.rootAId).orElseThrow());
+        MetaCategoryDef childAfterMoveBack = inNewTransaction(() -> defRepository.findById(fixture.childBId).orElseThrow());
+        Assertions.assertNull(movedBackToRoot.getParent());
+        Assertions.assertEquals(TEST_ROOT_DEPTH, movedBackToRoot.getDepth());
+        Assertions.assertEquals("/" + movedBackToRoot.getCodeKey(), movedBackToRoot.getPath());
+        Assertions.assertEquals(fixture.rootAId, childAfterMoveBack.getParent().getId());
+    }
+
+    @Test
     void batchTransferTopology_execute_shouldSupportImportedChildrenThenMoveAncestorTree() {
         TopologyFixture fixture = createComplexTopologyFixture();
 
