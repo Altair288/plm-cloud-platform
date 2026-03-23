@@ -2,7 +2,7 @@ package com.plm.infrastructure.version.repository;
 
 import com.plm.common.version.domain.MetaAttributeDef;
 import com.plm.common.version.domain.MetaAttributeVersion;
-import com.plm.common.api.dto.MetaAttributeDefListItemDto;
+import com.plm.common.api.dto.attribute.MetaAttributeDefListItemDto;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -31,7 +31,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
 
         @Query(
                 value = """
-                        select new com.plm.common.api.dto.MetaAttributeDefListItemDto(
+                        select new com.plm.common.api.dto.attribute.MetaAttributeDefListItemDto(
                             d.key,
                             v.lovKey,
                             c.codeKey,

@@ -1,7 +1,7 @@
 package com.plm.attribute.version.service;
 
-import com.plm.common.api.dto.AttributeImportErrorDto;
-import com.plm.common.api.dto.AttributeImportSummaryDto;
+import com.plm.common.api.dto.attribute.imports.AttributeImportErrorDto;
+import com.plm.common.api.dto.attribute.imports.AttributeImportSummaryDto;
 import com.plm.common.version.domain.*;
 import com.plm.common.version.util.AttributeLovImportUtils; // still used for json hash & numeric parse
 import com.plm.infrastructure.code.CodeRuleGenerator;

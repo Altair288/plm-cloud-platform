@@ -2,10 +2,10 @@ package com.plm.attribute.version.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.plm.common.api.dto.MetaDictionaryBatchRequestDto;
-import com.plm.common.api.dto.MetaDictionaryBatchResponseDto;
-import com.plm.common.api.dto.MetaDictionaryDto;
-import com.plm.common.api.dto.MetaDictionaryEntryDto;
+import com.plm.common.api.dto.dictionary.MetaDictionaryBatchRequestDto;
+import com.plm.common.api.dto.dictionary.MetaDictionaryBatchResponseDto;
+import com.plm.common.api.dto.dictionary.MetaDictionaryDto;
+import com.plm.common.api.dto.dictionary.MetaDictionaryEntryDto;
 import com.plm.common.version.domain.MetaDictionaryDef;
 import com.plm.common.version.domain.MetaDictionaryItem;
 import com.plm.common.version.domain.MetaDictionaryScene;

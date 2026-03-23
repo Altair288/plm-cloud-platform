@@ -2,9 +2,9 @@ package com.plm.attribute.version.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.plm.common.api.dto.MetaAttributeDefDetailDto;
-import com.plm.common.api.dto.MetaAttributeDefListItemDto;
-import com.plm.common.api.dto.MetaAttributeVersionSummaryDto;
+import com.plm.common.api.dto.attribute.MetaAttributeDefDetailDto;
+import com.plm.common.api.dto.attribute.MetaAttributeDefListItemDto;
+import com.plm.common.api.dto.attribute.MetaAttributeVersionSummaryDto;
 import com.plm.common.version.domain.MetaAttributeDef;
 import com.plm.common.version.domain.MetaAttributeVersion;
 import com.plm.common.version.domain.MetaLovDef;

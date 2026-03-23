@@ -1,7 +1,7 @@
 package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaAttributeImportService;
-import com.plm.common.api.dto.AttributeImportSummaryDto;
+import com.plm.common.api.dto.attribute.imports.AttributeImportSummaryDto;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;

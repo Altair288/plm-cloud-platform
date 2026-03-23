@@ -1,10 +1,10 @@
 package com.plm.attribute.version.service;
 
-import com.plm.common.api.dto.MetaCategoryBatchTransferItemResultDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferOperationDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferRequestDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferResponseDto;
-import com.plm.common.api.dto.MetaCategoryDetailDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferItemResultDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferOperationDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferRequestDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferResponseDto;
+import com.plm.common.api.dto.category.MetaCategoryDetailDto;
 import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;

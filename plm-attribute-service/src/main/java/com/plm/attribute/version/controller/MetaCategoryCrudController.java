@@ -1,16 +1,16 @@
 package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaCategoryCrudService;
-import com.plm.common.api.dto.CreateCategoryRequestDto;
-import com.plm.common.api.dto.MetaCategoryBatchDeleteRequestDto;
-import com.plm.common.api.dto.MetaCategoryBatchDeleteResponseDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferRequestDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferResponseDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyRequestDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyResponseDto;
-import com.plm.common.api.dto.MetaCategoryDetailDto;
-import com.plm.common.api.dto.MetaCategoryVersionCompareDto;
-import com.plm.common.api.dto.UpdateCategoryRequestDto;
+import com.plm.common.api.dto.category.CreateCategoryRequestDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteRequestDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteResponseDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferRequestDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferResponseDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyRequestDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyResponseDto;
+import com.plm.common.api.dto.category.MetaCategoryDetailDto;
+import com.plm.common.api.dto.category.version.MetaCategoryVersionCompareDto;
+import com.plm.common.api.dto.category.UpdateCategoryRequestDto;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;

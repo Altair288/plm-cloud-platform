@@ -1,11 +1,11 @@
 package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaCategoryGenericQueryService;
-import com.plm.common.api.dto.MetaCategoryChildrenBatchRequestDto;
-import com.plm.common.api.dto.MetaCategoryNodeDto;
-import com.plm.common.api.dto.MetaCategorySearchItemDto;
-import com.plm.common.api.dto.MetaCategorySubtreeRequestDto;
-import com.plm.common.api.dto.MetaCategorySubtreeResponseDto;
+import com.plm.common.api.dto.category.MetaCategoryChildrenBatchRequestDto;
+import com.plm.common.api.dto.category.MetaCategoryNodeDto;
+import com.plm.common.api.dto.category.MetaCategorySearchItemDto;
+import com.plm.common.api.dto.category.subtree.MetaCategorySubtreeRequestDto;
+import com.plm.common.api.dto.category.subtree.MetaCategorySubtreeResponseDto;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;

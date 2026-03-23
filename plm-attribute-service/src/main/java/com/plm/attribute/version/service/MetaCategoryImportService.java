@@ -4,9 +4,9 @@ import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
-import com.plm.common.api.dto.MetaCategoryDefDto;
-import com.plm.common.api.dto.MetaCategoryImportSummaryDto;
-import com.plm.common.api.dto.UnspscImportItem;
+import com.plm.common.api.dto.category.MetaCategoryDefDto;
+import com.plm.common.api.dto.category.imports.MetaCategoryImportSummaryDto;
+import com.plm.common.api.dto.category.imports.UnspscImportItem;
 import com.plm.common.api.mapper.MetaCategoryMapper;
 
 import org.apache.poi.ss.usermodel.*;

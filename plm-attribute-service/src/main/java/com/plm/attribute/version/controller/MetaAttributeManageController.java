@@ -1,8 +1,8 @@
 package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaAttributeManageService;
-import com.plm.common.api.dto.MetaAttributeDefDetailDto;
-import com.plm.common.api.dto.MetaAttributeUpsertRequestDto;
+import com.plm.common.api.dto.attribute.MetaAttributeDefDetailDto;
+import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 

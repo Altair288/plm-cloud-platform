@@ -2,8 +2,8 @@ package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaCategoryImportService;
 import com.plm.attribute.version.service.MetaCategoryHierarchyService;
-import com.plm.common.api.dto.MetaCategoryImportSummaryDto;
-import com.plm.common.api.dto.UnspscImportItem;
+import com.plm.common.api.dto.category.imports.MetaCategoryImportSummaryDto;
+import com.plm.common.api.dto.category.imports.UnspscImportItem;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -59,7 +59,7 @@ public class MetaCategoryController {
 
     // 查询后代分类
     @GetMapping("/{id}/descendants")
-    public ResponseEntity<List<com.plm.common.api.dto.MetaCategoryDefDto>> descendants(
+    public ResponseEntity<List<com.plm.common.api.dto.category.MetaCategoryDefDto>> descendants(
             @PathVariable("id") java.util.UUID id) {
         var defs = hierarchyService.findDescendants(id);
         var dtoList = defs.stream().map(com.plm.common.api.mapper.MetaCategoryMapper::toDefDto).toList();

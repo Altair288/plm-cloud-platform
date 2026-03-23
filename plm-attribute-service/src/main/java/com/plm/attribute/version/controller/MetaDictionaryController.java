@@ -1,9 +1,9 @@
 package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaDictionaryService;
-import com.plm.common.api.dto.MetaDictionaryBatchRequestDto;
-import com.plm.common.api.dto.MetaDictionaryBatchResponseDto;
-import com.plm.common.api.dto.MetaDictionaryDto;
+import com.plm.common.api.dto.dictionary.MetaDictionaryBatchRequestDto;
+import com.plm.common.api.dto.dictionary.MetaDictionaryBatchResponseDto;
+import com.plm.common.api.dto.dictionary.MetaDictionaryDto;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;

@@ -1,8 +1,8 @@
 package com.plm.attribute.version.service;
 
-import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyOperationDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyRequestDto;
-import com.plm.common.api.dto.MetaCategoryBatchTransferTopologyResponseDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyOperationDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyRequestDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyResponseDto;
 import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;

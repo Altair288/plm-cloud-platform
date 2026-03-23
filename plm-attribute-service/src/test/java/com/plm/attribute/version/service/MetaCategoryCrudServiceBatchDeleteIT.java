@@ -1,7 +1,7 @@
 package com.plm.attribute.version.service;
 
-import com.plm.common.api.dto.MetaCategoryBatchDeleteRequestDto;
-import com.plm.common.api.dto.MetaCategoryBatchDeleteResponseDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteRequestDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteResponseDto;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import org.junit.jupiter.api.Assertions;

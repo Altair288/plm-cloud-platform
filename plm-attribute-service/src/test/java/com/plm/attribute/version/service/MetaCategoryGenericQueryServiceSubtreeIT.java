@@ -1,9 +1,9 @@
 package com.plm.attribute.version.service;
 
-import com.plm.common.api.dto.MetaCategorySubtreeFlatNodeDto;
-import com.plm.common.api.dto.MetaCategorySubtreeRequestDto;
-import com.plm.common.api.dto.MetaCategorySubtreeResponseDto;
-import com.plm.common.api.dto.MetaCategorySubtreeTreeNodeDto;
+import com.plm.common.api.dto.category.subtree.MetaCategorySubtreeFlatNodeDto;
+import com.plm.common.api.dto.category.subtree.MetaCategorySubtreeRequestDto;
+import com.plm.common.api.dto.category.subtree.MetaCategorySubtreeResponseDto;
+import com.plm.common.api.dto.category.subtree.MetaCategorySubtreeTreeNodeDto;
 import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;

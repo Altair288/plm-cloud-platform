@@ -1,0 +1,14 @@
+package com.plm.common.api.dto.category.version;
+
+import lombok.Data;
+
+import java.time.OffsetDateTime;
+
+@Data
+public class MetaCategoryLatestVersionDto {
+    private Integer versionNo;
+    private OffsetDateTime versionDate;
+    private String name;
+    private String description;
+    private String updatedBy;
+}

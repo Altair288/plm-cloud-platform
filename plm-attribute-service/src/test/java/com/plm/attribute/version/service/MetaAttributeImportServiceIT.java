@@ -1,6 +1,6 @@
 package com.plm.attribute.version.service;
 
-import com.plm.common.api.dto.AttributeImportSummaryDto;
+import com.plm.common.api.dto.attribute.imports.AttributeImportSummaryDto;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;

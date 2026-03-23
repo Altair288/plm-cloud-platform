@@ -1,9 +1,9 @@
 package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaAttributeQueryService;
-import com.plm.common.api.dto.MetaAttributeDefDetailDto;
-import com.plm.common.api.dto.MetaAttributeDefListItemDto;
-import com.plm.common.api.dto.MetaAttributeVersionSummaryDto;
+import com.plm.common.api.dto.attribute.MetaAttributeDefDetailDto;
+import com.plm.common.api.dto.attribute.MetaAttributeDefListItemDto;
+import com.plm.common.api.dto.attribute.MetaAttributeVersionSummaryDto;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;

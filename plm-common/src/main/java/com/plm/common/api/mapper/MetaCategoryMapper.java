@@ -1,7 +1,7 @@
 package com.plm.common.api.mapper;
 
-import com.plm.common.api.dto.MetaCategoryDefDto;
-import com.plm.common.api.dto.MetaCategoryVersionDto;
+import com.plm.common.api.dto.category.MetaCategoryDefDto;
+import com.plm.common.api.dto.category.version.MetaCategoryVersionDto;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;
 
