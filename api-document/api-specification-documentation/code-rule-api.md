@@ -10,14 +10,14 @@
 
 ## 功能列表（是否实现）
 
-| 功能 | 相关接口 | 是否实现 | 备注 |
-|---|---|---:|---|
-| 规则列表 | `GET /api/meta/code-rules` | ✅ | 支持 `targetType/status` 过滤 |
-| 规则详情 | `GET /api/meta/code-rules/{ruleCode}` | ✅ | 返回最新版本摘要与 latestRuleJson |
-| 创建规则 | `POST /api/meta/code-rules` | ✅ | 新建后默认 `DRAFT` |
-| 更新规则 | `PUT /api/meta/code-rules/{ruleCode}` | ✅ | 仅 `DRAFT` 状态允许编辑 |
-| 发布规则 | `POST /api/meta/code-rules/{ruleCode}:publish` | ✅ | 发布后状态切为 `ACTIVE` |
-| 规则预览 | `POST /api/meta/code-rules/{ruleCode}:preview` | ✅ | 不占用正式序列 |
+| 功能     | 相关接口                                       | 是否实现 | 备注                              |
+| -------- | ---------------------------------------------- | -------: | --------------------------------- |
+| 规则列表 | `GET /api/meta/code-rules`                     |       ✅ | 支持 `targetType/status` 过滤     |
+| 规则详情 | `GET /api/meta/code-rules/{ruleCode}`          |       ✅ | 返回最新版本摘要与 latestRuleJson |
+| 创建规则 | `POST /api/meta/code-rules`                    |       ✅ | 新建后默认 `DRAFT`                |
+| 更新规则 | `PUT /api/meta/code-rules/{ruleCode}`          |       ✅ | 仅 `DRAFT` 状态允许编辑           |
+| 发布规则 | `POST /api/meta/code-rules/{ruleCode}:publish` |       ✅ | 发布后状态切为 `ACTIVE`           |
+| 规则预览 | `POST /api/meta/code-rules/{ruleCode}:preview` |       ✅ | 不占用正式序列                    |
 
 ---
 
@@ -89,10 +89,10 @@
 
 ### Query 参数
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
-| targetType | string | 否 | - | 按目标类型过滤，例如 `category` |
-| status | string | 否 | - | 按状态过滤，例如 `DRAFT/ACTIVE/ARCHIVED` |
+| 参数       | 类型   | 必填 | 默认值 | 说明                                     |
+| ---------- | ------ | ---: | ------ | ---------------------------------------- |
+| targetType | string |   否 | -      | 按目标类型过滤，例如 `category`          |
+| status     | string |   否 | -      | 按状态过滤，例如 `DRAFT/ACTIVE/ARCHIVED` |
 
 ### curl 示例
 
@@ -106,7 +106,7 @@ curl "http://localhost:8080/api/meta/code-rules?targetType=category&status=ACTIV
 [
   {
     "ruleCode": "CATEGORY",
-    "name": "Category Code Rule",
+    "name": "分类编码规则",
     "targetType": "category",
     "scopeType": "GLOBAL",
     "scopeValue": null,
@@ -116,18 +116,24 @@ curl "http://localhost:8080/api/meta/code-rules?targetType=category&status=ACTIV
     "allowManualOverride": true,
     "regexPattern": "^[A-Z][A-Z0-9_-]{0,63}$",
     "maxLength": 64,
-    "latestVersionNo": 2,
+    "latestVersionNo": 1,
     "latestRuleJson": {
+      "tokens": [
+        "BUSINESS_DOMAIN",
+        "SEQ"
+      ],
       "pattern": "{BUSINESS_DOMAIN}-{SEQ}",
-      "tokens": ["BUSINESS_DOMAIN", "SEQ"],
+      "preview": {
+        "BUSINESS_DOMAIN": "MATERIAL"
+      },
       "sequence": {
-        "enabled": true,
+        "step": 1,
         "width": 4,
-        "step": 1
+        "enabled": true
       },
       "validation": {
-        "maxLength": 64,
         "regex": "^[A-Z][A-Z0-9_-]{0,63}$",
+        "maxLength": 64,
         "allowManualOverride": true
       }
     }
@@ -190,9 +196,9 @@ curl "http://localhost:8080/api/meta/code-rules/CATEGORY"
 
 ### Query 参数
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
-| operator | string | 否 | system | 操作人 |
+| 参数     | 类型   | 必填 | 默认值 | 说明   |
+| -------- | ------ | ---: | ------ | ------ |
+| operator | string |   否 | system | 操作人 |
 
 ### Body：CodeRuleSaveRequestDto
 
@@ -283,9 +289,9 @@ curl -X POST "http://localhost:8080/api/meta/code-rules?operator=alice" \
 
 ### Query 参数
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
-| operator | string | 否 | system | 操作人 |
+| 参数     | 类型   | 必填 | 默认值 | 说明   |
+| -------- | ------ | ---: | ------ | ------ |
+| operator | string |   否 | system | 操作人 |
 
 ### 约束
 
@@ -351,9 +357,9 @@ curl -X PUT "http://localhost:8080/api/meta/code-rules/IT_RULE_CATEGORY?operator
 
 ### Query 参数
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
-| operator | string | 否 | system | 操作人 |
+| 参数     | 类型   | 必填 | 默认值 | 说明   |
+| -------- | ------ | ---: | ------ | ------ |
+| operator | string |   否 | system | 操作人 |
 
 ### curl 示例
 
@@ -435,11 +441,7 @@ curl -X POST "http://localhost:8080/api/meta/code-rules/CATEGORY:preview" \
   "ruleCode": "CATEGORY",
   "ruleVersion": 2,
   "pattern": "{BUSINESS_DOMAIN}-{SEQ}",
-  "examples": [
-    "MATERIAL-0001",
-    "MATERIAL-0002",
-    "MATERIAL-0003"
-  ],
+  "examples": ["MATERIAL-0001", "MATERIAL-0002", "MATERIAL-0003"],
   "warnings": []
 }
 ```
@@ -462,9 +464,7 @@ curl -X POST "http://localhost:8080/api/meta/code-rules/ATTRIBUTE:preview" \
   "ruleCode": "ATTRIBUTE",
   "ruleVersion": 2,
   "pattern": "ATTR_{SEQ}",
-  "examples": [
-    "ATTR_MANUAL_001"
-  ],
+  "examples": ["ATTR_MANUAL_001"],
   "warnings": []
 }
 ```
@@ -481,51 +481,51 @@ curl -X POST "http://localhost:8080/api/meta/code-rules/ATTRIBUTE:preview" \
 
 ### CodeRuleSaveRequestDto
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| ruleCode | string | 是 | 规则编码，内部会统一转大写 |
-| name | string | 是 | 规则名称 |
-| targetType | string | 是 | 目标类型，例如 `category` |
-| scopeType | string | 否 | 默认 `GLOBAL` |
-| scopeValue | string | 否 | 作用域值 |
-| pattern | string | 是 | 编码 pattern |
-| allowManualOverride | boolean | 否 | 是否允许手工覆盖 |
-| regexPattern | string | 否 | 手工编码校验正则 |
-| maxLength | int | 否 | 最大长度，默认 64 |
-| ruleJson | object | 否 | 若不传则后端按 pattern 自动生成标准结构 |
+| 字段                | 类型    | 必填 | 说明                                    |
+| ------------------- | ------- | ---: | --------------------------------------- |
+| ruleCode            | string  |   是 | 规则编码，内部会统一转大写              |
+| name                | string  |   是 | 规则名称                                |
+| targetType          | string  |   是 | 目标类型，例如 `category`               |
+| scopeType           | string  |   否 | 默认 `GLOBAL`                           |
+| scopeValue          | string  |   否 | 作用域值                                |
+| pattern             | string  |   是 | 编码 pattern                            |
+| allowManualOverride | boolean |   否 | 是否允许手工覆盖                        |
+| regexPattern        | string  |   否 | 手工编码校验正则                        |
+| maxLength           | int     |   否 | 最大长度，默认 64                       |
+| ruleJson            | object  |   否 | 若不传则后端按 pattern 自动生成标准结构 |
 
 ### CodeRuleDetailDto
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| ruleCode | string | 规则编码 |
-| name | string | 规则名称 |
-| targetType | string | 目标类型 |
-| scopeType | string | 作用域类型 |
-| scopeValue | string | 作用域值 |
-| pattern | string | 当前解析后的 pattern |
-| status | string | 当前状态 |
-| active | boolean | 是否启用 |
-| allowManualOverride | boolean | 是否允许手工覆盖 |
-| regexPattern | string | 正则校验 |
-| maxLength | int | 最大长度 |
-| latestVersionNo | int | 最新版本号 |
-| latestRuleJson | object | 最新版本规则 JSON |
+| 字段                | 类型    | 说明                 |
+| ------------------- | ------- | -------------------- |
+| ruleCode            | string  | 规则编码             |
+| name                | string  | 规则名称             |
+| targetType          | string  | 目标类型             |
+| scopeType           | string  | 作用域类型           |
+| scopeValue          | string  | 作用域值             |
+| pattern             | string  | 当前解析后的 pattern |
+| status              | string  | 当前状态             |
+| active              | boolean | 是否启用             |
+| allowManualOverride | boolean | 是否允许手工覆盖     |
+| regexPattern        | string  | 正则校验             |
+| maxLength           | int     | 最大长度             |
+| latestVersionNo     | int     | 最新版本号           |
+| latestRuleJson      | object  | 最新版本规则 JSON    |
 
 ### CodeRulePreviewRequestDto
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| context | object | 否 | 用于替换 pattern 占位符 |
-| manualCode | string | 否 | 若传入则只做手工编码校验 |
-| count | int | 否 | 预览返回的候选数量，默认 3，最大 20 |
+| 字段       | 类型   | 必填 | 说明                                |
+| ---------- | ------ | ---: | ----------------------------------- |
+| context    | object |   否 | 用于替换 pattern 占位符             |
+| manualCode | string |   否 | 若传入则只做手工编码校验            |
+| count      | int    |   否 | 预览返回的候选数量，默认 3，最大 20 |
 
 ### CodeRulePreviewResponseDto
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| ruleCode | string | 规则编码 |
-| ruleVersion | int | 参与预览的规则版本号 |
-| pattern | string | 当前使用的 pattern |
-| examples | string[] | 预览候选结果 |
-| warnings | string[] | 预览警告 |
+| 字段        | 类型     | 说明                 |
+| ----------- | -------- | -------------------- |
+| ruleCode    | string   | 规则编码             |
+| ruleVersion | int      | 参与预览的规则版本号 |
+| pattern     | string   | 当前使用的 pattern   |
+| examples    | string[] | 预览候选结果         |
+| warnings    | string[] | 预览警告             |
