@@ -31,6 +31,18 @@ public class MetaAttributeDef {
     @Column(name = "auto_bind_key")
     private String autoBindKey;
 
+    @Column(name = "key_manual_override", nullable = false)
+    private Boolean keyManualOverride = Boolean.FALSE;
+
+    @Column(name = "key_frozen", nullable = false)
+    private Boolean keyFrozen = Boolean.FALSE;
+
+    @Column(name = "generated_rule_code", length = 64)
+    private String generatedRuleCode;
+
+    @Column(name = "generated_rule_version_no")
+    private Integer generatedRuleVersionNo;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -41,5 +53,7 @@ public class MetaAttributeDef {
     public void prePersist() {
         if (id == null) id = UUID.randomUUID();
         if (createdAt == null) createdAt = OffsetDateTime.now();
+        if (keyManualOverride == null) keyManualOverride = Boolean.FALSE;
+        if (keyFrozen == null) keyFrozen = Boolean.FALSE;
     }
 }

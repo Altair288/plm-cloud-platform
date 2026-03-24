@@ -4,7 +4,6 @@ import com.plm.common.api.dto.attribute.imports.AttributeImportErrorDto;
 import com.plm.common.api.dto.attribute.imports.AttributeImportSummaryDto;
 import com.plm.common.version.domain.*;
 import com.plm.common.version.util.AttributeLovImportUtils; // still used for json hash & numeric parse
-import com.plm.infrastructure.code.CodeRuleGenerator;
 import com.plm.infrastructure.version.repository.*;
 import org.apache.poi.ss.usermodel.*;
 import org.slf4j.Logger;
@@ -39,6 +38,7 @@ public class MetaAttributeImportService {
     private final MetaAttributeVersionRepository attributeVersionRepository;
     private final MetaLovDefRepository lovDefRepository;
     private final MetaLovVersionRepository lovVersionRepository;
+    private final MetaCodeRuleService metaCodeRuleService;
     // JdbcTemplate 目前未使用，如后续需要批量 SQL 可再注入
 
     @PersistenceContext
@@ -50,7 +50,7 @@ public class MetaAttributeImportService {
             MetaAttributeVersionRepository attributeVersionRepository,
             MetaLovDefRepository lovDefRepository,
             MetaLovVersionRepository lovVersionRepository,
-            CodeRuleGenerator codeRuleGenerator,
+            MetaCodeRuleService metaCodeRuleService,
             DataSource dataSource) {
         this.categoryDefRepository = categoryDefRepository;
         this.categoryVersionRepository = categoryVersionRepository;
@@ -58,10 +58,8 @@ public class MetaAttributeImportService {
         this.attributeVersionRepository = attributeVersionRepository;
         this.lovDefRepository = lovDefRepository;
         this.lovVersionRepository = lovVersionRepository;
-        this.codeRuleGenerator = codeRuleGenerator;
+        this.metaCodeRuleService = metaCodeRuleService;
     }
-
-    private final CodeRuleGenerator codeRuleGenerator;
 
     /**
      * Excel 模板(示例): 分类编号 | 分类名称 | 属性名称 | 属性类型 | 单位 | 枚举值1 | 枚举值2 | ...
@@ -133,7 +131,7 @@ public class MetaAttributeImportService {
         allCatCodes
                 .forEach(code -> categoryDefRepository.findByCodeKey(code).ifPresent(d -> categoryCache.put(code, d)));
 
-        // 预加载分类下已有属性 -> (categoryDefId -> (attrKey->MetaAttributeDef))
+        // 预加载分类下已有属性 -> (categoryDefId -> (semanticDisplayName->MetaAttributeDef))
         Map<UUID, Map<String, MetaAttributeDef>> attrCache = new HashMap<>();
         // 处理每个属性组
         int batchCount = 0;
@@ -149,13 +147,31 @@ public class MetaAttributeImportService {
             }
             MetaCategoryDef catDef = categoryCache.get(g.categoryCode);
 
-            // 全局序列生成属性编码：ATTR_000001, ATTR_000002 ... (pattern ATTR_{SEQ})
-            String attrKey = codeRuleGenerator.generate("ATTRIBUTE", Collections.emptyMap());
+            String semanticKey = normalizeSemanticKey(g.attrName);
             Map<String, MetaAttributeDef> catAttrMap = attrCache.computeIfAbsent(catDef.getId(), id -> new HashMap<>());
-            // 查询是否已有 attribute def
-            MetaAttributeDef attrDef = catAttrMap.get(attrKey);
+            MetaAttributeDef attrDef = catAttrMap.get(semanticKey);
+            if (attrDef == null) {
+                attrDef = findAttributeDefByDisplayName(catDef, g.attrName);
+                if (attrDef != null) {
+                    catAttrMap.put(semanticKey, attrDef);
+                }
+            }
+
+            MetaCodeRuleService.GeneratedCodeResult attrCode = null;
+            String attrKey = attrDef != null ? attrDef.getKey() : null;
             boolean newlyCreatedAttr = false;
             if (attrDef == null) {
+                // 全局序列生成属性编码：ATTR_000001, ATTR_000002 ... (pattern ATTR_{SEQ})
+                attrCode = metaCodeRuleService.generateCode(
+                        "ATTRIBUTE",
+                        "ATTRIBUTE",
+                        null,
+                        buildCodeContext(catDef, null),
+                        null,
+                        createdBy,
+                        false
+                );
+                attrKey = attrCode.code();
                 UUID newId = UUID.randomUUID();
                 int inserted = attributeDefRepository.insertIgnore(newId, catDef.getId(), attrKey, true, attrKey,
                         createdBy);
@@ -168,7 +184,8 @@ public class MetaAttributeImportService {
                     // 已存在则查询
                     attrDef = findAttributeDef(catDef, attrKey);
                 }
-                catAttrMap.put(attrKey, attrDef);
+                catAttrMap.put(semanticKey, attrDef);
+                applyAttributeCodeGovernance(attrDef, attrCode);
                 log.debug("[ATTR-DEF] categoryCode={} attrKey={} inserted={} id={}", g.categoryCode, attrKey,
                         inserted > 0, attrDef != null ? attrDef.getId() : null);
             }
@@ -181,7 +198,16 @@ public class MetaAttributeImportService {
             }
 
             // LOV key 简化：<属性编码>_LOV (由 V10 规则 pattern 支持 {ATTRIBUTE_CODE}_LOV 或直接拼接)
-            String lovKey = codeRuleGenerator.generate("LOV", Map.of("ATTRIBUTE_CODE", attrKey));
+                MetaCodeRuleService.GeneratedCodeResult lovCode = metaCodeRuleService.generateCode(
+                    "LOV",
+                    "LOV_DEFINITION",
+                    null,
+                    buildCodeContext(catDef, attrKey),
+                    null,
+                    createdBy,
+                    false
+                );
+                String lovKey = lovCode.code();
 
             // 构造 structure_json (简化)
             String structureJson = buildAttributeJson(g, attrDef, lovKey);
@@ -245,6 +271,7 @@ public class MetaAttributeImportService {
                 log.debug("[LOV-DEF] categoryCode={} attrKey={} lovKey={} inserted={} lovId={}", g.categoryCode,
                         attrKey, lovKey, insLov > 0, lovDef != null ? lovDef.getId() : null);
             }
+            applyLovCodeGovernance(lovDef, lovCode);
             String valueJson = buildLovJson(g.values);
             String valueHash = AttributeLovImportUtils.jsonHash(valueJson);
             MetaLovVersion latestLovVer = newlyCreatedLov ? null
@@ -304,6 +331,34 @@ public class MetaAttributeImportService {
         return attributeDefRepository.findActiveByCategoryDefAndKey(catDef, attrKey).orElse(null);
     }
 
+    private MetaAttributeDef findAttributeDefByDisplayName(MetaCategoryDef catDef, String displayName) {
+        String normalizedDisplayName = trim(displayName);
+        if (catDef == null || normalizedDisplayName == null) {
+            return null;
+        }
+        List<UUID> ids = entityManager.createNativeQuery("""
+                SELECT d.id
+                FROM plm_meta.meta_attribute_def d
+                JOIN plm_meta.meta_attribute_version v
+                  ON v.attribute_def_id = d.id
+                 AND v.is_latest = TRUE
+                WHERE d.category_def_id = :categoryDefId
+                  AND COALESCE(LOWER(d.status), '') <> 'deleted'
+                  AND LOWER(v.structure_json ->> 'displayName') = :displayName
+                ORDER BY d.created_at DESC
+                LIMIT 1
+                """)
+                .setParameter("categoryDefId", catDef.getId())
+                .setParameter("displayName", normalizedDisplayName.toLowerCase(Locale.ROOT))
+                .getResultList();
+        if (ids.isEmpty()) {
+            return null;
+        }
+        Object first = ids.get(0);
+        UUID id = first instanceof UUID uuid ? uuid : UUID.fromString(String.valueOf(first));
+        return attributeDefRepository.findById(id).orElse(null);
+    }
+
     private String buildAttributeJson(AttrGroup g, MetaAttributeDef def, String lovKey) {
         String unit = g.unit == null ? "" : g.unit;
         return "{" +
@@ -352,8 +407,45 @@ public class MetaAttributeImportService {
         return s == null || s.trim().isEmpty();
     }
 
+    private Map<String, String> buildCodeContext(MetaCategoryDef categoryDef, String attributeCode) {
+        LinkedHashMap<String, String> context = new LinkedHashMap<>();
+        context.put("BUSINESS_DOMAIN", categoryDef.getBusinessDomain());
+        context.put("CATEGORY_CODE", categoryDef.getCodeKey());
+        if (!isBlank(attributeCode)) {
+            context.put("ATTRIBUTE_CODE", attributeCode);
+        }
+        return context;
+    }
+
+    private void applyAttributeCodeGovernance(MetaAttributeDef def, MetaCodeRuleService.GeneratedCodeResult generated) {
+        if (def == null || generated == null) {
+            return;
+        }
+        def.setKeyManualOverride(generated.manualOverride());
+        def.setKeyFrozen(generated.frozen());
+        def.setGeneratedRuleCode(generated.ruleCode());
+        def.setGeneratedRuleVersionNo(generated.ruleVersion());
+        attributeDefRepository.save(def);
+    }
+
+    private void applyLovCodeGovernance(MetaLovDef lovDef, MetaCodeRuleService.GeneratedCodeResult generated) {
+        if (lovDef == null || generated == null) {
+            return;
+        }
+        lovDef.setKeyManualOverride(generated.manualOverride());
+        lovDef.setKeyFrozen(generated.frozen());
+        lovDef.setGeneratedRuleCode(generated.ruleCode());
+        lovDef.setGeneratedRuleVersionNo(generated.ruleVersion());
+        lovDefRepository.save(lovDef);
+    }
+
     private String trim(String s) {
         return s == null ? null : (s.trim().isEmpty() ? null : s.trim());
+    }
+
+    private String normalizeSemanticKey(String value) {
+        String normalized = trim(value);
+        return normalized == null ? null : normalized.toLowerCase(Locale.ROOT);
     }
 
     private String escape(String s) {

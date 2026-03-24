@@ -46,6 +46,18 @@ public class MetaCategoryDef {
     @Column(name = "external_code", length = 64)
     private String externalCode;
 
+    @Column(name = "code_key_manual_override", nullable = false)
+    private Boolean codeKeyManualOverride = Boolean.FALSE;
+
+    @Column(name = "code_key_frozen", nullable = false)
+    private Boolean codeKeyFrozen = Boolean.FALSE;
+
+    @Column(name = "generated_rule_code", length = 64)
+    private String generatedRuleCode;
+
+    @Column(name = "generated_rule_version_no")
+    private Integer generatedRuleVersionNo;
+
     @Column(name = "copied_from_category_id")
     private UUID copiedFromCategoryId; // 记录复制来源的 categoryDefId，方便追踪和数据迁移
 
@@ -59,5 +71,7 @@ public class MetaCategoryDef {
     public void prePersist() {
         if (id == null) id = UUID.randomUUID();
         if (createdAt == null) createdAt = OffsetDateTime.now();
+        if (codeKeyManualOverride == null) codeKeyManualOverride = Boolean.FALSE;
+        if (codeKeyFrozen == null) codeKeyFrozen = Boolean.FALSE;
     }
 }

@@ -18,7 +18,7 @@
 | 元数据属性列表（分页） | `GET /api/meta/attribute-defs` | ✅ | 支持 `keyword/dataType/required/unique/searchable` 过滤 |
 | 元数据属性详情（最新版本 + 版本摘要） | `GET /api/meta/attribute-defs/{attrKey}` | ✅ | `includeValues=true` 时返回最新 LOV 值列表 |
 | 元数据属性版本摘要列表 | `GET /api/meta/attribute-defs/{attrKey}/versions` | ✅ | 返回 versionNo/hash/latest/createdAt |
-| 创建元数据属性（写入 def + 首个 version） | `POST /api/meta/attribute-defs` | ✅ | `categoryCode` 必填；enum 未传 `lovKey` 会自动生成 |
+| 创建元数据属性（写入 def + 首个 version） | `POST /api/meta/attribute-defs` | ✅ | `categoryCode` 必填；属性编码与 LOV 编码统一走规则服务 |
 | 更新元数据属性（新增 version） | `PUT/PATCH /api/meta/attribute-defs/{attrKey}` | ✅ | 若 hash 未变化会跳过新增版本 |
 | 删除元数据属性（软删） | `DELETE /api/meta/attribute-defs/{attrKey}` | ✅ | 仅将 def.status 置为 `deleted`；列表默认不返回已删除 |
 | 导入元数据属性（Excel） | `POST /api/meta/attributes/import` | ✅ | `multipart/form-data` 上传文件 |
@@ -210,7 +210,9 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
 
 ```json
 {
-  "key": "color",
+  "key": null,
+  "generationMode": "AUTO",
+  "freezeKey": false,
   "displayName": "颜色",
   "attributeField": "colorValue",
   "description": "物料颜色",
@@ -223,6 +225,8 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
   "readOnly": false,
   "searchable": true,
   "lovKey": null,
+  "lovGenerationMode": "AUTO",
+  "freezeLovKey": false,
   "minValue": null,
   "maxValue": null,
   "step": null,
@@ -232,6 +236,16 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
   "lovValues": []
 }
 ```
+
+**编码生成约定**
+
+- `generationMode` 支持 `AUTO` 或 `MANUAL`。
+- 未显式传 `generationMode` 时：`key` 为空按 `AUTO`，`key` 非空按 `MANUAL`。
+- `lovGenerationMode` 支持 `AUTO` 或 `MANUAL`。
+- 未显式传 `lovGenerationMode` 时：`lovKey` 为空按 `AUTO`，`lovKey` 非空按 `MANUAL`。
+- 当 `generationMode=AUTO` 时，请求中必须不传 `key`。
+- 当 `lovGenerationMode=AUTO` 时，请求中必须不传 `lovKey`。
+- 当 `generationMode=MANUAL` 或 `lovGenerationMode=MANUAL` 时，仍会经过统一编码规则校验，只有规则允许手工覆盖时才可成功。
 
 **值配置约定（新增）**
 
@@ -273,11 +287,31 @@ curl "http://localhost:8080/api/meta/attribute-defs/color/versions"
 
 ```json
 {
-  "key": "color",
+  "generationMode": "AUTO",
   "displayName": "颜色",
   "attributeField": "colorValue",
   "dataType": "enum",
-  "lovKey": "COLOR_LOV",
+  "lovGenerationMode": "AUTO",
+  "lovValues": [
+    { "code": "RED", "name": "红色", "label": "warm" },
+    { "code": "BLUE", "name": "蓝色", "label": "cool" }
+  ]
+}
+```
+
+**示例：手工指定属性编码与 LOV 编码**
+
+```json
+{
+  "key": "ATTR_MANUAL_COLOR",
+  "generationMode": "MANUAL",
+  "freezeKey": true,
+  "displayName": "颜色",
+  "attributeField": "colorValue",
+  "dataType": "enum",
+  "lovKey": "ATTR_MANUAL_COLOR_CUSTOM_LOV",
+  "lovGenerationMode": "MANUAL",
+  "freezeLovKey": true,
   "lovValues": [
     { "code": "RED", "name": "红色", "label": "warm" },
     { "code": "BLUE", "name": "蓝色", "label": "cool" }
@@ -292,12 +326,17 @@ curl -X POST "http://localhost:8080/api/meta/attribute-defs?categoryCode=4412000
   -H "Content-Type: application/json" \
   -H "X-User: alice" \
   -d '{
-    "key":"color",
     "displayName":"颜色",
     "attributeField":"colorValue",
-    "dataType":"string",
+    "dataType":"enum",
+    "generationMode":"AUTO",
+    "lovGenerationMode":"AUTO",
     "required":true,
-    "searchable":true
+    "searchable":true,
+    "lovValues":[
+      {"code":"RED","name":"红色","label":"warm"},
+      {"code":"BLUE","name":"蓝色","label":"cool"}
+    ]
   }'
 ```
 
@@ -316,11 +355,16 @@ curl -X POST "http://localhost:8080/api/meta/attribute-defs?categoryCode=4412000
 
 ```json
 {
-  "key": "color",
+  "key": "ATTR_000001",
   "displayName": "颜色(新)",
   "attributeField": "colorValue",
-  "dataType": "string",
-  "searchable": false
+  "dataType": "enum",
+  "searchable": false,
+  "lovValues": [
+    { "code": "RED", "name": "红色", "label": "warm" },
+    { "code": "BLUE", "name": "蓝色", "label": "cool" },
+    { "code": "GREEN", "name": "绿色", "label": "fresh" }
+  ]
 }
 ```
 
@@ -331,17 +375,24 @@ curl -X PUT "http://localhost:8080/api/meta/attribute-defs/color?categoryCode=44
   -H "Content-Type: application/json" \
   -H "X-User: bob" \
   -d '{
-    "key":"color",
+    "key":"ATTR_000001",
     "displayName":"颜色(新)",
     "attributeField":"colorValue",
-    "dataType":"string",
-    "searchable":false
+    "dataType":"enum",
+    "searchable":false,
+    "lovValues":[
+      {"code":"RED","name":"红色","label":"warm"},
+      {"code":"BLUE","name":"蓝色","label":"cool"},
+      {"code":"GREEN","name":"绿色","label":"fresh"}
+    ]
   }'
 ```
 
 **说明（lovKey 行为）**
 
-- 若 `dataType=enum` 且请求未传 `lovKey`：会优先沿用历史最新版本的 `lovKey`；若历史也没有则生成一个默认 `lovKey`。
+- 若 `dataType=enum` 或 `multi-enum` 且请求未传 `lovKey`：优先沿用历史最新版本的 `lovKey`；若历史也没有，则按 `LOV` 活跃规则生成。
+- 若 `lovGenerationMode=AUTO`，请求中必须不传 `lovKey`，否则返回 400。
+- 若 `lovGenerationMode=MANUAL` 且传入了 `lovKey`，会按统一编码规则做手工覆盖校验。
 
 ---
 

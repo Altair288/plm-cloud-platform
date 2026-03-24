@@ -453,13 +453,18 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 
 ---
 
-## 10. 枚举项编码是否拆表
+## 10. 枚举项编码存储策略
 
-这是另一个关键问题。
+本项在评审后已明确：
 
-## 10.1 短期建议：继续保留在 JSON 中，但纳入规则治理
+- LOV 项继续保留在 `meta_lov_version.value_json` 中
+- 本期不考虑拆分结构化表
 
-短期推荐方案：
+因此本节不再把“是否拆表”作为开放问题，而是直接采用 JSON 方案并补足治理约束。
+
+## 10.1 本期确定方案：继续保留在 JSON 中，但纳入规则治理
+
+本期确定方案：
 
 - 继续保留 `meta_lov_version.value_json`
 - 但要求项结构标准化，至少包含：
@@ -475,29 +480,16 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 2. 不会打断当前 LOV 版本化逻辑。
 3. 适合快速把“项编码规则”纳入统一设计器。
 
-缺点：
+约束与注意点：
 
 1. 项级查询能力弱。
 2. 项级唯一性和统计更多依赖应用层校验。
 3. 项级审计和复用能力有限。
 
-## 10.2 中长期建议：评估拆出结构化表
+结论：
 
-若后续出现以下需求，应考虑拆表：
-
-1. 需要频繁按“项编码”做查询、统计、引用分析。
-2. 需要枚举项独立审计与权限控制。
-3. 需要项级版本历史而非整包版本。
-
-可演进为：
-
-- `meta_lov_item_def`
-- `meta_lov_item_version`
-
-本轮建议：
-
-- 草案先采用“短期 JSON + 统一规则治理”的方案。
-- 在设计文档中明确把“结构化拆表”列为二期可选增强项。
+- 本期按 JSON 方案推进即可。
+- 只要不引入 LOV 项独立搜索与高频项级分析，就没有必要为此拆表。
 
 ---
 
@@ -566,6 +558,126 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 - 首期优先使用方案 A。
 - 避免一开始把设计器元数据拆得过细，导致后台复杂度过高。
 
+## 11.2.1 首期推荐的最小数据库落地方案
+
+为了保证下一轮可以直接落代码，建议首期数据库改造严格控制在“够用且低风险”的范围：
+
+### 一、扩展 `meta_code_rule`
+
+新增字段建议：
+
+- `scope_type VARCHAR(32) NOT NULL DEFAULT 'GLOBAL'`
+- `scope_value VARCHAR(128)`
+- `allow_manual_override BOOLEAN NOT NULL DEFAULT FALSE`
+- `regex_pattern VARCHAR(255)`
+- `max_length INT NOT NULL DEFAULT 64`
+- `status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'`
+- `updated_at TIMESTAMPTZ`
+- `updated_by VARCHAR(64)`
+
+说明：
+
+- 首期仍复用 `pattern` 作为最新生效模板，避免一次性把读取逻辑全部切到 version 表。
+- `status` 仅用于规则治理，不影响历史已生成编码。
+
+### 二、扩展 `meta_code_rule_version`
+
+继续复用 `rule_json`，但约定内部结构固定化，至少包含：
+
+```json
+{
+  "pattern": "{BUSINESS_DOMAIN}-{SEQ}",
+  "tokens": ["BUSINESS_DOMAIN", "SEQ"],
+  "sequence": {
+    "enabled": true,
+    "width": 4,
+    "step": 1
+  },
+  "validation": {
+    "maxLength": 64,
+    "regex": "^[A-Z][A-Z0-9_-]{0,63}$",
+    "allowManualOverride": true
+  },
+  "preview": {
+    "BUSINESS_DOMAIN": "MATERIAL"
+  }
+}
+```
+
+首期不额外拆 token 表，先保证版本可追溯、结构统一。
+
+### 三、新增编码生成审计表
+
+建议新增：`plm_meta.meta_code_generation_audit`
+
+字段建议：
+
+- `id UUID PRIMARY KEY`
+- `rule_code VARCHAR(64) NOT NULL`
+- `rule_version_no INT NOT NULL`
+- `generated_code VARCHAR(128) NOT NULL`
+- `target_type VARCHAR(32) NOT NULL`
+- `target_id UUID`
+- `context_json JSONB`
+- `manual_override_flag BOOLEAN NOT NULL DEFAULT FALSE`
+- `frozen_flag BOOLEAN NOT NULL DEFAULT FALSE`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+- `created_by VARCHAR(64)`
+
+用途：
+
+- 规则追溯
+- 冲突排查
+- 后续设计器使用统计
+
+### 四、首期不直接改造 `meta_code_sequence` 主键
+
+虽然长期建议把序列扩到 scope 粒度，但首期直接修改现有主键风险较高。
+
+因此建议：
+
+- 保留现有 `meta_code_sequence(rule_code)` 不动
+- 首期先按全局序列落地
+- scope 化序列延后到二期
+
+这样下一轮实现可以更聚焦：
+
+1. 规则管理
+2. 统一生成入口
+3. 分类/属性/LOV 定义接入
+
+而不在首期引入复杂的序列路由逻辑
+
+## 11.2.2 首期建议新增的对象侧治理字段
+
+为支持“自动生成优先 + 允许人工维护”，建议补以下字段：
+
+### `meta_category_def`
+
+- `code_key_manual_override BOOLEAN NOT NULL DEFAULT FALSE`
+- `code_key_frozen BOOLEAN NOT NULL DEFAULT FALSE`
+- `generated_rule_code VARCHAR(64)`
+- `generated_rule_version_no INT`
+
+### `meta_attribute_def`
+
+- `key_manual_override BOOLEAN NOT NULL DEFAULT FALSE`
+- `key_frozen BOOLEAN NOT NULL DEFAULT FALSE`
+- `generated_rule_code VARCHAR(64)`
+- `generated_rule_version_no INT`
+
+### `meta_lov_def`
+
+- `key_manual_override BOOLEAN NOT NULL DEFAULT FALSE`
+- `key_frozen BOOLEAN NOT NULL DEFAULT FALSE`
+- `generated_rule_code VARCHAR(64)`
+- `generated_rule_version_no INT`
+
+说明：
+
+- 首期不建议为 LOV 项补独立字段，因为 LOV 项仍保留在 JSON 中。
+- LOV 项的手工/自动来源信息可暂时写入 `value_json` 结构或审计表的 `context_json`。
+
 ## 11.3 序列粒度建议
 
 当前 `meta_code_sequence` 以 `rule_code` 为主键，过粗。
@@ -588,6 +700,16 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 - 分类内独立序列
 - 业务域独立序列
 - 特定规则范围内独立序列
+
+补充落地建议：
+
+- 首期实现：继续使用全局序列
+- 二期增强：再引入 scope 维度序列
+
+原因：
+
+- 当前代码生成器、数据库和现有测试都默认 `rule_code` 全局自增
+- 若首期直接切 scope 序列，会显著扩大实现和测试面
 
 ---
 
@@ -616,6 +738,24 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 7. `GET /api/meta/code-rules/{ruleCode}/versions`
    - 查询历史版本
 
+## 12.1.1 首期必须实现的规则管理接口
+
+为保证下一轮实现可控，建议首期只做以下 P0 接口：
+
+1. `GET /api/meta/code-rules`
+2. `GET /api/meta/code-rules/{ruleCode}`
+3. `POST /api/meta/code-rules`
+4. `PUT /api/meta/code-rules/{ruleCode}`
+5. `POST /api/meta/code-rules/{ruleCode}:publish`
+6. `POST /api/meta/code-rules/{ruleCode}:preview`
+
+以下接口可延后：
+
+- rollback
+- usage
+- conflicts 查询
+- 批量生成
+
 ## 12.2 规则预览与校验 API
 
 建议新增：
@@ -626,6 +766,46 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
    - 校验规则合法性、token 完整性、长度、保留字、冲突风险
 3. `POST /api/meta/code-rules/{ruleCode}:simulate-generate`
    - 模拟生成多个候选编码，不入库
+
+## 12.2.1 `POST /api/meta/code-rules/{ruleCode}:preview`
+
+请求建议：
+
+```json
+{
+  "context": {
+    "BUSINESS_DOMAIN": "MATERIAL",
+    "CATEGORY_CODE": "MATERIAL-0001",
+    "ATTRIBUTE_CODE": "ATTR_000001",
+    "LOV_CODE": "ATTR_000001_LOV",
+    "USER_INPUT": "FASTENER"
+  },
+  "manualCode": null,
+  "count": 3
+}
+```
+
+响应建议：
+
+```json
+{
+  "ruleCode": "CATEGORY",
+  "ruleVersion": 2,
+  "pattern": "{BUSINESS_DOMAIN}-{SEQ}",
+  "examples": [
+    "MATERIAL-0001",
+    "MATERIAL-0002",
+    "MATERIAL-0003"
+  ],
+  "warnings": []
+}
+```
+
+校验原则：
+
+- preview 不占用正式序列
+- 仅做语法与上下文验证
+- 若 `manualCode` 非空，则同步校验是否满足规则约束
 
 ## 12.3 编码生成 API
 
@@ -667,6 +847,117 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 1. `GET /api/meta/code-rules/{ruleCode}/usage`
 2. `GET /api/meta/codes/{code}`
 3. `GET /api/meta/codes/{code}/conflicts`
+
+## 12.3.1 `POST /api/meta/codes:generate` 首期字段收敛
+
+为避免首期过宽，建议生成接口只支持单条生成，不做批量生成：
+
+请求字段：
+
+- `ruleCode`：必填
+- `targetType`：必填，`CATEGORY` / `ATTRIBUTE` / `LOV_DEFINITION` / `LOV_ITEM`
+- `targetId`：可选，若对象已存在则用于审计绑定
+- `context`：可选，token 上下文
+- `manualCode`：可选，人工填写编码
+- `operator`：可选，操作人
+- `freezeAfterGenerate`：可选，默认 `false`
+
+生成逻辑：
+
+1. 读取 active 规则
+2. 若 `manualCode` 非空：
+   - 校验规则是否允许人工覆盖
+   - 校验唯一性、正则、保留字、长度
+   - 记录 `manual_override_flag=true`
+3. 若 `manualCode` 为空：
+   - 按规则生成
+   - 若 pattern 包含 `{SEQ}`，才真正占用序列
+4. 写审计记录
+5. 返回生成结果
+
+## 12.3.2 首期对象写接口如何对接生成接口
+
+下一轮实际落代码时，建议不是让前端先单独调生成接口，而是后端内部先统一调用编码服务：
+
+- 分类创建：`MetaCategoryCrudService.create(...)`
+- 属性创建：`MetaAttributeManageService.create(...)`
+- 属性导入：`MetaAttributeImportService`
+- LOV 定义生成：统一走编码服务
+
+这样可以保证：
+
+- 首期前端无需联调太多新接口
+- 后端先把事实源统一起来
+- 后续再开放设计器与独立生成接口
+
+---
+
+## 12.5 首期 DTO 草案
+
+为便于下一轮直接实现，建议首期先定义以下 DTO：
+
+### 规则详情 DTO
+
+- `CodeRuleDetailDto`
+  - `ruleCode`
+  - `name`
+  - `targetType`
+  - `scopeType`
+  - `scopeValue`
+  - `pattern`
+  - `status`
+  - `allowManualOverride`
+  - `regexPattern`
+  - `maxLength`
+  - `latestVersionNo`
+  - `latestRuleJson`
+
+### 规则保存 DTO
+
+- `CodeRuleSaveRequestDto`
+  - `ruleCode`
+  - `name`
+  - `targetType`
+  - `scopeType`
+  - `scopeValue`
+  - `pattern`
+  - `allowManualOverride`
+  - `regexPattern`
+  - `maxLength`
+  - `ruleJson`
+
+### 规则预览 DTO
+
+- `CodeRulePreviewRequestDto`
+  - `context`
+  - `manualCode`
+  - `count`
+
+- `CodeRulePreviewResponseDto`
+  - `ruleCode`
+  - `ruleVersion`
+  - `pattern`
+  - `examples`
+  - `warnings`
+
+### 编码生成 DTO
+
+- `CodeGenerateRequestDto`
+  - `ruleCode`
+  - `targetType`
+  - `targetId`
+  - `context`
+  - `manualCode`
+  - `operator`
+  - `freezeAfterGenerate`
+
+- `CodeGenerateResponseDto`
+  - `code`
+  - `ruleCode`
+  - `ruleVersion`
+  - `manualOverride`
+  - `frozen`
+  - `warnings`
 
 ---
 
@@ -735,6 +1026,28 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 - 不建议直接覆盖老版本
 - 建议基于历史版本生成一个新的 draft / active 版本
 
+## 13.4 本期设计器实现边界
+
+虽然本文是“编码管理与设计器”方案，但下一轮代码落地建议优先后端，前端设计器只保留范围定义：
+
+首期建议后端先行，前端设计器不作为必须交付项。
+
+本期设计器边界：
+
+1. 文档层完成页面能力定义
+2. 后端先提供规则管理 API
+3. 真正的管理后台页面延后到下一阶段
+
+这样可以避免本轮同时开启：
+
+- Flyway 迁移
+- Domain / Repository 改造
+- Service 改造
+- Controller / DTO 新增
+- 前端管理页联动
+
+导致实现范围过大
+
 ---
 
 ## 14. 对现有写流程的接入建议
@@ -753,6 +1066,21 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 
 当规则允许手工覆盖时，`MANUAL` 才可用。
 
+建议创建接口内部处理顺序：
+
+1. 读取 CATEGORY active 规则
+2. 若请求带 `generationMode=MANUAL`：
+  - 校验规则允许手填
+  - 校验 `code`
+3. 若请求未显式指定或为 `AUTO`：
+  - 通过统一编码服务生成分类编码
+4. 将生成结果落到 `meta_category_def.code_key`
+5. 同步写入治理字段：
+  - `code_key_manual_override`
+  - `code_key_frozen`
+  - `generated_rule_code`
+  - `generated_rule_version_no`
+
 ## 14.2 属性创建/导入
 
 建议：
@@ -760,12 +1088,31 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 - 统一改成走编码服务，而不是直接调用 `CodeRuleGenerator`。
 - `MetaAttributeImportService` 与 `MetaAttributeManageService` 最终都应收口到同一编码入口。
 
+建议首期处理顺序：
+
+1. 属性管理 create/update 先统一为编码服务调用
+2. 属性导入再从直接生成器切换到编码服务
+
+原因：
+
+- 管理接口更容易验证和回归
+- 导入链路更长，适合在第二步改
+
 ## 14.3 LOV 定义创建
 
 建议：
 
 - 统一由 `LOV_DEFINITION` 规则生成。
 - `AttributeLovImportUtils.generateLovKey(...)` 保留为过渡兼容逻辑，不再作为长期主方案。
+
+建议首期兼容策略：
+
+1. 若已有 `lovKey` 显式传入，则按手工覆盖校验
+2. 若无 `lovKey`：
+  - 新逻辑优先走统一编码服务
+  - 保留工具函数作为回退逻辑，仅用于迁移期间兜底
+
+回退逻辑应在文档与代码中标记为“临时兼容”，避免固化为长期行为
 
 ## 14.4 LOV 项维护
 
@@ -775,6 +1122,47 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
   - 自动生成项编码
   - 手工填写项编码
 - 保存前必须统一走校验接口。
+
+建议首期只实现两项治理：
+
+1. 保存前统一校验项级 `code` 唯一性
+2. 若前端未填 `code`，则按 `LOV_ITEM` 规则生成
+
+首期不做：
+
+- LOV 项单独查询 API
+- LOV 项独立审计页面
+- LOV 项结构化表迁移
+
+---
+
+## 14.5 首期代码改造清单
+
+为保证下一轮可以直接进入实现，建议按以下顺序改造：
+
+1. Flyway
+  - 扩展 `meta_code_rule`
+  - 扩展 `meta_code_rule_version`
+  - 新增 `meta_code_generation_audit`
+  - 扩展 category/attribute/lov def 治理字段
+
+2. Domain / Repository
+  - 补实体字段映射
+  - 新增规则查询与审计 repository
+
+3. Service
+  - 新增统一编码服务，例如 `MetaCodeService`
+  - `CodeRuleGenerator` 作为其底层生成组件保留
+
+4. Controller / DTO
+  - 新增规则管理接口
+  - 新增 preview 接口
+
+5. 接入业务服务
+  - 分类创建
+  - 属性创建
+  - LOV 定义生成
+  - 最后再处理属性导入与 LOV 项
 
 ---
 
@@ -829,24 +1217,67 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 2. 属性创建与导入都改为走统一服务
 3. LOV 定义与 LOV 项统一接入
 
+## 15.5 下一轮代码落地的推荐范围
+
+为了确保下一轮对话可以稳定完成，建议实现范围控制在后端 P0：
+
+### 必做
+
+1. Flyway 迁移
+2. `meta_code_rule` / `meta_code_rule_version` / 审计表的实体与 repository
+3. 统一编码服务
+4. 规则管理基础接口
+5. 规则 preview 接口
+6. 分类创建接入统一编码服务
+
+### 可选
+
+1. 属性创建接入统一编码服务
+2. LOV 定义创建接入统一编码服务
+
+### 暂缓
+
+1. 设计器前端页面
+2. 回滚接口
+3. 使用统计接口
+4. LOV 项更深层治理
+5. scope 化序列
+
 ---
 
 ## 16. 风险与开放问题
 
 ## 16.1 主要风险
 
-1. 存量编码历史多样，短期内规则与旧数据会并存。
-2. 若直接强推分类自动编码，业务会有适配成本。
-3. LOV 项继续放 JSON 会限制项级查询能力。
-4. 若序列粒度不扩展，设计器支持“按作用域配置规则”会落空。
+1. 现有规则来源分散，首期统一接入时容易出现“新规则入口”和“旧生成逻辑”并存。
+2. 分类编码虽然已明确自动编码优先，但仍允许手工填写，后续要重点控制人工覆盖的审计与冲突校验。
+3. 若序列粒度不扩展，设计器支持“按作用域配置规则”会落空。
 
-## 16.2 当前开放问题
+补充说明：
 
-1. 分类编码默认模式是否从首期就切到自动生成。
-2. LOV 项是否在首期就拆结构化表。
-3. 是否需要把“外部编码”也纳入统一设计器。
-4. 规则发布是否需要审批流。
-5. 是否需要按业务域隔离规则维护权限。
+- 当前环境中的历史数据均为测试数据，不构成存量迁移风险。
+- 因此“旧数据并存影响生产”的问题，本期不作为主要风险项。
+
+## 16.2 评审已确认的边界结论
+
+本轮评审已明确以下结论，后续设计与开发均按此边界执行：
+
+1. 现有数据均为测试数据，允许旧规则与新规则阶段性并存，不需要额外设计存量兼容治理方案。
+2. 分类编码采用“自动编码优先，同时允许用户手工填写维护”的双轨制。
+3. LOV 项继续保留在 JSON 中，本期不考虑拆表。
+4. 外部编码本期不纳入统一编码设计范围。
+5. 审批流属于中后期能力，本期不纳入设计范围。
+6. 本期不考虑按业务域隔离规则维护权限。
+
+## 16.3 下一轮实现前的默认假设
+
+为避免下一轮实现时反复确认，本草案先固化以下默认假设：
+
+1. 首期只做后端，不做管理端页面。
+2. 首期以分类编码为第一落地点。
+3. 首期规则状态流转采用最简模型：`DRAFT -> ACTIVE -> ARCHIVED`。
+4. 首期 preview 不占用正式序列。
+5. 首期 generate 接口仅支持单次生成，不做批量事务编排。
 
 ---
 
@@ -855,17 +1286,56 @@ LOV 项编码指“该枚举集合中的某一个值项编码”，例如：
 结合当前数据库结构与实现现状，建议本项目按以下路线推进：
 
 1. 首期采用“统一规则模型 + 统一编码服务 + 设计器草稿/发布能力”的方案。
-2. 分类编码采用“默认规则生成，可人工覆盖”的双轨制。
+2. 分类编码采用“自动编码优先，同时允许人工填写维护”的双轨制。
 3. 属性编码继续由统一规则生成，并逐步替换直接调用生成器的实现。
 4. LOV 定义编码统一收口为 `LOV_DEFINITION` 规则，不再长期依赖工具函数拼接。
-5. LOV 项编码首期继续放在 JSON 中，但必须纳入统一规则和校验机制。
-6. `meta_code_sequence` 需要补足作用域粒度，否则设计器只能停留在全局规则层。
+5. LOV 项编码本期继续放在 JSON 中，但必须纳入统一规则和校验机制。
+6. 外部编码、审批流、按业务域隔离权限均不纳入本期范围。
+7. `meta_code_sequence` 需要补足作用域粒度，否则设计器只能停留在全局规则层。
+8. 下一轮代码实现建议先完成后端 P0，优先打通“规则治理基础能力 + 分类自动编码接入”。
 
 ---
 
-## 18. 建议下一步
+## 18. 状态流转与实现口径
+
+为便于下一轮直接编码，这里统一首期状态流转口径。
+
+## 18.1 规则状态流转
+
+首期仅支持：
+
+```text
+DRAFT -> ACTIVE -> ARCHIVED
+```
+
+约束：
+
+1. 新建规则默认 `DRAFT`
+2. 只有 `DRAFT` 可编辑
+3. 发布后变为 `ACTIVE`
+4. 同一 `ruleCode` 在同一作用域下仅允许一个 `ACTIVE`
+5. 历史 active 版本在新版本发布后转为 `ARCHIVED`
+
+## 18.2 编码生成模式
+
+首期统一：
+
+```text
+AUTO / MANUAL
+```
+
+约束：
+
+1. `AUTO` 为默认模式
+2. `MANUAL` 仅在规则 `allowManualOverride=true` 时可用
+3. `MANUAL` 必须经过唯一性、正则、保留字校验
+4. 是否冻结由对象侧字段决定，不由规则状态隐式代替
+
+---
+
+## 19. 建议下一步
 
 若本草案评审通过，建议下一步分两件事继续：
 
-1. 基于本草案再细化一份“数据库迁移 + API 详细定义 + 状态流转”的二级设计。
-2. 补一份“设计器页面原型与交互流草案”，用于后续前后端协同开发。
+1. 下一轮直接按本草案的 P0 范围开始后端代码落地。
+2. 代码落地完成后，再补设计器页面原型与前端接入方案。

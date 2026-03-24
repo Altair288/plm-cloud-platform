@@ -88,6 +88,7 @@ public class MetaCategoryCrudService {
     private final MetaCategoryVersionRepository versionRepository;
     private final CategoryHierarchyRepository hierarchyRepository;
     private final MetaCategoryHierarchyService hierarchyService;
+    private final MetaCodeRuleService metaCodeRuleService;
     private final TransactionTemplate requiredTxTemplate;
     private final TransactionTemplate requiresNewTxTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -285,11 +286,13 @@ public class MetaCategoryCrudService {
                                    MetaCategoryVersionRepository versionRepository,
                                    CategoryHierarchyRepository hierarchyRepository,
                                    MetaCategoryHierarchyService hierarchyService,
+                                   MetaCodeRuleService metaCodeRuleService,
                                    PlatformTransactionManager transactionManager) {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
         this.hierarchyRepository = hierarchyRepository;
         this.hierarchyService = hierarchyService;
+        this.metaCodeRuleService = metaCodeRuleService;
 
         this.requiredTxTemplate = new TransactionTemplate(transactionManager);
         DefaultTransactionDefinition requiresNewDefinition = new DefaultTransactionDefinition();
@@ -302,14 +305,9 @@ public class MetaCategoryCrudService {
         if (req == null) {
             throw new IllegalArgumentException("request body is required");
         }
-        String code = requireCode(req.getCode());
         String name = requireName(req.getName());
         String businessDomain = normalizeBusinessDomain(req.getBusinessDomain());
         String status = mapApiStatusToDb(req.getStatus(), true);
-
-        if (defRepository.existsByBusinessDomainAndCodeKey(businessDomain, code)) {
-            throw new IllegalArgumentException("category already exists: businessDomain=" + businessDomain + ", code=" + code);
-        }
 
         MetaCategoryDef parent = null;
         if (req.getParentId() != null) {
@@ -318,10 +316,19 @@ public class MetaCategoryCrudService {
         }
 
         MetaCategoryDef def = new MetaCategoryDef();
+        MetaCodeRuleService.GeneratedCodeResult generatedCode = resolveCategoryCodeForCreate(req, businessDomain, null, operator);
+        String code = generatedCode.code();
+        if (defRepository.existsByBusinessDomainAndCodeKey(businessDomain, code)) {
+            throw new IllegalArgumentException("category already exists: businessDomain=" + businessDomain + ", code=" + code);
+        }
         def.setCodeKey(code);
         def.setBusinessDomain(businessDomain);
         def.setParent(parent);
         def.setStatus(status);
+        def.setCodeKeyManualOverride(generatedCode.manualOverride());
+        def.setCodeKeyFrozen(generatedCode.frozen());
+        def.setGeneratedRuleCode(generatedCode.ruleCode());
+        def.setGeneratedRuleVersionNo(generatedCode.ruleVersion());
         Integer targetSort = req.getSort() == null ? nextSort(parent == null ? null : parent.getId()) : req.getSort();
         def.setSortOrder(targetSort);
         def.setIsLeaf(Boolean.TRUE);
@@ -2513,6 +2520,45 @@ public class MetaCategoryCrudService {
     private String coalesceTrim(String value, String fallback) {
         String normalized = trimToNull(value);
         return normalized == null ? fallback : normalized;
+    }
+
+    private MetaCodeRuleService.GeneratedCodeResult resolveCategoryCodeForCreate(CreateCategoryRequestDto req,
+                                                                                 String businessDomain,
+                                                                                 UUID targetId,
+                                                                                 String operator) {
+        String explicitMode = trimToNull(req.getGenerationMode());
+        String generationMode = explicitMode == null
+                ? (isBlank(req.getCode()) ? "AUTO" : "MANUAL")
+                : explicitMode.trim().toUpperCase(Locale.ROOT);
+        boolean freezeCode = Boolean.TRUE.equals(req.getFreezeCode());
+        Map<String, String> context = Map.of("BUSINESS_DOMAIN", businessDomain);
+
+        return switch (generationMode) {
+            case "AUTO" -> {
+                if (!isBlank(req.getCode())) {
+                    throw new IllegalArgumentException("code must be empty when generationMode=AUTO");
+                }
+                yield metaCodeRuleService.generateCode(
+                        "CATEGORY",
+                        "CATEGORY",
+                        targetId,
+                        context,
+                        null,
+                        operator,
+                        freezeCode
+                );
+                    }
+            case "MANUAL" -> metaCodeRuleService.generateCode(
+                    "CATEGORY",
+                    "CATEGORY",
+                    targetId,
+                    context,
+                    requireCode(req.getCode()),
+                    operator,
+                    freezeCode
+            );
+            default -> throw new IllegalArgumentException("unsupported generationMode: " + generationMode);
+        };
     }
 
     private String normalizeOperator(String operator) {

@@ -23,6 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -38,6 +40,7 @@ public class MetaAttributeManageService {
     private final MetaLovDefRepository lovDefRepository;
     private final MetaLovVersionRepository lovVersionRepository;
     private final MetaAttributeQueryService queryService;
+    private final MetaCodeRuleService metaCodeRuleService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public MetaAttributeManageService(MetaCategoryDefRepository categoryDefRepository,
@@ -46,7 +49,8 @@ public class MetaAttributeManageService {
             MetaAttributeVersionRepository attributeVersionRepository,
             MetaLovDefRepository lovDefRepository,
             MetaLovVersionRepository lovVersionRepository,
-            MetaAttributeQueryService queryService) {
+            MetaAttributeQueryService queryService,
+            MetaCodeRuleService metaCodeRuleService) {
         this.categoryDefRepository = categoryDefRepository;
         this.categoryVersionRepository = categoryVersionRepository;
         this.attributeDefRepository = attributeDefRepository;
@@ -54,6 +58,7 @@ public class MetaAttributeManageService {
         this.lovDefRepository = lovDefRepository;
         this.lovVersionRepository = lovVersionRepository;
         this.queryService = queryService;
+        this.metaCodeRuleService = metaCodeRuleService;
     }
 
     @Transactional
@@ -63,8 +68,6 @@ public class MetaAttributeManageService {
             throw new IllegalArgumentException("request body is required");
         if (isBlank(categoryCodeKey))
             throw new IllegalArgumentException("categoryCode is required");
-        if (isBlank(req.getKey()))
-            throw new IllegalArgumentException("key is required");
         if (isBlank(req.getDisplayName()))
             throw new IllegalArgumentException("displayName is required");
         if (isBlank(req.getDataType()))
@@ -75,8 +78,10 @@ public class MetaAttributeManageService {
         MetaCategoryVersion categoryVersion = categoryVersionRepository.findLatestByDef(categoryDef)
                 .orElseThrow(() -> new IllegalArgumentException("category has no latest version: " + categoryCodeKey));
 
-        String key = req.getKey().trim();
-        String lovKey = resolveLovKeyForCreate(categoryCodeKey, req, key);
+        MetaCodeRuleService.GeneratedCodeResult attributeCode = resolveAttributeKeyForCreate(categoryDef, req, operator);
+        String key = attributeCode.code();
+        MetaCodeRuleService.GeneratedCodeResult lovCode = resolveLovCodeForCreate(categoryDef, req, key, operator);
+        String lovKey = lovCode == null ? null : lovCode.code();
         boolean hasLov = !isBlank(lovKey) || isEnumLike(req);
 
         // 1) create def (unique per category)
@@ -95,6 +100,7 @@ public class MetaAttributeManageService {
         } else {
             def = attributeDefRepository.findById(id).orElseThrow();
         }
+        applyAttributeCodeGovernance(def, attributeCode);
 
         // 2) create first version
         MetaAttributeVersion v = new MetaAttributeVersion();
@@ -107,7 +113,7 @@ public class MetaAttributeManageService {
         v.setCreatedBy(operator);
         attributeVersionRepository.save(v);
 
-        upsertLovValuesIfNeeded(def, v, req, lovKey, operator);
+        upsertLovValuesIfNeeded(def, v, req, lovKey, lovCode, operator);
 
         return queryService.detail(def.getKey(), true);
     }
@@ -147,7 +153,9 @@ public class MetaAttributeManageService {
         if (isBlank(req.getDataType()))
             throw new IllegalArgumentException("dataType is required");
 
-        String lovKey = resolveLovKeyForUpdate(categoryCodeKey, req, key, latest);
+        MetaCodeRuleService.GeneratedCodeResult lovCode = resolveLovCodeForUpdate(categoryDef, def, req, key, latest,
+            operator);
+        String lovKey = lovCode == null ? null : lovCode.code();
         boolean hasLov = !isBlank(lovKey) || isEnumLike(req);
         if (def.getLovFlag() == null || !Objects.equals(def.getLovFlag(), hasLov)) {
             def.setLovFlag(hasLov);
@@ -159,7 +167,7 @@ public class MetaAttributeManageService {
 
         if (latest != null && Objects.equals(latest.getHash(), newHash)) {
             // 结构无变化时，仍需处理可能变化的 LOV 值（如仅编辑枚举项）
-            upsertLovValuesIfNeeded(def, latest, req, lovKey, operator);
+            upsertLovValuesIfNeeded(def, latest, req, lovKey, lovCode, operator);
             // 无变化：直接返回
             return queryService.detail(def.getKey(), true);
         }
@@ -180,7 +188,7 @@ public class MetaAttributeManageService {
         v.setIsLatest(true);
         attributeVersionRepository.save(v);
 
-        upsertLovValuesIfNeeded(def, v, req, lovKey, operator);
+        upsertLovValuesIfNeeded(def, v, req, lovKey, lovCode, operator);
 
         return queryService.detail(def.getKey(), true);
     }
@@ -277,32 +285,49 @@ public class MetaAttributeManageService {
         return node.toString();
     }
 
-    private String resolveLovKeyForCreate(String categoryCodeKey, MetaAttributeUpsertRequestDto req, String attributeKey) {
+    private MetaCodeRuleService.GeneratedCodeResult resolveLovCodeForCreate(MetaCategoryDef categoryDef,
+                                                                            MetaAttributeUpsertRequestDto req,
+                                                                            String attributeKey,
+                                                                            String operator) {
         if (req == null)
             return null;
-        if (!isBlank(req.getLovKey()))
-            return req.getLovKey().trim();
         if (!isEnumLike(req))
             return null;
-        // enum/multi-enum 且未显式传 lovKey：使用“分类编码+属性编码(key)”生成稳定 key
-        return AttributeLovImportUtils.generateLovKey(categoryCodeKey, attributeKey);
+
+        return resolveLovCode(
+                categoryDef,
+                req.getLovKey(),
+                req.getLovGenerationMode(),
+                req.getFreezeLovKey(),
+                attributeKey,
+                operator,
+                null,
+                null
+        );
     }
 
-    private String resolveLovKeyForUpdate(String categoryCodeKey, MetaAttributeUpsertRequestDto req,
+    private MetaCodeRuleService.GeneratedCodeResult resolveLovCodeForUpdate(MetaCategoryDef categoryDef,
+            MetaAttributeDef attributeDef,
+            MetaAttributeUpsertRequestDto req,
             String attributeKey,
-            MetaAttributeVersion latest) {
+            MetaAttributeVersion latest,
+            String operator) {
         if (req == null)
             return null;
-        if (!isBlank(req.getLovKey()))
-            return req.getLovKey().trim();
-
-        // 若历史已有 lovKey 且本次未显式修改，优先沿用，避免“改名导致 lovKey 变化”
-        if (latest != null && !isBlank(latest.getLovKey()))
-            return latest.getLovKey().trim();
 
         if (!isEnumLike(req))
             return null;
-        return AttributeLovImportUtils.generateLovKey(categoryCodeKey, attributeKey);
+
+        return resolveLovCode(
+                categoryDef,
+                req.getLovKey(),
+                req.getLovGenerationMode(),
+                req.getFreezeLovKey(),
+                attributeKey,
+                operator,
+                latest == null ? null : latest.getLovKey(),
+                attributeDef
+        );
     }
 
     private boolean isEnum(MetaAttributeUpsertRequestDto req) {
@@ -321,6 +346,7 @@ public class MetaAttributeManageService {
                                          MetaAttributeVersion attrVersion,
                                          MetaAttributeUpsertRequestDto req,
                                          String lovKey,
+                                         MetaCodeRuleService.GeneratedCodeResult lovCode,
                                          String operator) {
         if (def == null || attrVersion == null || req == null)
             return;
@@ -343,6 +369,7 @@ public class MetaAttributeManageService {
         }
         if (lovDef == null)
             return;
+        applyLovCodeGovernance(lovDef, lovCode);
 
         String valueJson = buildLovValueJson(req.getLovValues());
         String newHash = AttributeLovImportUtils.jsonHash(valueJson);
@@ -395,6 +422,136 @@ public class MetaAttributeManageService {
 
     private boolean isBlank(String s) {
         return s == null || s.trim().isEmpty();
+    }
+
+    private MetaCodeRuleService.GeneratedCodeResult resolveAttributeKeyForCreate(MetaCategoryDef categoryDef,
+                                                                                 MetaAttributeUpsertRequestDto req,
+                                                                                 String operator) {
+        String explicitMode = trimToNull(req.getGenerationMode());
+        String generationMode = explicitMode == null
+                ? (isBlank(req.getKey()) ? "AUTO" : "MANUAL")
+                : explicitMode.trim().toUpperCase(Locale.ROOT);
+        Map<String, String> context = buildCodeContext(categoryDef, null);
+        boolean freezeKey = Boolean.TRUE.equals(req.getFreezeKey());
+
+        return switch (generationMode) {
+            case "AUTO" -> {
+                if (!isBlank(req.getKey())) {
+                    throw new IllegalArgumentException(
+                            "Attribute key must not be provided when generationMode is AUTO, but received: " + req.getKey());
+                }
+                yield metaCodeRuleService.generateCode("ATTRIBUTE", "ATTRIBUTE", null, context, null, operator, freezeKey);
+            }
+            case "MANUAL" -> metaCodeRuleService.generateCode(
+                    "ATTRIBUTE",
+                    "ATTRIBUTE",
+                    null,
+                    context,
+                    requireValue(req.getKey(), "key"),
+                    operator,
+                    freezeKey
+            );
+            default -> throw new IllegalArgumentException("unsupported generationMode: " + generationMode);
+        };
+    }
+
+    private MetaCodeRuleService.GeneratedCodeResult resolveLovCode(MetaCategoryDef categoryDef,
+                                                                   String requestLovKey,
+                                                                   String requestGenerationMode,
+                                                                   Boolean freezeLovKey,
+                                                                   String attributeKey,
+                                                                   String operator,
+                                                                   String existingLovKey,
+                                                                   MetaAttributeDef attributeDef) {
+        String explicitMode = trimToNull(requestGenerationMode);
+        String generationMode = explicitMode == null
+                ? (isBlank(requestLovKey) ? "AUTO" : "MANUAL")
+                : explicitMode.trim().toUpperCase(Locale.ROOT);
+
+        Map<String, String> context = buildCodeContext(categoryDef, attributeKey);
+        boolean frozen = Boolean.TRUE.equals(freezeLovKey);
+        return switch (generationMode) {
+            case "AUTO" -> {
+                if (!isBlank(requestLovKey)) {
+                    throw new IllegalArgumentException(
+                            "LOV key must not be provided when lovGenerationMode is AUTO, but received lovKey: '" + requestLovKey + "'");
+                }
+                if (!isBlank(existingLovKey)) {
+                    yield buildExistingLovCodeResult(attributeDef, existingLovKey, false, frozen);
+                }
+                yield metaCodeRuleService.generateCode("LOV", "LOV_DEFINITION", null, context, null, operator, frozen);
+            }
+            case "MANUAL" -> metaCodeRuleService.generateCode(
+                    "LOV",
+                    "LOV_DEFINITION",
+                    null,
+                    context,
+                    requireValue(requestLovKey, "lovKey"),
+                    operator,
+                    frozen
+            );
+            default -> throw new IllegalArgumentException("unsupported lovGenerationMode: " + generationMode);
+        };
+    }
+
+    private Map<String, String> buildCodeContext(MetaCategoryDef categoryDef, String attributeKey) {
+        java.util.LinkedHashMap<String, String> context = new java.util.LinkedHashMap<>();
+        context.put("BUSINESS_DOMAIN", categoryDef.getBusinessDomain());
+        context.put("CATEGORY_CODE", categoryDef.getCodeKey());
+        if (!isBlank(attributeKey)) {
+            context.put("ATTRIBUTE_CODE", attributeKey);
+        }
+        return context;
+    }
+
+    private void applyAttributeCodeGovernance(MetaAttributeDef def, MetaCodeRuleService.GeneratedCodeResult generated) {
+        if (def == null || generated == null) {
+            return;
+        }
+        def.setKeyManualOverride(generated.manualOverride());
+        def.setKeyFrozen(generated.frozen());
+        def.setGeneratedRuleCode(generated.ruleCode());
+        def.setGeneratedRuleVersionNo(generated.ruleVersion());
+        attributeDefRepository.save(def);
+    }
+
+    private MetaCodeRuleService.GeneratedCodeResult buildExistingLovCodeResult(MetaAttributeDef def,
+                                                                               String lovKey,
+                                                                               boolean manual,
+                                                                               boolean frozen) {
+        if (isBlank(lovKey)) {
+            return null;
+        }
+        Integer version = null;
+        if (def != null) {
+            MetaLovDef existingLovDef = lovDefRepository.findByAttributeDefAndKey(def, lovKey).orElse(null);
+            if (existingLovDef != null) {
+                version = existingLovDef.getGeneratedRuleVersionNo();
+                if (!frozen) {
+                    frozen = Boolean.TRUE.equals(existingLovDef.getKeyFrozen());
+                }
+            }
+        }
+        return new MetaCodeRuleService.GeneratedCodeResult(lovKey, "LOV", version, manual, frozen);
+    }
+
+    private void applyLovCodeGovernance(MetaLovDef lovDef, MetaCodeRuleService.GeneratedCodeResult generated) {
+        if (lovDef == null || generated == null) {
+            return;
+        }
+        lovDef.setKeyManualOverride(generated.manualOverride());
+        lovDef.setKeyFrozen(generated.frozen());
+        lovDef.setGeneratedRuleCode(generated.ruleCode());
+        lovDef.setGeneratedRuleVersionNo(generated.ruleVersion());
+        lovDefRepository.save(lovDef);
+    }
+
+    private String requireValue(String value, String fieldName) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new IllegalArgumentException(fieldName + " is required");
+        }
+        return normalized;
     }
 
     private String trimToNull(String s) {

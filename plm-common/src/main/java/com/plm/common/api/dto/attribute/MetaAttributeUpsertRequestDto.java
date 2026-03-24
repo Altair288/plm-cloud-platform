@@ -14,6 +14,12 @@ public class MetaAttributeUpsertRequestDto {
     /** 属性编码（对应 meta_attribute_def.key） */
     private String key;
 
+    /** AUTO / MANUAL，默认：key 为空走 AUTO，否则走 MANUAL */
+    private String generationMode;
+
+    /** 生成后是否冻结属性编码 */
+    private Boolean freezeKey;
+
     /** 名称（展示名） */
     private String displayName;
 
@@ -40,6 +46,12 @@ public class MetaAttributeUpsertRequestDto {
 
     /** 枚举型属性时可填（绑定的 lovKey） */
     private String lovKey;
+
+    /** AUTO / MANUAL，默认：lovKey 为空走 AUTO，否则走 MANUAL */
+    private String lovGenerationMode;
+
+    /** 生成后是否冻结 LOV 定义编码 */
+    private Boolean freezeLovKey;
 
     /** 数字型配置：最小值 */
     private BigDecimal minValue;

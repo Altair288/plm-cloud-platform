@@ -7,6 +7,8 @@ import java.util.UUID;
 @Data
 public class CreateCategoryRequestDto {
     private String code;
+    private String generationMode;
+    private Boolean freezeCode;
     private String name;
     private String businessDomain;
     private UUID parentId;

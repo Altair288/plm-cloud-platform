@@ -1,5 +1,6 @@
 package com.plm.infrastructure.code;
 
+import com.plm.common.version.util.CodeRuleSupport;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -37,9 +38,8 @@ public class CodeRuleGenerator {
     }
 
     /**
-     * 新增：支持上下文占位符 {CATEGORY_CODE} / {ATTRIBUTE_CODE} / {PARENT_CODE} 等。
-     * 同时根据不同规则定义使用不同序列宽度：
-     *   CATEGORY:4, ATTRIBUTE:2, LOV:2, INSTANCE:4, 默认:5
+    * 新增：支持上下文占位符 {CATEGORY_CODE} / {ATTRIBUTE_CODE} / {PARENT_CODE} 等。
+    * 序列宽度由共享规则常量统一维护，避免调用方和生成器出现漂移。
      */
     @Transactional
     public String generate(String ruleCode, Map<String, String> context) {
@@ -85,13 +85,7 @@ public class CodeRuleGenerator {
     }
 
     private int sequenceWidth(String ruleCode) {
-        switch (ruleCode) {
-            case "CATEGORY": return 4;
-            case "ATTRIBUTE": return 6; // global attribute sequence zero-padded to 6 digits
-            case "LOV": return 2;
-            case "INSTANCE": return 4;
-            default: return 5; // 兼容旧 pattern
-        }
+        return CodeRuleSupport.sequenceWidth(ruleCode);
     }
 
     private boolean containsAnyParentPlaceholder(String pattern) {
