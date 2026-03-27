@@ -12,7 +12,17 @@ import java.util.UUID;
 public interface MetaCodeRuleRepository extends JpaRepository<MetaCodeRule, UUID> {
     Optional<MetaCodeRule> findByCode(String code);
 
+    List<MetaCodeRule> findAllByCodeIn(List<String> codes);
+
+    Optional<MetaCodeRule> findByBusinessDomainAndTargetType(String businessDomain, String targetType);
+
     boolean existsByCode(String code);
+
+    boolean existsByBusinessDomainAndTargetType(String businessDomain, String targetType);
+
+    boolean existsByBusinessDomainAndTargetTypeAndCodeNot(String businessDomain, String targetType, String code);
+
+    List<MetaCodeRule> findAllByBusinessDomainOrderByCodeAsc(String businessDomain);
 
     List<MetaCodeRule> findAllByOrderByCodeAsc();
 }

@@ -23,6 +23,9 @@ public class MetaCodeRule {
     @Column(name = "code", nullable = false, length = 64)
     private String code;
 
+    @Column(name = "business_domain", nullable = false, length = 64)
+    private String businessDomain;
+
     @Column(name = "name", nullable = false, length = 128)
     private String name;
 

@@ -6,6 +6,7 @@ import java.util.Map;
 
 @Data
 public class CodeRuleSaveRequestDto {
+    private String businessDomain;
     private String ruleCode;
     private String name;
     private String targetType;

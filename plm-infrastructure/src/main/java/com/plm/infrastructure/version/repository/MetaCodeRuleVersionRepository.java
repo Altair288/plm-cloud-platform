@@ -13,6 +13,8 @@ import java.util.UUID;
 public interface MetaCodeRuleVersionRepository extends JpaRepository<MetaCodeRuleVersion, UUID> {
     Optional<MetaCodeRuleVersion> findByCodeRuleAndIsLatestTrue(MetaCodeRule codeRule);
 
+    List<MetaCodeRuleVersion> findByCodeRuleInAndIsLatestTrue(List<MetaCodeRule> codeRules);
+
     Optional<MetaCodeRuleVersion> findFirstByCodeRuleOrderByVersionNoDesc(MetaCodeRule codeRule);
 
     List<MetaCodeRuleVersion> findByCodeRuleOrderByVersionNoDesc(MetaCodeRule codeRule);

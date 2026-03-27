@@ -89,6 +89,7 @@ public class MetaCategoryCrudService {
     private final CategoryHierarchyRepository hierarchyRepository;
     private final MetaCategoryHierarchyService hierarchyService;
     private final MetaCodeRuleService metaCodeRuleService;
+    private final MetaCodeRuleSetService metaCodeRuleSetService;
     private final TransactionTemplate requiredTxTemplate;
     private final TransactionTemplate requiresNewTxTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -96,8 +97,10 @@ public class MetaCategoryCrudService {
     private enum BusinessDomain {
         PRODUCT,
         MATERIAL,
+        DEVICE,
         BOM,
         PROCESS,
+        DOCUMENT,
         TEST,
         EXPERIMENT
     }
@@ -287,12 +290,14 @@ public class MetaCategoryCrudService {
                                    CategoryHierarchyRepository hierarchyRepository,
                                    MetaCategoryHierarchyService hierarchyService,
                                    MetaCodeRuleService metaCodeRuleService,
+                                   MetaCodeRuleSetService metaCodeRuleSetService,
                                    PlatformTransactionManager transactionManager) {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
         this.hierarchyRepository = hierarchyRepository;
         this.hierarchyService = hierarchyService;
         this.metaCodeRuleService = metaCodeRuleService;
+        this.metaCodeRuleSetService = metaCodeRuleSetService;
 
         this.requiredTxTemplate = new TransactionTemplate(transactionManager);
         DefaultTransactionDefinition requiresNewDefinition = new DefaultTransactionDefinition();
@@ -316,7 +321,7 @@ public class MetaCategoryCrudService {
         }
 
         MetaCategoryDef def = new MetaCategoryDef();
-        MetaCodeRuleService.GeneratedCodeResult generatedCode = resolveCategoryCodeForCreate(req, businessDomain, null, operator);
+        MetaCodeRuleService.GeneratedCodeResult generatedCode = resolveCategoryCodeForCreate(req, businessDomain, parent, null, operator);
         String code = generatedCode.code();
         if (defRepository.existsByBusinessDomainAndCodeKey(businessDomain, code)) {
             throw new IllegalArgumentException("category already exists: businessDomain=" + businessDomain + ", code=" + code);
@@ -2524,6 +2529,7 @@ public class MetaCategoryCrudService {
 
     private MetaCodeRuleService.GeneratedCodeResult resolveCategoryCodeForCreate(CreateCategoryRequestDto req,
                                                                                  String businessDomain,
+                                                                                 MetaCategoryDef parent,
                                                                                  UUID targetId,
                                                                                  String operator) {
         String explicitMode = trimToNull(req.getGenerationMode());
@@ -2531,15 +2537,20 @@ public class MetaCategoryCrudService {
                 ? (isBlank(req.getCode()) ? "AUTO" : "MANUAL")
                 : explicitMode.trim().toUpperCase(Locale.ROOT);
         boolean freezeCode = Boolean.TRUE.equals(req.getFreezeCode());
-        Map<String, String> context = Map.of("BUSINESS_DOMAIN", businessDomain);
+        LinkedHashMap<String, String> context = new LinkedHashMap<>();
+        context.put("BUSINESS_DOMAIN", businessDomain);
+        if (parent != null && !isBlank(parent.getCodeKey())) {
+            context.put("PARENT_CODE", parent.getCodeKey());
+        }
 
         return switch (generationMode) {
             case "AUTO" -> {
                 if (!isBlank(req.getCode())) {
                     throw new IllegalArgumentException("code must be empty when generationMode=AUTO");
                 }
+                String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(businessDomain);
                 yield metaCodeRuleService.generateCode(
-                        "CATEGORY",
+                        ruleCode,
                         "CATEGORY",
                         targetId,
                         context,
@@ -2548,15 +2559,18 @@ public class MetaCategoryCrudService {
                         freezeCode
                 );
                     }
-            case "MANUAL" -> metaCodeRuleService.generateCode(
-                    "CATEGORY",
-                    "CATEGORY",
-                    targetId,
-                    context,
-                    requireCode(req.getCode()),
-                    operator,
-                    freezeCode
-            );
+            case "MANUAL" -> {
+                String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(businessDomain);
+                yield metaCodeRuleService.generateCode(
+                        ruleCode,
+                        "CATEGORY",
+                        targetId,
+                        context,
+                        requireCode(req.getCode()),
+                        operator,
+                        freezeCode
+                );
+            }
             default -> throw new IllegalArgumentException("unsupported generationMode: " + generationMode);
         };
     }

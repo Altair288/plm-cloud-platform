@@ -28,9 +28,10 @@ public class MetaCodeRuleController {
 
     @GetMapping
     public List<CodeRuleDetailDto> list(
+            @RequestParam(value = "businessDomain", required = false) String businessDomain,
             @RequestParam(value = "targetType", required = false) String targetType,
             @RequestParam(value = "status", required = false) String status) {
-        return codeRuleService.list(targetType, status);
+        return codeRuleService.list(businessDomain, targetType, status);
     }
 
     @GetMapping("/{ruleCode}")

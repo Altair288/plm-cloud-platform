@@ -1,13 +1,13 @@
 package com.plm.attribute.version.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.plm.common.api.dto.attribute.imports.AttributeImportErrorDto;
 import com.plm.common.api.dto.attribute.imports.AttributeImportSummaryDto;
 import com.plm.common.version.domain.*;
 import com.plm.common.version.util.AttributeLovImportUtils; // still used for json hash & numeric parse
 import com.plm.infrastructure.version.repository.*;
 import org.apache.poi.ss.usermodel.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -21,8 +21,6 @@ import java.util.*;
 
 @Service
 public class MetaAttributeImportService {
-    private static final Logger log = LoggerFactory.getLogger(MetaAttributeImportService.class);
-
     // 分组结构: 同一 (categoryCode, attrName) 聚合所有枚举值
     private static class AttrGroup {
         String categoryCode;
@@ -39,6 +37,8 @@ public class MetaAttributeImportService {
     private final MetaLovDefRepository lovDefRepository;
     private final MetaLovVersionRepository lovVersionRepository;
     private final MetaCodeRuleService metaCodeRuleService;
+    private final MetaCodeRuleSetService metaCodeRuleSetService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
     // JdbcTemplate 目前未使用，如后续需要批量 SQL 可再注入
 
     @PersistenceContext
@@ -51,6 +51,7 @@ public class MetaAttributeImportService {
             MetaLovDefRepository lovDefRepository,
             MetaLovVersionRepository lovVersionRepository,
             MetaCodeRuleService metaCodeRuleService,
+            MetaCodeRuleSetService metaCodeRuleSetService,
             DataSource dataSource) {
         this.categoryDefRepository = categoryDefRepository;
         this.categoryVersionRepository = categoryVersionRepository;
@@ -59,6 +60,7 @@ public class MetaAttributeImportService {
         this.lovDefRepository = lovDefRepository;
         this.lovVersionRepository = lovVersionRepository;
         this.metaCodeRuleService = metaCodeRuleService;
+        this.metaCodeRuleSetService = metaCodeRuleSetService;
     }
 
     /**
@@ -161,9 +163,10 @@ public class MetaAttributeImportService {
             String attrKey = attrDef != null ? attrDef.getKey() : null;
             boolean newlyCreatedAttr = false;
             if (attrDef == null) {
-                // 全局序列生成属性编码：ATTR_000001, ATTR_000002 ... (pattern ATTR_{SEQ})
+                // 默认属性编码已切换为按分类派生：ATTR-{CATEGORY_CODE}-{SEQ}
+                String attributeRuleCode = metaCodeRuleSetService.resolveAttributeRuleCode(catDef.getBusinessDomain());
                 attrCode = metaCodeRuleService.generateCode(
-                        "ATTRIBUTE",
+                    attributeRuleCode,
                         "ATTRIBUTE",
                         null,
                         buildCodeContext(catDef, null),
@@ -186,8 +189,6 @@ public class MetaAttributeImportService {
                 }
                 catAttrMap.put(semanticKey, attrDef);
                 applyAttributeCodeGovernance(attrDef, attrCode);
-                log.debug("[ATTR-DEF] categoryCode={} attrKey={} inserted={} id={}", g.categoryCode, attrKey,
-                        inserted > 0, attrDef != null ? attrDef.getId() : null);
             }
 
             // 最新分类版本
@@ -197,17 +198,7 @@ public class MetaAttributeImportService {
                 continue;
             }
 
-            // LOV key 简化：<属性编码>_LOV (由 V10 规则 pattern 支持 {ATTRIBUTE_CODE}_LOV 或直接拼接)
-                MetaCodeRuleService.GeneratedCodeResult lovCode = metaCodeRuleService.generateCode(
-                    "LOV",
-                    "LOV_DEFINITION",
-                    null,
-                    buildCodeContext(catDef, attrKey),
-                    null,
-                    createdBy,
-                    false
-                );
-                String lovKey = lovCode.code();
+            String lovKey = resolveLovKeyForImport(attrDef, attrKey);
 
             // 构造 structure_json (简化)
             String structureJson = buildAttributeJson(g, attrDef, lovKey);
@@ -216,10 +207,6 @@ public class MetaAttributeImportService {
                     : attributeVersionRepository.findLatestByDef(attrDef).orElse(null);
             boolean needNewAttrVersion = newlyCreatedAttr || latestAttrVer == null
                     || (structHash != null && !structHash.equals(latestAttrVer.getHash()));
-            log.debug(
-                    "[ATTR-VERSION-CHECK] attrKey={} newlyCreatedAttr={} latestExists={} needNew={} latestVersionNo={}",
-                    attrKey, newlyCreatedAttr, latestAttrVer != null, needNewAttrVersion,
-                    latestAttrVer != null ? latestAttrVer.getVersionNo() : null);
             MetaAttributeVersion attrVer;
             if (needNewAttrVersion) {
                 attrVer = new MetaAttributeVersion();
@@ -236,18 +223,10 @@ public class MetaAttributeImportService {
                     attrVer.setVersionNo(1);
                 }
                 attributeVersionRepository.save(attrVer);
-                if (attrDef != null) {
-                    log.debug("[ATTR-VERSION-CREATE] attrDefId={} versionNo={} hash={}", attrDef.getId(),
-                            attrVer.getVersionNo(), structHash);
-                }
                 createdAttrVers++;
             } else {
                 attrVer = latestAttrVer;
                 skipped++;
-                if (attrDef != null) {
-                    log.debug("[ATTR-VERSION-SKIP] attrDefId={} versionNo={} hash={} (unchanged)", attrDef.getId(),
-                            attrVer != null ? attrVer.getVersionNo() : null, structHash);
-                }
             }
 
             // LOV 定义 & 版本（使用与 JSON 相同的 lovKey）
@@ -268,19 +247,14 @@ public class MetaAttributeImportService {
                 } else {
                     lovDef = lovDefRepository.findByKey(lovKey).orElse(null);
                 }
-                log.debug("[LOV-DEF] categoryCode={} attrKey={} lovKey={} inserted={} lovId={}", g.categoryCode,
-                        attrKey, lovKey, insLov > 0, lovDef != null ? lovDef.getId() : null);
             }
-            applyLovCodeGovernance(lovDef, lovCode);
-            String valueJson = buildLovJson(g.values);
-            String valueHash = AttributeLovImportUtils.jsonHash(valueJson);
             MetaLovVersion latestLovVer = newlyCreatedLov ? null
                     : lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+                Map<String, String> existingValueCodes = extractExistingLovCodes(latestLovVer);
+                String valueJson = buildLovJson(catDef, attrKey, g.values, existingValueCodes, createdBy);
+                String valueHash = AttributeLovImportUtils.jsonHash(valueJson);
             boolean needNewLovVersion = newlyCreatedLov || latestLovVer == null
                     || (valueHash != null && !valueHash.equals(latestLovVer.getHash()));
-            log.debug("[LOV-VERSION-CHECK] lovKey={} newlyCreatedLov={} latestExists={} needNew={} latestVersionNo={}",
-                    lovKey, newlyCreatedLov, latestLovVer != null, needNewLovVersion,
-                    latestLovVer != null ? latestLovVer.getVersionNo() : null);
             if (needNewLovVersion) {
                 MetaLovVersion lv = new MetaLovVersion();
                 lv.setLovDef(lovDef);
@@ -295,17 +269,9 @@ public class MetaAttributeImportService {
                     lv.setVersionNo(1);
                 }
                 lovVersionRepository.save(lv);
-                if (lovDef != null) {
-                    log.debug("[LOV-VERSION-CREATE] lovDefId={} versionNo={} hash={}", lovDef.getId(),
-                            lv.getVersionNo(), valueHash);
-                }
                 createdLovVers++;
             } else {
                 skipped++;
-                if (lovDef != null) {
-                    log.debug("[LOV-VERSION-SKIP] lovDefId={} versionNo={} hash={} (unchanged)", lovDef.getId(),
-                            latestLovVer != null ? latestLovVer.getVersionNo() : null, valueHash);
-                }
             }
 
             // 批量 flush/clear 降低持久化上下文内存
@@ -369,26 +335,47 @@ public class MetaAttributeImportService {
                 "}";
     }
 
-    private String buildLovJson(List<String> values) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"values\":[");
+    private String buildLovJson(MetaCategoryDef categoryDef,
+                                String attributeCode,
+                                List<String> values,
+                                Map<String, String> existingValueCodes,
+                                String operator) {
+        String lovRuleCode = metaCodeRuleSetService.resolveLovRuleCode(categoryDef.getBusinessDomain());
+        ObjectNode root = objectMapper.createObjectNode();
+        var arr = objectMapper.createArrayNode();
         for (int i = 0; i < values.size(); i++) {
-            String v = values.get(i);
-            BigDecimal num = AttributeLovImportUtils.parseNumeric(v);
-            if (i > 0)
-                sb.append(',');
-            sb.append('{')
-                    .append("\"code\":\"").append(escape(v)).append("\",")
-                    .append("\"name\":\"").append(escape(v)).append("\",")
-                    .append("\"order\":").append(i + 1).append(',')
-                    .append("\"active\":true");
-            if (num != null) {
-                sb.append(',').append("\"numericValue\":").append(num.toPlainString());
+            String value = trim(values.get(i));
+            if (value == null) {
+                continue;
             }
-            sb.append('}');
+            String manualOrExistingCode = existingValueCodes.get(value);
+            MetaCodeRuleService.GeneratedCodeResult generatedValueCode = metaCodeRuleService.generateCode(
+                    lovRuleCode,
+                    "LOV_VALUE",
+                    null,
+                    buildCodeContext(categoryDef, attributeCode),
+                    manualOrExistingCode,
+                    operator,
+                    false
+            );
+
+            ObjectNode one = objectMapper.createObjectNode();
+            one.put("code", generatedValueCode.code());
+            one.put("name", value);
+            one.put("order", i + 1);
+            one.put("active", true);
+            BigDecimal num = AttributeLovImportUtils.parseNumeric(value);
+            if (num != null) {
+                one.put("numericValue", num);
+            }
+            arr.add(one);
         }
-        sb.append("]}");
-        return sb.toString();
+        root.set("values", arr);
+        try {
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception ex) {
+            throw new IllegalStateException("failed to serialize lov values", ex);
+        }
     }
 
     private String cell(Row row, int idx) {
@@ -417,6 +404,26 @@ public class MetaAttributeImportService {
         return context;
     }
 
+    private String resolveLovKeyForImport(MetaAttributeDef attributeDef,
+                                          String attributeCode) {
+        MetaLovDef existingLovDef = findExistingActiveLovDef(attributeDef);
+        if (existingLovDef != null && !isBlank(existingLovDef.getKey())) {
+            return existingLovDef.getKey();
+        }
+        return requireValue(attributeCode, "attributeCode") + "_LOV";
+    }
+
+    private MetaLovDef findExistingActiveLovDef(MetaAttributeDef attributeDef) {
+        if (attributeDef == null) {
+            return null;
+        }
+        return lovDefRepository.findByAttributeDef(attributeDef).stream()
+                .filter(Objects::nonNull)
+                .filter(def -> def.getStatus() == null || !"deleted".equalsIgnoreCase(def.getStatus().trim()))
+                .findFirst()
+                .orElse(null);
+    }
+
     private void applyAttributeCodeGovernance(MetaAttributeDef def, MetaCodeRuleService.GeneratedCodeResult generated) {
         if (def == null || generated == null) {
             return;
@@ -428,15 +435,35 @@ public class MetaAttributeImportService {
         attributeDefRepository.save(def);
     }
 
-    private void applyLovCodeGovernance(MetaLovDef lovDef, MetaCodeRuleService.GeneratedCodeResult generated) {
-        if (lovDef == null || generated == null) {
-            return;
+    private Map<String, String> extractExistingLovCodes(MetaLovVersion latestLovVer) {
+        LinkedHashMap<String, String> codes = new LinkedHashMap<>();
+        if (latestLovVer == null || isBlank(latestLovVer.getValueJson())) {
+            return codes;
         }
-        lovDef.setKeyManualOverride(generated.manualOverride());
-        lovDef.setKeyFrozen(generated.frozen());
-        lovDef.setGeneratedRuleCode(generated.ruleCode());
-        lovDef.setGeneratedRuleVersionNo(generated.ruleVersion());
-        lovDefRepository.save(lovDef);
+        try {
+            var values = objectMapper.readTree(latestLovVer.getValueJson()).path("values");
+            if (!values.isArray()) {
+                return codes;
+            }
+            values.forEach(node -> {
+                String name = trim(node.path("name").asText(null));
+                String code = trim(node.path("code").asText(null));
+                if (name != null && code != null && !codes.containsKey(name)) {
+                    codes.put(name, code);
+                }
+            });
+            return codes;
+        } catch (Exception ex) {
+            return new LinkedHashMap<>();
+        }
+    }
+
+    private String requireValue(String value, String fieldName) {
+        String trimmed = trim(value);
+        if (trimmed == null) {
+            throw new IllegalArgumentException(fieldName + " is required");
+        }
+        return trimmed;
     }
 
     private String trim(String s) {

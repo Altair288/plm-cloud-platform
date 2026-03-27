@@ -2,10 +2,12 @@ package com.plm.common.api.dto.code;
 
 import lombok.Data;
 
+import java.util.List;
 import java.util.Map;
 
 @Data
 public class CodeRuleDetailDto {
+    private String businessDomain;
     private String ruleCode;
     private String name;
     private String targetType;
@@ -18,5 +20,8 @@ public class CodeRuleDetailDto {
     private String regexPattern;
     private Integer maxLength;
     private Integer latestVersionNo;
+    private Boolean supportsHierarchy;
+    private Boolean supportsScopedSequence;
+    private List<String> supportedVariableKeys;
     private Map<String, Object> latestRuleJson;
 }
