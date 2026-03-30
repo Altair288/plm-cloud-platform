@@ -18,10 +18,15 @@ import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyIt
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyOperationDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyResponseDto;
+import com.plm.common.api.dto.category.CreateCategoryCodePreviewRequestDto;
+import com.plm.common.api.dto.category.CreateCategoryCodePreviewResponseDto;
 import com.plm.common.api.dto.category.CreateCategoryRequestDto;
 import com.plm.common.api.dto.category.MetaCategoryCodeMappingDto;
 import com.plm.common.api.dto.category.MetaCategoryCopySourceMappingDto;
 import com.plm.common.api.dto.category.MetaCategoryDetailDto;
+import com.plm.common.api.dto.code.CodeRuleDetailDto;
+import com.plm.common.api.dto.code.CodeRulePreviewRequestDto;
+import com.plm.common.api.dto.code.CodeRulePreviewResponseDto;
 import com.plm.common.api.dto.category.version.MetaCategoryLatestVersionDto;
 import com.plm.common.api.dto.category.version.MetaCategoryVersionCompareDiffDto;
 import com.plm.common.api.dto.category.version.MetaCategoryVersionCompareDto;
@@ -314,11 +319,7 @@ public class MetaCategoryCrudService {
         String businessDomain = normalizeBusinessDomain(req.getBusinessDomain());
         String status = mapApiStatusToDb(req.getStatus(), true);
 
-        MetaCategoryDef parent = null;
-        if (req.getParentId() != null) {
-            parent = loadExisting(req.getParentId());
-            ensureParentActive(parent);
-        }
+        MetaCategoryDef parent = resolveCreateParent(req.getParentId(), businessDomain);
 
         MetaCategoryDef def = new MetaCategoryDef();
         MetaCodeRuleService.GeneratedCodeResult generatedCode = resolveCategoryCodeForCreate(req, businessDomain, parent, null, operator);
@@ -361,6 +362,41 @@ public class MetaCategoryCrudService {
 
         insertClosureForNewNode(def, parent);
         return detail(def.getId());
+    }
+
+    @Transactional(readOnly = true)
+    public CreateCategoryCodePreviewResponseDto previewCreateCode(CreateCategoryCodePreviewRequestDto req) {
+        if (req == null) {
+            throw new IllegalArgumentException("request body is required");
+        }
+
+        String businessDomain = normalizeBusinessDomain(req.getBusinessDomain());
+        MetaCategoryDef parent = resolveCreateParent(req.getParentId(), businessDomain);
+        LinkedHashMap<String, String> context = buildCategoryCodeContext(businessDomain, parent);
+        String manualCode = trimToNull(req.getManualCode());
+        String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(businessDomain);
+
+        CodeRulePreviewRequestDto previewRequest = new CodeRulePreviewRequestDto();
+        previewRequest.setContext(context);
+        previewRequest.setManualCode(manualCode);
+        previewRequest.setCount(normalizePreviewCount(req.getCount()));
+
+        CodeRulePreviewResponseDto preview = metaCodeRuleService.preview(ruleCode, previewRequest);
+        CodeRuleDetailDto ruleDetail = metaCodeRuleService.detail(ruleCode);
+
+        CreateCategoryCodePreviewResponseDto response = new CreateCategoryCodePreviewResponseDto();
+        response.setBusinessDomain(businessDomain);
+        response.setRuleCode(ruleCode);
+        response.setGenerationMode(manualCode == null ? "AUTO" : "MANUAL");
+        response.setAllowManualOverride(Boolean.TRUE.equals(ruleDetail.getAllowManualOverride()));
+        response.setSuggestedCode(preview.getExamples() == null || preview.getExamples().isEmpty() ? null : preview.getExamples().get(0));
+        response.setExamples(preview.getExamples());
+        response.setWarnings(preview.getWarnings());
+        response.setResolvedContext(preview.getResolvedContext());
+        response.setResolvedSequenceScope(preview.getResolvedSequenceScope());
+        response.setResolvedPeriodKey(preview.getResolvedPeriodKey());
+        response.setPreviewStale(Boolean.FALSE);
+        return response;
     }
 
     @Transactional
@@ -2397,6 +2433,28 @@ public class MetaCategoryCrudService {
         }
     }
 
+    private MetaCategoryDef resolveCreateParent(UUID parentId, String businessDomain) {
+        if (parentId == null) {
+            return null;
+        }
+        MetaCategoryDef parent = loadExisting(parentId);
+        ensureParentActive(parent);
+        ensureParentBusinessDomain(parent, businessDomain);
+        return parent;
+    }
+
+    private void ensureParentBusinessDomain(MetaCategoryDef parent, String businessDomain) {
+        if (parent == null) {
+            return;
+        }
+        if (!Objects.equals(parent.getBusinessDomain(), businessDomain)) {
+            throw new CategoryConflictException(
+                    "CATEGORY_DOMAIN_MISMATCH",
+                    "parent category and request businessDomain mismatch: parentId=" + parent.getId()
+            );
+        }
+    }
+
     private boolean isDeleted(MetaCategoryDef def) {
         return def != null
                 && def.getStatus() != null
@@ -2537,11 +2595,7 @@ public class MetaCategoryCrudService {
                 ? (isBlank(req.getCode()) ? "AUTO" : "MANUAL")
                 : explicitMode.trim().toUpperCase(Locale.ROOT);
         boolean freezeCode = Boolean.TRUE.equals(req.getFreezeCode());
-        LinkedHashMap<String, String> context = new LinkedHashMap<>();
-        context.put("BUSINESS_DOMAIN", businessDomain);
-        if (parent != null && !isBlank(parent.getCodeKey())) {
-            context.put("PARENT_CODE", parent.getCodeKey());
-        }
+        LinkedHashMap<String, String> context = buildCategoryCodeContext(businessDomain, parent);
 
         return switch (generationMode) {
             case "AUTO" -> {
@@ -2573,6 +2627,22 @@ public class MetaCategoryCrudService {
             }
             default -> throw new IllegalArgumentException("unsupported generationMode: " + generationMode);
         };
+    }
+
+    private LinkedHashMap<String, String> buildCategoryCodeContext(String businessDomain, MetaCategoryDef parent) {
+        LinkedHashMap<String, String> context = new LinkedHashMap<>();
+        context.put("BUSINESS_DOMAIN", businessDomain);
+        if (parent != null && !isBlank(parent.getCodeKey())) {
+            context.put("PARENT_CODE", parent.getCodeKey());
+        }
+        return context;
+    }
+
+    private int normalizePreviewCount(Integer count) {
+        if (count == null) {
+            return 1;
+        }
+        return Math.max(1, Math.min(count, 5));
     }
 
     private String normalizeOperator(String operator) {

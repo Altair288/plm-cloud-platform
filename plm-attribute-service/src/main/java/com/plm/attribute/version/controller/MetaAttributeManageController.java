@@ -1,6 +1,8 @@
 package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaAttributeManageService;
+import com.plm.common.api.dto.attribute.CreateAttributeCodePreviewRequestDto;
+import com.plm.common.api.dto.attribute.CreateAttributeCodePreviewResponseDto;
 import com.plm.common.api.dto.attribute.MetaAttributeDefDetailDto;
 import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +16,13 @@ public class MetaAttributeManageController {
 
     public MetaAttributeManageController(MetaAttributeManageService manageService) {
         this.manageService = manageService;
+    }
+
+    @PostMapping("/code-preview")
+    public CreateAttributeCodePreviewResponseDto previewCreateCode(
+            @RequestParam("categoryCode") String categoryCode,
+            @RequestBody CreateAttributeCodePreviewRequestDto request) {
+        return manageService.previewCreateCode(categoryCode, request);
     }
 
     /** 创建属性：插入 def + 首个 version（versionNo=1, isLatest=true） */

@@ -2,7 +2,10 @@ package com.plm.common.version.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Getter;
@@ -38,11 +41,23 @@ public class MetaCodeRuleSet {
     @Column(name = "category_rule_code", nullable = false, length = 64)
     private String categoryRuleCode;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_rule_code", referencedColumnName = "code", insertable = false, updatable = false)
+    private MetaCodeRule categoryRule;
+
     @Column(name = "attribute_rule_code", nullable = false, length = 64)
     private String attributeRuleCode;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "attribute_rule_code", referencedColumnName = "code", insertable = false, updatable = false)
+    private MetaCodeRule attributeRule;
+
     @Column(name = "lov_rule_code", nullable = false, length = 64)
     private String lovRuleCode;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "lov_rule_code", referencedColumnName = "code", insertable = false, updatable = false)
+    private MetaCodeRule lovRule;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

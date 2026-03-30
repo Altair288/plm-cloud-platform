@@ -2,8 +2,13 @@ package com.plm.attribute.version.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.plm.common.api.dto.attribute.CreateAttributeCodePreviewRequestDto;
+import com.plm.common.api.dto.attribute.CreateAttributeCodePreviewResponseDto;
 import com.plm.common.api.dto.attribute.MetaAttributeDefDetailDto;
 import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
+import com.plm.common.api.dto.code.CodeRuleDetailDto;
+import com.plm.common.api.dto.code.CodeRulePreviewRequestDto;
+import com.plm.common.api.dto.code.CodeRulePreviewResponseDto;
 import com.plm.common.version.domain.MetaAttributeDef;
 import com.plm.common.version.domain.MetaAttributeVersion;
 import com.plm.common.version.domain.MetaCategoryDef;
@@ -22,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -63,6 +69,58 @@ public class MetaAttributeManageService {
         this.queryService = queryService;
         this.metaCodeRuleService = metaCodeRuleService;
         this.metaCodeRuleSetService = metaCodeRuleSetService;
+    }
+
+    @Transactional(readOnly = true)
+    public CreateAttributeCodePreviewResponseDto previewCreateCode(String categoryCodeKey,
+                                                                   CreateAttributeCodePreviewRequestDto req) {
+        if (req == null) {
+            throw new IllegalArgumentException("request body is required");
+        }
+        if (isBlank(categoryCodeKey)) {
+            throw new IllegalArgumentException("categoryCode is required");
+        }
+
+        MetaCategoryDef categoryDef = categoryDefRepository.findByCodeKey(categoryCodeKey)
+                .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
+        Map<String, String> attributeContext = buildCodeContext(categoryDef, null);
+        String manualKey = trimToNull(req.getManualKey());
+        String attributeRuleCode = metaCodeRuleSetService.resolveAttributeRuleCode(categoryDef.getBusinessDomain());
+
+        CodeRulePreviewRequestDto previewRequest = new CodeRulePreviewRequestDto();
+        previewRequest.setContext(attributeContext);
+        previewRequest.setManualCode(manualKey);
+        previewRequest.setCount(normalizePreviewCount(req.getCount()));
+
+        CodeRulePreviewResponseDto preview = metaCodeRuleService.preview(attributeRuleCode, previewRequest);
+        CodeRuleDetailDto attributeRuleDetail = metaCodeRuleService.detail(attributeRuleCode);
+        String suggestedAttributeKey = preview.getExamples() == null || preview.getExamples().isEmpty()
+                ? manualKey
+                : preview.getExamples().get(0);
+
+        LovValuePreviewResult lovPreview = previewLovValueCodes(categoryDef, suggestedAttributeKey, req);
+
+        CreateAttributeCodePreviewResponseDto response = new CreateAttributeCodePreviewResponseDto();
+        response.setBusinessDomain(categoryDef.getBusinessDomain());
+        response.setCategoryCode(categoryDef.getCodeKey());
+        response.setAttributeRuleCode(attributeRuleCode);
+        response.setGenerationMode(manualKey == null ? "AUTO" : "MANUAL");
+        response.setAllowManualOverride(Boolean.TRUE.equals(attributeRuleDetail.getAllowManualOverride()));
+        response.setSuggestedCode(suggestedAttributeKey);
+        response.setExamples(preview.getExamples());
+        response.setWarnings(preview.getWarnings());
+        response.setResolvedContext(preview.getResolvedContext());
+        response.setResolvedSequenceScope(preview.getResolvedSequenceScope());
+        response.setResolvedPeriodKey(preview.getResolvedPeriodKey());
+        response.setPreviewStale(Boolean.FALSE);
+        response.setLovRuleCode(lovPreview.ruleCode());
+        response.setAllowLovValueManualOverride(lovPreview.allowManualOverride());
+        response.setLovWarnings(lovPreview.warnings());
+        response.setLovResolvedContext(lovPreview.resolvedContext());
+        response.setLovResolvedSequenceScope(lovPreview.resolvedSequenceScope());
+        response.setLovResolvedPeriodKey(lovPreview.resolvedPeriodKey());
+        response.setLovValuePreviews(lovPreview.items());
+        return response;
     }
 
     @Transactional
@@ -321,6 +379,25 @@ public class MetaAttributeManageService {
         return "enum".equalsIgnoreCase(dataType) || "multi-enum".equalsIgnoreCase(dataType);
     }
 
+    private boolean isEnumLike(String dataType) {
+        if (dataType == null) {
+            return false;
+        }
+        String normalized = dataType.trim();
+        if (normalized.isEmpty()) {
+            return false;
+        }
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        return "enum".equals(lower) || "multi-enum".equals(lower);
+    }
+
+    private int normalizePreviewCount(Integer count) {
+        if (count == null) {
+            return 1;
+        }
+        return Math.max(1, Math.min(count, 20));
+    }
+
     private void upsertLovValuesIfNeeded(MetaCategoryDef categoryDef,
                                          MetaAttributeDef def,
                                          MetaAttributeVersion attrVersion,
@@ -412,6 +489,85 @@ public class MetaAttributeManageService {
         }
         root.set("values", arr);
         return root.toString();
+    }
+
+    private LovValuePreviewResult previewLovValueCodes(MetaCategoryDef categoryDef,
+                                                       String attributeKey,
+                                                       CreateAttributeCodePreviewRequestDto req) {
+        if (!isEnumLike(req == null ? null : req.getDataType())) {
+            return LovValuePreviewResult.empty();
+        }
+
+        String lovRuleCode = metaCodeRuleSetService.resolveLovRuleCode(categoryDef.getBusinessDomain());
+        CodeRuleDetailDto lovRuleDetail = metaCodeRuleService.detail(lovRuleCode);
+        if (isBlank(attributeKey)) {
+            return LovValuePreviewResult.empty(lovRuleCode, Boolean.TRUE.equals(lovRuleDetail.getAllowManualOverride()));
+        }
+
+        Map<String, String> lovContext = buildCodeContext(categoryDef, attributeKey);
+        List<CreateAttributeCodePreviewRequestDto.LovValuePreviewItem> requestItems =
+                req.getLovValues() == null ? Collections.emptyList() : req.getLovValues();
+        List<CreateAttributeCodePreviewResponseDto.LovValueCodePreviewItem> previewItems = new ArrayList<>();
+        List<Integer> autoIndexes = new ArrayList<>();
+
+        for (int index = 0; index < requestItems.size(); index++) {
+            CreateAttributeCodePreviewRequestDto.LovValuePreviewItem requestItem = requestItems.get(index);
+            CreateAttributeCodePreviewResponseDto.LovValueCodePreviewItem previewItem =
+                    new CreateAttributeCodePreviewResponseDto.LovValueCodePreviewItem();
+            previewItem.setIndex(index);
+            if (requestItem != null) {
+                previewItem.setManualCode(trimToNull(requestItem.getCode()));
+                previewItem.setName(trimToNull(requestItem.getName()));
+                previewItem.setLabel(trimToNull(requestItem.getLabel()));
+            }
+            previewItems.add(previewItem);
+
+            if (previewItem.getManualCode() != null) {
+                CodeRulePreviewRequestDto manualPreviewRequest = new CodeRulePreviewRequestDto();
+                manualPreviewRequest.setContext(lovContext);
+                manualPreviewRequest.setManualCode(previewItem.getManualCode());
+                CodeRulePreviewResponseDto manualPreview = metaCodeRuleService.preview(lovRuleCode, manualPreviewRequest);
+                previewItem.setSuggestedCode(manualPreview.getExamples() == null || manualPreview.getExamples().isEmpty()
+                        ? previewItem.getManualCode()
+                        : manualPreview.getExamples().get(0));
+                continue;
+            }
+
+            if (previewItem.getName() != null || previewItem.getLabel() != null) {
+                autoIndexes.add(index);
+            }
+        }
+
+        List<String> warnings = Collections.emptyList();
+        Map<String, String> resolvedContext = lovContext;
+        String resolvedSequenceScope = null;
+        String resolvedPeriodKey = null;
+        if (!autoIndexes.isEmpty()) {
+            CodeRulePreviewRequestDto autoPreviewRequest = new CodeRulePreviewRequestDto();
+            autoPreviewRequest.setContext(lovContext);
+            autoPreviewRequest.setCount(autoIndexes.size());
+            CodeRulePreviewResponseDto autoPreview = metaCodeRuleService.preview(lovRuleCode, autoPreviewRequest);
+            warnings = autoPreview.getWarnings();
+            resolvedContext = autoPreview.getResolvedContext();
+            resolvedSequenceScope = autoPreview.getResolvedSequenceScope();
+            resolvedPeriodKey = autoPreview.getResolvedPeriodKey();
+
+            List<String> examples = autoPreview.getExamples() == null ? Collections.emptyList() : autoPreview.getExamples();
+            for (int i = 0; i < autoIndexes.size(); i++) {
+                CreateAttributeCodePreviewResponseDto.LovValueCodePreviewItem previewItem = previewItems.get(autoIndexes.get(i));
+                previewItem.setSuggestedCode(i < examples.size() ? examples.get(i) : null);
+            }
+        }
+
+        return new LovValuePreviewResult(
+                lovRuleCode,
+                Boolean.TRUE.equals(lovRuleDetail.getAllowManualOverride()),
+                warnings,
+                resolvedContext,
+                resolvedSequenceScope,
+                resolvedPeriodKey,
+                previewItems
+        );
     }
 
     private boolean isBlank(String s) {
@@ -538,5 +694,25 @@ public class MetaAttributeManageService {
             return null;
         String t = s.trim();
         return t.isEmpty() ? null : t;
+    }
+
+    private record LovValuePreviewResult(
+            String ruleCode,
+            Boolean allowManualOverride,
+            List<String> warnings,
+            Map<String, String> resolvedContext,
+            String resolvedSequenceScope,
+            String resolvedPeriodKey,
+            List<CreateAttributeCodePreviewResponseDto.LovValueCodePreviewItem> items) {
+
+        private static LovValuePreviewResult empty() {
+            return new LovValuePreviewResult(null, null, Collections.emptyList(), null, null, null,
+                    Collections.emptyList());
+        }
+
+        private static LovValuePreviewResult empty(String ruleCode, Boolean allowManualOverride) {
+            return new LovValuePreviewResult(ruleCode, allowManualOverride, Collections.emptyList(), null, null, null,
+                    Collections.emptyList());
+        }
     }
 }

@@ -1,6 +1,8 @@
 package com.plm.attribute.version.controller;
 
 import com.plm.attribute.version.service.MetaCategoryCrudService;
+import com.plm.common.api.dto.category.CreateCategoryCodePreviewRequestDto;
+import com.plm.common.api.dto.category.CreateCategoryCodePreviewResponseDto;
 import com.plm.common.api.dto.category.CreateCategoryRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteResponseDto;
@@ -45,6 +47,12 @@ public class MetaCategoryCrudController {
             @RequestBody CreateCategoryRequestDto request,
             @RequestParam(value = "operator", required = false) String operator) {
         return crudService.create(request, operator);
+    }
+
+    @PostMapping("/code-preview")
+    public CreateCategoryCodePreviewResponseDto previewCreateCode(
+            @RequestBody CreateCategoryCodePreviewRequestDto request) {
+        return crudService.previewCreateCode(request);
     }
 
     @PutMapping("/{id}")

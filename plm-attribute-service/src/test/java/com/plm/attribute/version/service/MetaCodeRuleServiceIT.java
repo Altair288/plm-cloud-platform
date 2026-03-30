@@ -1,6 +1,8 @@
 package com.plm.attribute.version.service;
 
 import com.plm.common.api.dto.category.CreateCategoryRequestDto;
+import com.plm.common.api.dto.category.CreateCategoryCodePreviewRequestDto;
+import com.plm.common.api.dto.category.CreateCategoryCodePreviewResponseDto;
 import com.plm.common.api.dto.category.MetaCategoryDetailDto;
 import com.plm.common.api.dto.code.CodeRuleDetailDto;
 import com.plm.common.api.dto.code.CodeRulePreviewRequestDto;
@@ -104,6 +106,61 @@ class MetaCodeRuleServiceIT {
         MetaCategoryDetailDto created = categoryCrudService.create(request, "it-user");
 
         Assertions.assertEquals(manualCode, created.getCode());
+    }
+
+    @Test
+    void previewCreateCode_shouldReturnSuggestedCodeForRootCategory() {
+        CreateCategoryCodePreviewRequestDto request = new CreateCategoryCodePreviewRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setCount(1);
+
+        CreateCategoryCodePreviewResponseDto preview = categoryCrudService.previewCreateCode(request);
+
+        Assertions.assertEquals("MATERIAL", preview.getBusinessDomain());
+        Assertions.assertEquals("CATEGORY", preview.getRuleCode());
+        Assertions.assertEquals("AUTO", preview.getGenerationMode());
+        Assertions.assertFalse(preview.getExamples().isEmpty());
+        Assertions.assertEquals(preview.getExamples().get(0), preview.getSuggestedCode());
+        Assertions.assertTrue(preview.getResolvedContext().containsKey("BUSINESS_DOMAIN"));
+    }
+
+    @Test
+    void previewCreateCode_shouldUseParentCodeForStructuredHierarchyRule() {
+        String prefix = "ITP" + suffix().substring(0, 4);
+        MetaCodeRule categoryRule = codeRuleRepository.findByCode("CATEGORY").orElseThrow();
+        categoryRule.setStatus("DRAFT");
+        categoryRule.setActive(Boolean.FALSE);
+        codeRuleRepository.save(categoryRule);
+
+        CodeRuleSaveRequestDto request = new CodeRuleSaveRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setRuleCode("CATEGORY");
+        request.setName(categoryRule.getName());
+        request.setTargetType(categoryRule.getTargetType());
+        request.setScopeType(categoryRule.getScopeType());
+        request.setPattern(prefix + "-{SEQ}");
+        request.setAllowManualOverride(Boolean.TRUE.equals(categoryRule.getAllowManualOverride()));
+        request.setRegexPattern("^[A-Z][A-Z0-9_-]{0,127}$");
+        request.setMaxLength(128);
+        request.setRuleJson(buildStructuredCategoryRuleJson(prefix));
+
+        codeRuleService.update("CATEGORY", request, "it-user");
+        codeRuleService.publish("CATEGORY", "it-user");
+
+        CreateCategoryRequestDto rootRequest = new CreateCategoryRequestDto();
+        rootRequest.setBusinessDomain("MATERIAL");
+        rootRequest.setName("Preview Root");
+        MetaCategoryDetailDto root = categoryCrudService.create(rootRequest, "it-user");
+
+        CreateCategoryCodePreviewRequestDto previewRequest = new CreateCategoryCodePreviewRequestDto();
+        previewRequest.setBusinessDomain("MATERIAL");
+        previewRequest.setParentId(root.getId());
+        previewRequest.setCount(1);
+
+        CreateCategoryCodePreviewResponseDto preview = categoryCrudService.previewCreateCode(previewRequest);
+
+        Assertions.assertEquals(root.getCode() + "-001", preview.getSuggestedCode());
+        Assertions.assertEquals(root.getCode(), preview.getResolvedContext().get("PARENT_CODE"));
     }
 
     @Test

@@ -1,5 +1,7 @@
 package com.plm.attribute.version.service;
 
+import com.plm.common.api.dto.attribute.CreateAttributeCodePreviewRequestDto;
+import com.plm.common.api.dto.attribute.CreateAttributeCodePreviewResponseDto;
 import com.plm.common.api.dto.attribute.MetaAttributeDefDetailDto;
 import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
 import com.plm.common.api.dto.category.CreateCategoryRequestDto;
@@ -161,6 +163,63 @@ class MetaAttributeManageServiceIT {
         Assertions.assertEquals("DVAL-" + detail.getKey() + "-02", detail.getLovValues().get(1).getCode());
     }
 
+        @Test
+        void previewCreateCode_shouldReturnSuggestedAttributeAndEnumValueCodes() {
+        String categoryCode = "MAT-ATTR-PREVIEW-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        createCategory(categoryCode, "Preview Category");
+
+        CreateAttributeCodePreviewRequestDto request = new CreateAttributeCodePreviewRequestDto();
+        request.setDataType("enum");
+        request.setCount(1);
+        request.setLovValues(List.of(
+            previewLovValue(null, "Red"),
+            previewLovValue(null, "Blue")
+        ));
+
+        CreateAttributeCodePreviewResponseDto preview = attributeManageService.previewCreateCode(categoryCode, request);
+
+        Assertions.assertEquals("MATERIAL", preview.getBusinessDomain());
+        Assertions.assertEquals(categoryCode, preview.getCategoryCode());
+        Assertions.assertEquals("AUTO", preview.getGenerationMode());
+        Assertions.assertEquals(
+            "ATTR-" + categoryCode + "-" + String.format("%0" + CodeRuleSupport.ATTRIBUTE_SEQUENCE_WIDTH + "d", 1),
+            preview.getSuggestedCode());
+        Assertions.assertNotNull(preview.getLovValuePreviews());
+        Assertions.assertEquals(2, preview.getLovValuePreviews().size());
+        Assertions.assertEquals(
+            "ENUM-" + preview.getSuggestedCode() + "-" + String.format("%0" + CodeRuleSupport.LOV_SEQUENCE_WIDTH + "d", 1),
+            preview.getLovValuePreviews().get(0).getSuggestedCode());
+        Assertions.assertEquals(
+            "ENUM-" + preview.getSuggestedCode() + "-" + String.format("%0" + CodeRuleSupport.LOV_SEQUENCE_WIDTH + "d", 2),
+            preview.getLovValuePreviews().get(1).getSuggestedCode());
+        Assertions.assertEquals(preview.getSuggestedCode(), preview.getLovResolvedContext().get("ATTRIBUTE_CODE"));
+        }
+
+        @Test
+        void previewCreateCode_shouldUseManualAttributeKeyForEnumValuePreview() {
+        ensureDeviceRuleSet();
+
+        CreateCategoryRequestDto categoryRequest = new CreateCategoryRequestDto();
+        categoryRequest.setBusinessDomain("DEVICE");
+        categoryRequest.setName("Preview Device Category");
+        String categoryCode = categoryCrudService.create(categoryRequest, "it-user").getCode();
+
+        CreateAttributeCodePreviewRequestDto request = new CreateAttributeCodePreviewRequestDto();
+        request.setDataType("enum");
+        request.setManualKey("DATTR-MANUAL-001");
+        request.setLovValues(List.of(
+            previewLovValue(null, "110V"),
+            previewLovValue(null, "220V")
+        ));
+
+        CreateAttributeCodePreviewResponseDto preview = attributeManageService.previewCreateCode(categoryCode, request);
+
+        Assertions.assertEquals("MANUAL", preview.getGenerationMode());
+        Assertions.assertEquals("DATTR-MANUAL-001", preview.getSuggestedCode());
+        Assertions.assertEquals("DVAL-DATTR-MANUAL-001-01", preview.getLovValuePreviews().get(0).getSuggestedCode());
+        Assertions.assertEquals("DVAL-DATTR-MANUAL-001-02", preview.getLovValuePreviews().get(1).getSuggestedCode());
+        }
+
     private void createCategory(String code, String name) {
         CreateCategoryRequestDto request = new CreateCategoryRequestDto();
         request.setBusinessDomain("MATERIAL");
@@ -188,6 +247,15 @@ class MetaAttributeManageServiceIT {
 
     private MetaAttributeUpsertRequestDto.LovValueUpsertItem autoLovValue(String name) {
         return lovValue(null, name);
+    }
+
+    private CreateAttributeCodePreviewRequestDto.LovValuePreviewItem previewLovValue(String code, String name) {
+        CreateAttributeCodePreviewRequestDto.LovValuePreviewItem item =
+                new CreateAttributeCodePreviewRequestDto.LovValuePreviewItem();
+        item.setCode(code);
+        item.setName(name);
+        item.setLabel(name);
+        return item;
     }
 
         private void ensureDeviceRuleSet() {
