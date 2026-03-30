@@ -240,7 +240,7 @@ public class CodeRuleGenerator {
                                            int sequenceOffset,
                                            boolean allocateSequence) {
         Map<String, Object> subRule = structuredRule.definition();
-        String separator = trimToNull(readString(subRule, "separator"));
+        String separator = readString(subRule, "separator");
         String effectiveSeparator = separator == null ? "-" : separator;
         String hierarchyMode = normalizeHierarchyMode(readString(structuredRule.rootJson(), "hierarchyMode"));
         List<Map<String, Object>> childSegments = readObjectList(subRule.get("childSegments"));

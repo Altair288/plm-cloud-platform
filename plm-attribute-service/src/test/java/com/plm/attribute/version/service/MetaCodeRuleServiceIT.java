@@ -278,6 +278,88 @@ class MetaCodeRuleServiceIT {
         Assertions.assertEquals("ORD-" + today + "-002", preview.getExamples().get(1));
     }
 
+        @Test
+        void preview_shouldRespectConfiguredSeparatorsIncludingEmptyString() {
+        String slashRuleCode = "IT_SEP_" + suffix();
+
+        CodeRuleSaveRequestDto slashRequest = new CodeRuleSaveRequestDto();
+        slashRequest.setBusinessDomain("TEST");
+        slashRequest.setRuleCode(slashRuleCode);
+        slashRequest.setName("Integration Test Slash Separator Rule");
+        slashRequest.setTargetType("category");
+        slashRequest.setScopeType("GLOBAL");
+        slashRequest.setPattern("MAT/{BUSINESS_DOMAIN}/{SEQ}");
+        slashRequest.setAllowManualOverride(Boolean.TRUE);
+        slashRequest.setRegexPattern("^[A-Z][A-Z0-9_./-]{0,127}$");
+        slashRequest.setMaxLength(128);
+        slashRequest.setRuleJson(buildStructuredRuleJson(
+            "NONE",
+            Map.of(
+                "category",
+                subRule(
+                    "/",
+                    List.of(
+                        stringSegment("MAT"),
+                        Map.of("type", "VARIABLE", "variableKey", "BUSINESS_DOMAIN"),
+                        sequenceSegment(3, "NEVER", "GLOBAL")
+                    ),
+                    null,
+                    List.of("BUSINESS_DOMAIN")
+                )
+            )
+        ));
+
+        codeRuleService.create(slashRequest, "it-user");
+        codeRuleService.publish(slashRuleCode, "it-user");
+
+        CodeRulePreviewRequestDto slashPreviewRequest = new CodeRulePreviewRequestDto();
+        slashPreviewRequest.setContext(Map.of("BUSINESS_DOMAIN", "DEVICE"));
+        slashPreviewRequest.setCount(1);
+        CodeRulePreviewResponseDto slashPreview = codeRuleService.preview(slashRuleCode, slashPreviewRequest);
+
+        Assertions.assertEquals("MAT/DEVICE/001", slashPreview.getExamples().get(0));
+
+        String inlineSymbolRuleCode = "IT_NONESEP_" + suffix();
+
+        CodeRuleSaveRequestDto inlineSymbolRequest = new CodeRuleSaveRequestDto();
+        inlineSymbolRequest.setBusinessDomain("TEST");
+        inlineSymbolRequest.setRuleCode(inlineSymbolRuleCode);
+        inlineSymbolRequest.setName("Integration Test No Separator Rule");
+        inlineSymbolRequest.setTargetType("lov");
+        inlineSymbolRequest.setScopeType("GLOBAL");
+        inlineSymbolRequest.setPattern("LOV-{ATTRIBUTE_CODE}-01");
+        inlineSymbolRequest.setAllowManualOverride(Boolean.TRUE);
+        inlineSymbolRequest.setRegexPattern("^[A-Z][A-Z0-9_./-]{0,127}$");
+        inlineSymbolRequest.setMaxLength(128);
+        inlineSymbolRequest.setRuleJson(buildStructuredRuleJson(
+            "NONE",
+            Map.of(
+                "enum",
+                subRule(
+                    "",
+                    List.of(
+                        stringSegment("LOV-"),
+                        Map.of("type", "VARIABLE", "variableKey", "ATTRIBUTE_CODE"),
+                        stringSegment("-"),
+                        sequenceSegment(2, "PER_PARENT", "ATTRIBUTE_CODE")
+                    ),
+                    null,
+                    List.of("ATTRIBUTE_CODE")
+                )
+            )
+        ));
+
+        codeRuleService.create(inlineSymbolRequest, "it-user");
+        codeRuleService.publish(inlineSymbolRuleCode, "it-user");
+
+        CodeRulePreviewRequestDto inlinePreviewRequest = new CodeRulePreviewRequestDto();
+        inlinePreviewRequest.setContext(Map.of("ATTRIBUTE_CODE", "ATTR001"));
+        inlinePreviewRequest.setCount(1);
+        CodeRulePreviewResponseDto inlinePreview = codeRuleService.preview(inlineSymbolRuleCode, inlinePreviewRequest);
+
+        Assertions.assertEquals("LOV-ATTR001-01", inlinePreview.getExamples().get(0));
+        }
+
     @Test
     void generateCode_shouldUseIndependentSequenceBucketsPerParent() {
         String ruleCode = "IT_PARENT_" + suffix();

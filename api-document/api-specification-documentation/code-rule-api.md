@@ -723,12 +723,17 @@ curl -X POST "http://localhost:8080/api/meta/code-rules/ATTRIBUTE:preview" \
 
 | 字段                | 类型     | 必填 | 说明 |
 | ------------------- | -------- | ---: | ---- |
-| separator           | string   |   否 | 段拼接分隔符，默认 `-` |
+| separator           | string   |   否 | 段拼接分隔符，未提供时默认 `-`；显式传空字符串表示无分隔符 |
 | segments            | object[] |   是 | 当前对象主编码段 |
 | childSegments       | object[] |   否 | 分类层级派生时的子级后缀段 |
 | allowedVariableKeys | string[] |   否 | 当前 subRule 允许引用的变量键 |
 
 ### 7.7 segment 结构
+
+说明：
+
+- `separator` 支持任意字符串，常见场景是 `-`、`_`、`.`、`/`、`\\`。
+- 当需要“整体无默认分隔符，但只在局部位置插入符号”时，应将 `separator` 设为空字符串，并通过 `STRING` 段显式写入符号，例如 `LOV-`、`-`。
 
 #### STRING 段
 
