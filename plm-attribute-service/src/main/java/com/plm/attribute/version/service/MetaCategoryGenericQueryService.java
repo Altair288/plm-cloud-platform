@@ -22,7 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.Locale;
-import java.util.stream.Collectors;
 
 @Service
 @Transactional(readOnly = true)
@@ -59,6 +58,7 @@ public class MetaCategoryGenericQueryService {
                                                String keyword,
                                                String status,
                                                Pageable pageable) {
+        Pageable effectivePageable = pageable == null ? Pageable.unpaged() : pageable;
         String normalizedBusinessDomain = normalizeBusinessDomain(businessDomain);
         Short depth = level == null ? null : toDepth(level, ROOT_DEPTH_BASE);
         Page<MetaCategoryDef> page = defRepository.findNodePage(
@@ -67,7 +67,7 @@ public class MetaCategoryGenericQueryService {
                 depth,
                 normalizeStatus(status),
                 trimToNull(keyword),
-                pageable);
+            effectivePageable);
 
         Map<UUID, String> titleById = loadLatestTitles(page.getContent());
         Map<UUID, Long> childCountById = loadDirectChildCounts(page.getContent());
@@ -76,7 +76,8 @@ public class MetaCategoryGenericQueryService {
 
     public List<MetaCategoryNodeDto> path(UUID id, String businessDomain) {
         String normalizedBusinessDomain = normalizeBusinessDomain(businessDomain);
-        MetaCategoryDef target = defRepository.findById(id)
+        UUID categoryId = Objects.requireNonNull(id, "id");
+        MetaCategoryDef target = defRepository.findById(categoryId)
                 .orElseThrow(() -> new IllegalArgumentException("category not found: id=" + id));
         if (!normalizedBusinessDomain.equalsIgnoreCase(target.getBusinessDomain())) {
             throw new IllegalArgumentException("category not found in businessDomain: id=" + id + ", businessDomain=" + normalizedBusinessDomain);
@@ -97,27 +98,28 @@ public class MetaCategoryGenericQueryService {
                                                   Integer maxDepth,
                                                   String status,
                                                   Pageable pageable) {
+        Pageable effectivePageable = pageable == null ? Pageable.unpaged() : pageable;
         String normalizedBusinessDomain = normalizeBusinessDomain(businessDomain);
         String kw = trimToNull(keyword);
         if (kw == null) {
-            return Page.empty(pageable);
+            return Page.empty(effectivePageable);
         }
         MetaCategoryDef scope = null;
         if (scopeNodeId != null) {
-            scope = defRepository.findById(scopeNodeId)
+            scope = defRepository.findById(Objects.requireNonNull(scopeNodeId, "scopeNodeId"))
                     .orElseThrow(() -> new IllegalArgumentException("scope node not found: id=" + scopeNodeId));
             if (!normalizedBusinessDomain.equalsIgnoreCase(scope.getBusinessDomain())) {
                 throw new IllegalArgumentException("scope node not found in businessDomain: id=" + scopeNodeId + ", businessDomain=" + normalizedBusinessDomain);
             }
         }
 
-        Page<MetaCategoryDef> page = defRepository.searchGeneric(normalizedBusinessDomain, kw, scopeNodeId, normalizeStatus(status), pageable);
+        Page<MetaCategoryDef> page = defRepository.searchGeneric(normalizedBusinessDomain, kw, scopeNodeId, normalizeStatus(status), effectivePageable);
         if (maxDepth != null && maxDepth > 0 && scope != null && scope.getDepth() != null) {
             short scopeDepth = scope.getDepth();
-            List<MetaCategoryDef> filtered = page.getContent().stream()
+            List<MetaCategoryDef> filtered = new ArrayList<>(page.getContent().stream()
                 .filter(def -> def.getDepth() == null || (def.getDepth() - scopeDepth) <= maxDepth)
-                .toList();
-            page = new PageImpl<>(filtered, pageable, page.getTotalElements());
+                .toList());
+            page = new PageImpl<>(filtered, effectivePageable, page.getTotalElements());
         }
         Map<UUID, String> titleById = loadLatestTitles(page.getContent());
         Map<UUID, Long> childCountById = loadDirectChildCounts(page.getContent());
@@ -186,7 +188,8 @@ public class MetaCategoryGenericQueryService {
             throw new IllegalArgumentException("parentId is required");
         }
 
-        MetaCategoryDef root = defRepository.findById(request.getParentId())
+        UUID parentId = Objects.requireNonNull(request.getParentId(), "parentId");
+        MetaCategoryDef root = defRepository.findById(parentId)
                 .orElseThrow(() -> new IllegalArgumentException("category not found: id=" + request.getParentId()));
 
         boolean includeRoot = request.getIncludeRoot() == null || request.getIncludeRoot();

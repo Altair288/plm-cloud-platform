@@ -14,7 +14,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import javax.sql.DataSource;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.*;
@@ -51,8 +50,7 @@ public class MetaAttributeImportService {
             MetaLovDefRepository lovDefRepository,
             MetaLovVersionRepository lovVersionRepository,
             MetaCodeRuleService metaCodeRuleService,
-            MetaCodeRuleSetService metaCodeRuleSetService,
-            DataSource dataSource) {
+            MetaCodeRuleSetService metaCodeRuleSetService) {
         this.categoryDefRepository = categoryDefRepository;
         this.categoryVersionRepository = categoryVersionRepository;
         this.attributeDefRepository = attributeDefRepository;
@@ -180,7 +178,7 @@ public class MetaAttributeImportService {
                         createdBy);
                 if (inserted > 0) {
                     // 查询持久化实体，保证关系映射使用托管对象
-                    attrDef = attributeDefRepository.findById(newId).orElseThrow();
+                    attrDef = attributeDefRepository.findById(Objects.requireNonNull(newId, "attributeId")).orElseThrow();
                     newlyCreatedAttr = true;
                     createdAttrDefs++;
                 } else {
@@ -241,7 +239,7 @@ public class MetaAttributeImportService {
                 UUID lovId = UUID.randomUUID();
                 int insLov = lovDefRepository.insertIgnore(lovId, attrDef.getId(), lovKey, attrKey, null, createdBy);
                 if (insLov > 0) {
-                    lovDef = lovDefRepository.findById(lovId).orElseThrow();
+                    lovDef = lovDefRepository.findById(Objects.requireNonNull(lovId, "lovId")).orElseThrow();
                     newlyCreatedLov = true;
                     createdLovDefs++;
                 } else {
@@ -302,7 +300,7 @@ public class MetaAttributeImportService {
         if (catDef == null || normalizedDisplayName == null) {
             return null;
         }
-        List<UUID> ids = entityManager.createNativeQuery("""
+        List<?> ids = entityManager.createNativeQuery("""
                 SELECT d.id
                 FROM plm_meta.meta_attribute_def d
                 JOIN plm_meta.meta_attribute_version v
@@ -322,7 +320,7 @@ public class MetaAttributeImportService {
         }
         Object first = ids.get(0);
         UUID id = first instanceof UUID uuid ? uuid : UUID.fromString(String.valueOf(first));
-        return attributeDefRepository.findById(id).orElse(null);
+        return attributeDefRepository.findById(Objects.requireNonNull(id, "attributeId")).orElse(null);
     }
 
     private String buildAttributeJson(AttrGroup g, MetaAttributeDef def, String lovKey) {

@@ -92,10 +92,8 @@ public class MetaCategoryCrudService {
     private final MetaCategoryDefRepository defRepository;
     private final MetaCategoryVersionRepository versionRepository;
     private final CategoryHierarchyRepository hierarchyRepository;
-    private final MetaCategoryHierarchyService hierarchyService;
     private final MetaCodeRuleService metaCodeRuleService;
     private final MetaCodeRuleSetService metaCodeRuleSetService;
-    private final TransactionTemplate requiredTxTemplate;
     private final TransactionTemplate requiresNewTxTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -111,14 +109,10 @@ public class MetaCategoryCrudService {
     }
 
     private static final class CopyOptionsResolved {
-        private final String versionPolicy;
-        private final String codePolicy;
         private final String namePolicy;
         private final String defaultStatus;
 
-        private CopyOptionsResolved(String versionPolicy, String codePolicy, String namePolicy, String defaultStatus) {
-            this.versionPolicy = versionPolicy;
-            this.codePolicy = codePolicy;
+        private CopyOptionsResolved(String namePolicy, String defaultStatus) {
             this.namePolicy = namePolicy;
             this.defaultStatus = defaultStatus;
         }
@@ -263,7 +257,6 @@ public class MetaCategoryCrudService {
         private final boolean dryRun;
         private final boolean atomic;
         private final String planningMode;
-        private final String operator;
         private final List<TopologyPlanItem> items;
         private final List<String> planningWarnings;
         private final List<String> resolvedOrder;
@@ -273,7 +266,6 @@ public class MetaCategoryCrudService {
                              boolean dryRun,
                              boolean atomic,
                              String planningMode,
-                             String operator,
                              List<TopologyPlanItem> items,
                              List<String> planningWarnings,
                              List<String> resolvedOrder,
@@ -282,7 +274,6 @@ public class MetaCategoryCrudService {
             this.dryRun = dryRun;
             this.atomic = atomic;
             this.planningMode = planningMode;
-            this.operator = operator;
             this.items = items;
             this.planningWarnings = planningWarnings;
             this.resolvedOrder = resolvedOrder;
@@ -293,21 +284,19 @@ public class MetaCategoryCrudService {
     public MetaCategoryCrudService(MetaCategoryDefRepository defRepository,
                                    MetaCategoryVersionRepository versionRepository,
                                    CategoryHierarchyRepository hierarchyRepository,
-                                   MetaCategoryHierarchyService hierarchyService,
                                    MetaCodeRuleService metaCodeRuleService,
                                    MetaCodeRuleSetService metaCodeRuleSetService,
                                    PlatformTransactionManager transactionManager) {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
         this.hierarchyRepository = hierarchyRepository;
-        this.hierarchyService = hierarchyService;
         this.metaCodeRuleService = metaCodeRuleService;
         this.metaCodeRuleSetService = metaCodeRuleSetService;
 
-        this.requiredTxTemplate = new TransactionTemplate(transactionManager);
+        PlatformTransactionManager nonNullTransactionManager = Objects.requireNonNull(transactionManager, "transactionManager");
         DefaultTransactionDefinition requiresNewDefinition = new DefaultTransactionDefinition();
         requiresNewDefinition.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        this.requiresNewTxTemplate = new TransactionTemplate(transactionManager, requiresNewDefinition);
+        this.requiresNewTxTemplate = new TransactionTemplate(nonNullTransactionManager, requiresNewDefinition);
     }
 
     @Transactional
@@ -523,7 +512,7 @@ public class MetaCategoryCrudService {
             if (descendantIds.isEmpty()) {
                 descendantIds = List.of(id);
             }
-            targets = defRepository.findAllById(descendantIds);
+            targets = defRepository.findAllById(Objects.requireNonNull(descendantIds, "descendantIds"));
         } else {
             targets = List.of(def);
         }
@@ -535,7 +524,7 @@ public class MetaCategoryCrudService {
                 changed++;
             }
         }
-        defRepository.saveAll(targets);
+        defRepository.saveAll(Objects.requireNonNull(targets, "targets"));
 
         refreshParentLeafIfNeeded(oldParent);
         normalizeSiblingOrders(oldParent == null ? null : oldParent.getId());
@@ -762,73 +751,6 @@ public class MetaCategoryCrudService {
         return result;
     }
 
-    private void rebuildTreeAndClosure() {
-        recalculateTreeMeta();
-        hierarchyService.rebuildClosure();
-    }
-
-    private void recalculateTreeMeta() {
-        List<MetaCategoryDef> all = defRepository.findAll();
-        if (all.isEmpty()) {
-            return;
-        }
-
-        Map<UUID, String> latestNameByDefId = versionRepository.findByCategoryDefInAndIsLatestTrue(all).stream()
-                .filter(v -> v.getCategoryDef() != null)
-                .collect(Collectors.toMap(
-                        v -> v.getCategoryDef().getId(),
-                        v -> v.getDisplayName() == null || v.getDisplayName().isBlank() ? v.getCategoryDef().getCodeKey() : v.getDisplayName(),
-                        (a, b) -> a
-                ));
-
-        Map<UUID, MetaCategoryDef> byId = all.stream().collect(Collectors.toMap(MetaCategoryDef::getId, d -> d));
-        Map<UUID, List<MetaCategoryDef>> childrenByParent = new HashMap<>();
-        for (MetaCategoryDef def : all) {
-            UUID parentId = def.getParent() == null ? null : def.getParent().getId();
-            if (parentId != null && byId.containsKey(parentId)) {
-                childrenByParent.computeIfAbsent(parentId, k -> new ArrayList<>()).add(def);
-            }
-        }
-
-        List<MetaCategoryDef> roots = all.stream()
-                .filter(d -> d.getParent() == null || !byId.containsKey(d.getParent().getId()))
-                .sorted(Comparator.comparing(MetaCategoryDef::getCodeKey))
-                .toList();
-
-        Queue<MetaCategoryDef> queue = new ArrayDeque<>(roots);
-        while (!queue.isEmpty()) {
-            MetaCategoryDef current = queue.poll();
-            MetaCategoryDef parent = current.getParent();
-            String currentName = latestTitleOrCode(current, latestNameByDefId);
-
-            if (parent == null || !byId.containsKey(parent.getId())) {
-                current.setPath("/" + current.getCodeKey());
-                current.setDepth(ROOT_DEPTH_BASE);
-                current.setFullPathName(currentName);
-            } else {
-                String parentPath = parent.getPath() == null ? "/" + parent.getCodeKey() : parent.getPath();
-                current.setPath(parentPath + "/" + current.getCodeKey());
-                short parentDepth = parent.getDepth() == null ? 0 : parent.getDepth();
-                current.setDepth((short) (parentDepth + 1));
-                String parentFullPath = parent.getFullPathName() == null
-                        ? latestTitleOrCode(parent, latestNameByDefId)
-                        : parent.getFullPathName();
-                current.setFullPathName(parentFullPath + "/" + currentName);
-            }
-
-            List<MetaCategoryDef> children = childrenByParent.getOrDefault(current.getId(), List.of());
-            current.setIsLeaf(children.isEmpty());
-
-            List<MetaCategoryDef> sortedChildren = children.stream()
-                    .sorted(Comparator.comparing(MetaCategoryDef::getSortOrder)
-                            .thenComparing(MetaCategoryDef::getCodeKey))
-                    .toList();
-            queue.addAll(sortedChildren);
-        }
-
-        defRepository.saveAll(all);
-    }
-
     private String latestTitleOrCode(MetaCategoryDef def, Map<UUID, String> latestNameByDefId) {
         if (def == null || def.getId() == null) {
             return null;
@@ -934,7 +856,8 @@ public class MetaCategoryCrudService {
 
         List<MetaCategoryDef> newAncestors = hierarchyRepository.findAncestorsByDescendant(newParent.getId());
         if (newAncestors.isEmpty()) {
-            newAncestors = List.of(defRepository.getReferenceById(newParent.getId()));
+            UUID parentId = Objects.requireNonNull(newParent.getId(), "newParent.id");
+            newAncestors = List.of(defRepository.getReferenceById(parentId));
         }
 
         Map<UUID, MetaCategoryDef> subtreeRefs = subtreeIds.stream()
@@ -967,7 +890,8 @@ public class MetaCategoryCrudService {
             return;
         }
 
-        MetaCategoryDef managedParent = defRepository.findById(parent.getId()).orElse(null);
+        UUID parentId = Objects.requireNonNull(parent.getId(), "parent.id");
+        MetaCategoryDef managedParent = defRepository.findById(parentId).orElse(null);
         if (managedParent == null || isDeleted(managedParent)) {
             return;
         }
@@ -1073,7 +997,8 @@ public class MetaCategoryCrudService {
     }
 
     private MetaCategoryVersion loadVersion(UUID versionId) {
-        return versionRepository.findById(versionId)
+        UUID nonNullVersionId = Objects.requireNonNull(versionId, "versionId");
+        return versionRepository.findById(nonNullVersionId)
                 .orElseThrow(() -> new IllegalArgumentException("category version not found: id=" + versionId));
     }
 
@@ -1130,7 +1055,6 @@ public class MetaCategoryCrudService {
         String planningMode = normalizeTopologyPlanningMode(request.getPlanningMode());
         String orderingStrategy = normalizeTopologyOrderingStrategy(request.getOrderingStrategy());
         boolean strictDependencyValidation = request.getStrictDependencyValidation() == null || Boolean.TRUE.equals(request.getStrictDependencyValidation());
-        String operator = normalizeOperator(request.getOperator());
         List<TopologyOperationContext> operations = normalizeTopologyOperations(request.getOperations());
 
         Map<String, TopologyPlanItem> itemByOperationId = new LinkedHashMap<>();
@@ -1170,7 +1094,6 @@ public class MetaCategoryCrudService {
                 dryRun,
                 atomic,
                 planningMode,
-                operator,
                 items,
                 List.of(),
                 resolvedOrder,
@@ -1427,7 +1350,7 @@ public class MetaCategoryCrudService {
             if (id == null) {
                 continue;
             }
-            defRepository.findById(id).ifPresent(def -> map.put(def.getId(), def));
+            defRepository.findById(Objects.requireNonNull(id, "categoryId")).ifPresent(def -> map.put(def.getId(), def));
             for (MetaCategoryDef ancestor : hierarchyRepository.findAncestorsByDescendant(id)) {
                 if (ancestor != null && ancestor.getId() != null) {
                     map.putIfAbsent(ancestor.getId(), ancestor);
@@ -1767,7 +1690,8 @@ public class MetaCategoryCrudService {
     }
 
     private MetaCategoryDef loadActiveCategory(UUID id, String notFoundCode) {
-        MetaCategoryDef def = defRepository.findById(id)
+        UUID categoryId = Objects.requireNonNull(id, "id");
+        MetaCategoryDef def = defRepository.findById(categoryId)
                 .orElseThrow(() -> new CategoryConflictException(notFoundCode, "category not found: id=" + id));
         if (isDeleted(def)) {
             throw new CategoryConflictException("CATEGORY_DELETED", "category is deleted: id=" + id);
@@ -1808,7 +1732,7 @@ public class MetaCategoryCrudService {
         if (!"KEEP".equals(namePolicy)) {
             throw new IllegalArgumentException("unsupported namePolicy: " + namePolicy);
         }
-        return new CopyOptionsResolved(versionPolicy, codePolicy, namePolicy, defaultStatus);
+        return new CopyOptionsResolved(namePolicy, defaultStatus);
     }
 
     private String normalizeCopyDefaultStatus(String defaultStatus) {
@@ -2088,12 +2012,12 @@ public class MetaCategoryCrudService {
         response.setNormalizedCount((int) results.stream().filter(result -> CODE_SOURCE_OVERLAP_NORMALIZED.equals(result.getCode())).count());
         response.setMovedCount(results.stream()
                 .filter(result -> ACTION_MOVE.equals(result.getAction()) && Boolean.TRUE.equals(result.getSuccess()))
-                .map(result -> result.getAffectedNodeCount() == null ? 0 : result.getAffectedNodeCount())
-                .reduce(0, Integer::sum));
+            .mapToInt(result -> result.getAffectedNodeCount() == null ? 0 : result.getAffectedNodeCount())
+            .sum());
         response.setCopiedCount(results.stream()
                 .filter(result -> ACTION_COPY.equals(result.getAction()) && Boolean.TRUE.equals(result.getSuccess()))
-                .map(result -> result.getAffectedNodeCount() == null ? 0 : result.getAffectedNodeCount())
-                .reduce(0, Integer::sum));
+            .mapToInt(result -> result.getAffectedNodeCount() == null ? 0 : result.getAffectedNodeCount())
+            .sum());
         response.setAtomic(plan.atomic);
         response.setDryRun(plan.dryRun);
         response.setWarnings(plan.warnings);
@@ -2183,7 +2107,8 @@ public class MetaCategoryCrudService {
     }
 
     private MetaCategoryDef loadExisting(UUID id) {
-        return defRepository.findById(id)
+        UUID categoryId = Objects.requireNonNull(id, "id");
+        return defRepository.findById(categoryId)
                 .orElseThrow(() -> new CategoryNotFoundException("category not found: id=" + id));
     }
 
@@ -2369,7 +2294,7 @@ public class MetaCategoryCrudService {
         if (descendantIds.isEmpty()) {
             descendantIds = List.of(id);
         }
-        List<MetaCategoryDef> targets = defRepository.findAllById(descendantIds);
+        List<MetaCategoryDef> targets = defRepository.findAllById(Objects.requireNonNull(descendantIds, "descendantIds"));
         int count = 0;
         for (MetaCategoryDef target : targets) {
             if (!isDeleted(target)) {

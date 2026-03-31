@@ -25,7 +25,6 @@ import com.plm.infrastructure.version.repository.MetaLovVersionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -159,7 +158,7 @@ public class MetaAttributeManageService {
             // 并发情况下可能被其它请求插入
             def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key).orElseThrow();
         } else {
-            def = attributeDefRepository.findById(id).orElseThrow();
+            def = attributeDefRepository.findById(Objects.requireNonNull(id, "attributeId")).orElseThrow();
         }
         applyAttributeCodeGovernance(def, attributeCode);
 
@@ -367,10 +366,6 @@ public class MetaAttributeManageService {
                 latest == null ? null : latest.getLovKey());
     }
 
-    private boolean isEnum(MetaAttributeUpsertRequestDto req) {
-        return req != null && req.getDataType() != null && "enum".equalsIgnoreCase(req.getDataType().trim());
-    }
-
     private boolean isEnumLike(MetaAttributeUpsertRequestDto req) {
         if (req == null || req.getDataType() == null) {
             return false;
@@ -418,7 +413,7 @@ public class MetaAttributeManageService {
             UUID lovId = UUID.randomUUID();
             int inserted = lovDefRepository.insertIgnore(lovId, def.getId(), lovKey, def.getKey(), null, operator);
             if (inserted > 0) {
-                lovDef = lovDefRepository.findById(lovId).orElseThrow();
+                lovDef = lovDefRepository.findById(Objects.requireNonNull(lovId, "lovId")).orElseThrow();
             } else {
                 lovDef = lovDefRepository.findByAttributeDefAndKey(def, lovKey).orElse(null);
             }
@@ -506,7 +501,7 @@ public class MetaAttributeManageService {
 
         Map<String, String> lovContext = buildCodeContext(categoryDef, attributeKey);
         List<CreateAttributeCodePreviewRequestDto.LovValuePreviewItem> requestItems =
-                req.getLovValues() == null ? Collections.emptyList() : req.getLovValues();
+            req == null || req.getLovValues() == null ? Collections.emptyList() : req.getLovValues();
         List<CreateAttributeCodePreviewResponseDto.LovValueCodePreviewItem> previewItems = new ArrayList<>();
         List<Integer> autoIndexes = new ArrayList<>();
 

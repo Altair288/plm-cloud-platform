@@ -15,14 +15,10 @@ import com.plm.infrastructure.code.CodeRuleGenerator;
 import com.plm.infrastructure.version.repository.MetaCodeGenerationAuditRepository;
 import com.plm.infrastructure.version.repository.MetaCodeRuleRepository;
 import com.plm.infrastructure.version.repository.MetaCodeRuleVersionRepository;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import javax.sql.DataSource;
 import java.time.format.DateTimeFormatter;
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -31,7 +27,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -46,19 +41,16 @@ public class MetaCodeRuleService {
     private final MetaCodeRuleVersionRepository codeRuleVersionRepository;
     private final MetaCodeGenerationAuditRepository codeGenerationAuditRepository;
     private final CodeRuleGenerator codeRuleGenerator;
-    private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public MetaCodeRuleService(MetaCodeRuleRepository codeRuleRepository,
                                MetaCodeRuleVersionRepository codeRuleVersionRepository,
                                MetaCodeGenerationAuditRepository codeGenerationAuditRepository,
-                               CodeRuleGenerator codeRuleGenerator,
-                               @Qualifier("mainDataSource") DataSource dataSource) {
+                               CodeRuleGenerator codeRuleGenerator) {
         this.codeRuleRepository = codeRuleRepository;
         this.codeRuleVersionRepository = codeRuleVersionRepository;
         this.codeGenerationAuditRepository = codeGenerationAuditRepository;
         this.codeRuleGenerator = codeRuleGenerator;
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
     }
 
     @Transactional(readOnly = true)
@@ -811,46 +803,6 @@ public class MetaCodeRuleService {
             return number.longValue();
         }
         return Long.parseLong(String.valueOf(value));
-    }
-
-    private String renderPattern(String pattern, Map<String, String> context, Long sequenceValue) {
-        String result = pattern.replace("{DATE}", LocalDate.now().toString().replace("-", ""));
-        if (sequenceValue != null && result.contains("{SEQ}")) {
-            String sequence = String.format("%0" + sequenceWidth(normalizeSequenceRuleCode(pattern, context)) + "d", sequenceValue);
-            result = result.replace("{SEQ}", sequence);
-        }
-        for (Map.Entry<String, String> entry : context.entrySet()) {
-            if (entry.getKey() == null || entry.getValue() == null) {
-                continue;
-            }
-            result = result.replace("{" + entry.getKey() + "}", entry.getValue());
-        }
-        if (result.contains("{")) {
-            throw new IllegalArgumentException("preview context is incomplete for pattern: " + pattern);
-        }
-        return result;
-    }
-
-    private String normalizeSequenceRuleCode(String pattern, Map<String, String> context) {
-        if (pattern.contains("ATTR_")) {
-            return "ATTRIBUTE";
-        }
-        if (pattern.contains("LOV") || context.containsKey("ATTRIBUTE_CODE")) {
-            return "LOV";
-        }
-        if (pattern.contains("BUSINESS_DOMAIN")) {
-            return "CATEGORY";
-        }
-        return "CATEGORY";
-    }
-
-    private long readCurrentSequenceValue(String ruleCode) {
-        List<Long> rows = jdbcTemplate.query(
-                "SELECT current_value FROM plm_meta.meta_code_sequence WHERE rule_code = ?",
-                (rs, rowNum) -> rs.getLong(1),
-                normalizeRuleCode(ruleCode)
-        );
-        return rows.isEmpty() ? 0L : rows.get(0);
     }
 
     private void validateCodeAgainstRule(MetaCodeRule rule, String code, boolean manualOverride) {

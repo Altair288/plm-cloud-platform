@@ -15,6 +15,7 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 public class MetaCodeRuleSetService {
@@ -60,7 +61,7 @@ public class MetaCodeRuleSetService {
         MetaCodeRuleSet ruleSet = new MetaCodeRuleSet();
         ruleSet.setBusinessDomain(businessDomain);
         applySaveRequest(ruleSet, request, operator);
-        codeRuleSetRepository.save(ruleSet);
+        ruleSet = codeRuleSetRepository.save(Objects.requireNonNull(ruleSet, "ruleSet"));
         return toDetailDto(ruleSet);
     }
 
@@ -75,7 +76,7 @@ public class MetaCodeRuleSetService {
             throw new IllegalArgumentException("businessDomain in path and body must match");
         }
         applySaveRequest(ruleSet, request, operator);
-        codeRuleSetRepository.save(ruleSet);
+        ruleSet = codeRuleSetRepository.save(Objects.requireNonNull(ruleSet, "ruleSet"));
         return toDetailDto(ruleSet);
     }
 
@@ -94,7 +95,7 @@ public class MetaCodeRuleSetService {
         ruleSet.setActive(Boolean.TRUE);
         ruleSet.setUpdatedAt(OffsetDateTime.now());
         ruleSet.setUpdatedBy(normalizeOperator(operator));
-        codeRuleSetRepository.save(ruleSet);
+        ruleSet = codeRuleSetRepository.save(Objects.requireNonNull(ruleSet, "ruleSet"));
         return toDetailDto(ruleSet);
     }
 

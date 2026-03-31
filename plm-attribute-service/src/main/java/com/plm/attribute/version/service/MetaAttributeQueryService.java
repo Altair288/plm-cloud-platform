@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import jakarta.persistence.TypedQuery;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.*;
@@ -26,7 +25,6 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class MetaAttributeQueryService {
 
-    private final MetaAttributeDefRepository attributeDefRepository;
     private final MetaAttributeVersionRepository attributeVersionRepository;
     private final MetaLovDefRepository lovDefRepository;
     private final MetaLovVersionRepository lovVersionRepository;
@@ -35,11 +33,9 @@ public class MetaAttributeQueryService {
     @PersistenceContext
     private EntityManager em;
 
-    public MetaAttributeQueryService(MetaAttributeDefRepository attributeDefRepository,
-            MetaAttributeVersionRepository attributeVersionRepository,
+    public MetaAttributeQueryService(MetaAttributeVersionRepository attributeVersionRepository,
             MetaLovDefRepository lovDefRepository,
             MetaLovVersionRepository lovVersionRepository) {
-        this.attributeDefRepository = attributeDefRepository;
         this.attributeVersionRepository = attributeVersionRepository;
         this.lovDefRepository = lovDefRepository;
         this.lovVersionRepository = lovVersionRepository;

@@ -21,7 +21,6 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.time.OffsetDateTime;
 import org.springframework.jdbc.core.JdbcTemplate;
 import javax.sql.DataSource;
 
@@ -39,7 +38,7 @@ public class MetaCategoryImportService {
             DataSource dataSource) {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
+        this.jdbcTemplate = new JdbcTemplate(Objects.requireNonNull(dataSource, "dataSource"));
     }
 
     /**
