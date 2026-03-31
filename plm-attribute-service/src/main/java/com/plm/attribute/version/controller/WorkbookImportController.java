@@ -1,5 +1,6 @@
 package com.plm.attribute.version.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plm.attribute.version.service.workbook.WorkbookImportDryRunService;
 import com.plm.attribute.version.service.workbook.WorkbookImportExecutionService;
@@ -29,21 +30,28 @@ public class WorkbookImportController {
     private final WorkbookImportDryRunService dryRunService;
     private final WorkbookImportExecutionService executionService;
     private final WorkbookImportRuntimeService runtimeService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     public WorkbookImportController(WorkbookImportDryRunService dryRunService,
                                     WorkbookImportExecutionService executionService,
-                                    WorkbookImportRuntimeService runtimeService) {
+                                    WorkbookImportRuntimeService runtimeService,
+                                    ObjectMapper objectMapper) {
         this.dryRunService = dryRunService;
         this.executionService = executionService;
         this.runtimeService = runtimeService;
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping(value = "/dry-run", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public WorkbookImportDryRunResponseDto dryRun(@RequestPart("file") MultipartFile file,
                                                   @RequestPart("options") String optionsJson,
-                                                  @RequestParam(value = "operator", required = false) String operator) throws Exception {
-        WorkbookImportDryRunOptionsDto options = objectMapper.readValue(optionsJson, WorkbookImportDryRunOptionsDto.class);
+                                                  @RequestParam(value = "operator", required = false) String operator) {
+        WorkbookImportDryRunOptionsDto options;
+        try {
+            options = objectMapper.readValue(optionsJson, WorkbookImportDryRunOptionsDto.class);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalArgumentException("invalid workbook import options format: " + ex.getOriginalMessage(), ex);
+        }
         return dryRunService.dryRun(file, operator, options);
     }
 

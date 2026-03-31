@@ -4,6 +4,8 @@ import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunResponseDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportJobStatusDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportLogEventDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportLogPageDto;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -25,6 +27,9 @@ import java.util.function.Consumer;
 
 @Service
 public class WorkbookImportRuntimeService {
+
+    private static final Logger log = LoggerFactory.getLogger(WorkbookImportRuntimeService.class);
+    private static final long DEFAULT_EMITTER_TIMEOUT_MILLIS = 1_800_000L;
 
     private final WorkbookImportProperties properties;
     private final Map<String, WorkbookImportSupport.ImportSessionState> sessions = new ConcurrentHashMap<>();
@@ -78,18 +83,16 @@ public class WorkbookImportRuntimeService {
 
     public WorkbookImportJobStatusDto getJobStatus(String jobId) {
         WorkbookImportSupport.JobState job = getJob(jobId);
-        synchronized (job) {
-            return copyStatus(job.getStatus());
-        }
+        return snapshotStatus(job);
     }
 
     public void mutateStatus(String jobId, Consumer<WorkbookImportJobStatusDto> mutator) {
         WorkbookImportSupport.JobState job = getJob(jobId);
-        synchronized (job) {
-            mutator.accept(job.getStatus());
-            job.getStatus().setUpdatedAt(OffsetDateTime.now());
-            recalculateOverallPercent(job.getStatus());
-        }
+        job.updateStatus(dto -> {
+            mutator.accept(dto);
+            dto.setUpdatedAt(OffsetDateTime.now());
+            recalculateOverallPercent(dto);
+        });
         emitProgress(job, "progress");
     }
 
@@ -137,15 +140,13 @@ public class WorkbookImportRuntimeService {
         event.setCursor(Long.toString(sequence));
         event.setTimestamp(OffsetDateTime.now());
         mutator.accept(event);
-        job.getLogs().add(event);
-
-        synchronized (job) {
-            job.getStatus().setLatestLogCursor(event.getCursor());
-            List<WorkbookImportLogEventDto> latestLogs = new ArrayList<>(job.getLogs());
+        job.appendLogAndUpdateStatus(event, (status, logSnapshot) -> {
+            status.setLatestLogCursor(event.getCursor());
+            List<WorkbookImportLogEventDto> latestLogs = logSnapshot;
             int fromIndex = Math.max(0, latestLogs.size() - 20);
-            job.getStatus().setLatestLogs(new ArrayList<>(latestLogs.subList(fromIndex, latestLogs.size())));
-            job.getStatus().setUpdatedAt(OffsetDateTime.now());
-        }
+            status.setLatestLogs(new ArrayList<>(latestLogs.subList(fromIndex, latestLogs.size())));
+            status.setUpdatedAt(OffsetDateTime.now());
+        });
 
         emit(job, "log", event);
         return event;
@@ -161,7 +162,7 @@ public class WorkbookImportRuntimeService {
         WorkbookImportSupport.JobState job = getJob(jobId);
         long minSequence = parseCursor(cursor);
         int pageSize = limit == null ? 100 : Math.max(1, Math.min(limit, 500));
-        List<WorkbookImportLogEventDto> filtered = job.getLogs().stream()
+        List<WorkbookImportLogEventDto> filtered = job.snapshotLogs().stream()
                 .filter(item -> item.getSequence() != null && item.getSequence() > minSequence)
                 .filter(item -> level == null || level.isBlank() || level.equalsIgnoreCase(item.getLevel()))
                 .filter(item -> stage == null || stage.isBlank() || stage.equalsIgnoreCase(item.getStage()))
@@ -184,7 +185,7 @@ public class WorkbookImportRuntimeService {
 
     public SseEmitter subscribe(String jobId) {
         WorkbookImportSupport.JobState job = getJob(jobId);
-        SseEmitter emitter = new SseEmitter(0L);
+        SseEmitter emitter = new SseEmitter(resolveEmitterTimeoutMillis());
         emitters.computeIfAbsent(jobId, key -> new CopyOnWriteArrayList<>()).add(emitter);
         emitter.onCompletion(() -> removeEmitter(jobId, emitter));
         emitter.onTimeout(() -> removeEmitter(jobId, emitter));
@@ -195,10 +196,14 @@ public class WorkbookImportRuntimeService {
 
     @Scheduled(fixedDelayString = "#{@workbookImportProperties.runtime.cleanupIntervalMillis}")
     void cleanupExpiredState() {
-        OffsetDateTime now = OffsetDateTime.now();
-        removeExpiredJobs(now);
-        removeExpiredSessions(now);
-        removeOrphanedEmitters();
+        try {
+            OffsetDateTime now = OffsetDateTime.now();
+            removeExpiredJobs(now);
+            removeExpiredSessions(now);
+            removeOrphanedEmitters();
+        } catch (RuntimeException ex) {
+            log.error("Failed to cleanup workbook import runtime state", ex);
+        }
     }
 
     private void emitProgress(WorkbookImportSupport.JobState job, String eventName) {
@@ -206,10 +211,7 @@ public class WorkbookImportRuntimeService {
     }
 
     private void emitProgress(WorkbookImportSupport.JobState job, String eventName, SseEmitter target) {
-        WorkbookImportJobStatusDto snapshot;
-        synchronized (job) {
-            snapshot = copyStatus(job.getStatus());
-        }
+        WorkbookImportJobStatusDto snapshot = snapshotStatus(job);
         emit(job, eventName, snapshot, target);
     }
 
@@ -251,8 +253,11 @@ public class WorkbookImportRuntimeService {
     private void removeExpiredJobs(OffsetDateTime now) {
         long retentionMillis = properties.getRuntime().getTerminalJobRetentionMillis();
         List<String> expiredJobIds = jobs.entrySet().stream()
-                .filter(entry -> isTerminalStatus(entry.getValue().getStatus().getStatus()))
-                .filter(entry -> isOlderThan(entry.getValue().getStatus().getUpdatedAt(), retentionMillis, now))
+                .filter(entry -> {
+                    WorkbookImportJobStatusDto status = snapshotStatus(entry.getValue());
+                    return isTerminalStatus(status.getStatus())
+                            && isOlderThan(status.getUpdatedAt(), retentionMillis, now);
+                })
                 .map(Map.Entry::getKey)
                 .toList();
         for (String jobId : expiredJobIds) {
@@ -330,6 +335,15 @@ public class WorkbookImportRuntimeService {
 
     private int safeProcessed(WorkbookImportJobStatusDto.EntityProgressDto dto) {
         return dto == null || dto.getProcessed() == null ? 0 : dto.getProcessed();
+    }
+
+    private long resolveEmitterTimeoutMillis() {
+        long configuredTimeoutMillis = properties.getRuntime().getEmitterTimeoutMillis();
+        return configuredTimeoutMillis > 0 ? configuredTimeoutMillis : DEFAULT_EMITTER_TIMEOUT_MILLIS;
+    }
+
+    private WorkbookImportJobStatusDto snapshotStatus(WorkbookImportSupport.JobState job) {
+        return job.readStatus(this::copyStatus);
     }
 
     private WorkbookImportJobStatusDto copyStatus(WorkbookImportJobStatusDto source) {

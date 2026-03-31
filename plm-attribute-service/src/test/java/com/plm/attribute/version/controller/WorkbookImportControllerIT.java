@@ -88,6 +88,25 @@ class WorkbookImportControllerIT {
     }
 
     @Test
+    void dryRun_shouldReturnBadRequestWhenOptionsJsonIsInvalid() throws Exception {
+        String suffix = uniqueSuffix();
+        MockMultipartFile workbook = Objects.requireNonNull(createAutoWorkbook(suffix));
+        MockMultipartFile invalidOptions = new MockMultipartFile(
+                "options",
+                "",
+                MediaType.APPLICATION_JSON_VALUE,
+                "{invalid-json".getBytes());
+
+        mockMvc.perform(multipart("/api/meta/imports/workbook/dry-run")
+                        .file(workbook)
+                        .file(invalidOptions)
+                        .param("operator", "it-user"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_ARGUMENT"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("invalid workbook import options format")));
+    }
+
+    @Test
     void importJobLogsAndStreamEndpoints_shouldExposeHttpWorkflow() throws Exception {
         String suffix = uniqueSuffix();
         WorkbookImportDryRunResponseDto dryRun = performDryRun(suffix);

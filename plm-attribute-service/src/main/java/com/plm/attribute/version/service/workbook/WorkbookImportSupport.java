@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 
 public final class WorkbookImportSupport {
 
@@ -94,6 +96,15 @@ public final class WorkbookImportSupport {
     ) {
     }
 
+    /**
+     * Concurrency model:
+     * Immutable job metadata is stored in final fields.
+     * The mutable status DTO is guarded by this JobState instance monitor and must be accessed via
+     * the synchronized helper methods below so callers observe a consistent snapshot.
+     * Logs are stored in a CopyOnWriteArrayList to allow lock-free iteration for paging and SSE replay,
+     * while updates that derive status fields from the log stream are coordinated under the same monitor.
+     * Sequence allocation is handled independently through AtomicLong.
+     */
     public static final class JobState {
         private final String jobId;
         private final String importSessionId;
@@ -127,12 +138,22 @@ public final class WorkbookImportSupport {
             return atomic;
         }
 
-        public WorkbookImportJobStatusDto getStatus() {
-            return status;
+        public synchronized <T> T readStatus(Function<WorkbookImportJobStatusDto, T> reader) {
+            return reader.apply(status);
         }
 
-        public List<WorkbookImportLogEventDto> getLogs() {
-            return logs;
+        public synchronized void updateStatus(java.util.function.Consumer<WorkbookImportJobStatusDto> mutator) {
+            mutator.accept(status);
+        }
+
+        public synchronized void appendLogAndUpdateStatus(WorkbookImportLogEventDto event,
+                                                          BiConsumer<WorkbookImportJobStatusDto, List<WorkbookImportLogEventDto>> mutator) {
+            logs.add(event);
+            mutator.accept(status, new ArrayList<>(logs));
+        }
+
+        public List<WorkbookImportLogEventDto> snapshotLogs() {
+            return new ArrayList<>(logs);
         }
 
         public long nextSequence() {

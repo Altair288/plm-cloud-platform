@@ -64,6 +64,7 @@ public class WorkbookImportProperties {
     public static class Runtime {
 
         private long cleanupIntervalMillis = 600_000L;
+        private long emitterTimeoutMillis = 1_800_000L;
         private long sessionRetentionMillis = 86_400_000L;
         private long terminalJobRetentionMillis = 3_600_000L;
 
@@ -73,6 +74,14 @@ public class WorkbookImportProperties {
 
         public void setCleanupIntervalMillis(long cleanupIntervalMillis) {
             this.cleanupIntervalMillis = cleanupIntervalMillis;
+        }
+
+        public long getEmitterTimeoutMillis() {
+            return emitterTimeoutMillis;
+        }
+
+        public void setEmitterTimeoutMillis(long emitterTimeoutMillis) {
+            this.emitterTimeoutMillis = emitterTimeoutMillis;
         }
 
         public long getSessionRetentionMillis() {

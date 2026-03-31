@@ -17,6 +17,7 @@ plm:
       queue-capacity: 32
     runtime:
       cleanup-interval-millis: 600000
+      emitter-timeout-millis: 1800000
       session-retention-millis: 86400000
       terminal-job-retention-millis: 3600000
 

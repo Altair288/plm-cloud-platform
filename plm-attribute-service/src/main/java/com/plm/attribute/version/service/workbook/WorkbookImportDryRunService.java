@@ -109,13 +109,15 @@ public class WorkbookImportDryRunService {
 
             List<MutableCategoryRow> categoryRows = parseCategoryRows(categorySheet);
             assignPreviewCategoryCodes(categoryRows, options);
-            Map<String, MutableCategoryRow> categoryByReference = indexCategoriesByReference(categoryRows);
-            Map<String, MutableCategoryRow> categoryByFinalCode = indexCategoriesByFinalCode(categoryRows);
+            CategoryIndexes categoryIndexes = indexCategories(categoryRows);
+            Map<String, MutableCategoryRow> categoryByReference = categoryIndexes.byReference();
+            Map<String, MutableCategoryRow> categoryByFinalCode = categoryIndexes.byFinalCode();
 
             List<MutableAttributeRow> attributeRows = parseAttributeRows(attributeSheet, categoryByReference, categoryByFinalCode);
             assignPreviewAttributeCodes(attributeRows, options, categoryByReference);
-            Map<String, MutableAttributeRow> attributeByReference = indexAttributesByReference(attributeRows, categoryByReference);
-            Map<String, MutableAttributeRow> attributeByFinalCode = indexAttributesByFinalCode(attributeRows, categoryByReference);
+            AttributeIndexes attributeIndexes = indexAttributes(attributeRows);
+            Map<String, MutableAttributeRow> attributeByReference = attributeIndexes.byReference();
+            Map<String, MutableAttributeRow> attributeByFinalCode = attributeIndexes.byFinalCode();
 
             List<MutableEnumOptionRow> enumRows = parseEnumRows(enumSheet, categoryByReference, categoryByFinalCode, attributeByReference, attributeByFinalCode);
             assignPreviewEnumCodes(enumRows, options, categoryByReference, attributeByReference, attributeByFinalCode);
@@ -355,24 +357,18 @@ public class WorkbookImportDryRunService {
         }
     }
 
-    private Map<String, MutableCategoryRow> indexCategoriesByReference(List<MutableCategoryRow> rows) {
-        Map<String, MutableCategoryRow> result = new LinkedHashMap<>();
+    private CategoryIndexes indexCategories(List<MutableCategoryRow> rows) {
+        Map<String, MutableCategoryRow> byReference = new LinkedHashMap<>();
+        Map<String, MutableCategoryRow> byFinalCode = new LinkedHashMap<>();
         for (MutableCategoryRow row : rows) {
             if (row.businessDomain != null && row.excelReferenceCode != null) {
-                result.put(composeCategoryCodeKey(row.businessDomain, row.excelReferenceCode), row);
+                byReference.put(composeCategoryCodeKey(row.businessDomain, row.excelReferenceCode), row);
             }
-        }
-        return result;
-    }
-
-    private Map<String, MutableCategoryRow> indexCategoriesByFinalCode(List<MutableCategoryRow> rows) {
-        Map<String, MutableCategoryRow> result = new LinkedHashMap<>();
-        for (MutableCategoryRow row : rows) {
             if (row.businessDomain != null && row.resolvedFinalCode != null) {
-                result.put(composeCategoryCodeKey(row.businessDomain, row.resolvedFinalCode), row);
+                byFinalCode.put(composeCategoryCodeKey(row.businessDomain, row.resolvedFinalCode), row);
             }
         }
-        return result;
+        return new CategoryIndexes(byReference, byFinalCode);
     }
 
     private List<MutableAttributeRow> parseAttributeRows(Sheet sheet,
@@ -490,26 +486,18 @@ public class WorkbookImportDryRunService {
         }
     }
 
-    private Map<String, MutableAttributeRow> indexAttributesByReference(List<MutableAttributeRow> rows,
-                                                                        Map<String, MutableCategoryRow> categoryByReference) {
-        Map<String, MutableAttributeRow> result = new LinkedHashMap<>();
+    private AttributeIndexes indexAttributes(List<MutableAttributeRow> rows) {
+        Map<String, MutableAttributeRow> byReference = new LinkedHashMap<>();
+        Map<String, MutableAttributeRow> byFinalCode = new LinkedHashMap<>();
         for (MutableAttributeRow row : rows) {
             if (row.businessDomain != null && row.categoryReferenceCode != null && row.attributeReferenceCode != null) {
-                result.put(composeAttributeKey(row.businessDomain, row.categoryReferenceCode, row.attributeReferenceCode), row);
+                byReference.put(composeAttributeKey(row.businessDomain, row.categoryReferenceCode, row.attributeReferenceCode), row);
             }
-        }
-        return result;
-    }
-
-    private Map<String, MutableAttributeRow> indexAttributesByFinalCode(List<MutableAttributeRow> rows,
-                                                                        Map<String, MutableCategoryRow> categoryByReference) {
-        Map<String, MutableAttributeRow> result = new LinkedHashMap<>();
-        for (MutableAttributeRow row : rows) {
             if (row.businessDomain != null && row.resolvedCategoryCode != null && row.resolvedFinalCode != null) {
-                result.put(composeAttributeKey(row.businessDomain, row.resolvedCategoryCode, row.resolvedFinalCode), row);
+                byFinalCode.put(composeAttributeKey(row.businessDomain, row.resolvedCategoryCode, row.resolvedFinalCode), row);
             }
         }
-        return result;
+        return new AttributeIndexes(byReference, byFinalCode);
     }
 
     private List<MutableEnumOptionRow> parseEnumRows(Sheet sheet,
@@ -1185,6 +1173,18 @@ public class WorkbookImportDryRunService {
         void warn(String columnName, String errorCode, String message, String rawValue, String expectedRule);
 
         void setResolvedAction(String action);
+    }
+
+    private record CategoryIndexes(
+            Map<String, MutableCategoryRow> byReference,
+            Map<String, MutableCategoryRow> byFinalCode
+    ) {
+    }
+
+    private record AttributeIndexes(
+            Map<String, MutableAttributeRow> byReference,
+            Map<String, MutableAttributeRow> byFinalCode
+    ) {
     }
 
     private abstract static class BaseMutableRow implements MutableIssueHolder {
