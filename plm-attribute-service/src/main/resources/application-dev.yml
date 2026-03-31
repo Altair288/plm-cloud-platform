@@ -9,6 +9,16 @@ plm:
     driver-class-name: org.postgresql.Driver
   flyway:
     enabled: true
+  workbook-import:
+    async:
+      thread-name-prefix: workbook-import-
+      core-pool-size: 2
+      max-pool-size: 4
+      queue-capacity: 32
+    runtime:
+      cleanup-interval-millis: 600000
+      session-retention-millis: 86400000
+      terminal-job-retention-millis: 3600000
 
 spring:
   jpa:

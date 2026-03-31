@@ -2538,6 +2538,17 @@ public class MetaCategoryCrudService {
                         freezeCode
                 );
                     }
+                    case "AUTO_RESERVED" -> {
+                    String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(businessDomain);
+                    Integer ruleVersion = metaCodeRuleService.detail(ruleCode).getLatestVersionNo();
+                    yield new MetaCodeRuleService.GeneratedCodeResult(
+                        requireCode(req.getCode()),
+                        ruleCode,
+                        ruleVersion,
+                        false,
+                        freezeCode
+                    );
+                    }
             case "MANUAL" -> {
                 String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(businessDomain);
                 yield metaCodeRuleService.generateCode(

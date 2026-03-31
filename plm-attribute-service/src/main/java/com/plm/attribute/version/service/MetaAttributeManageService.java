@@ -371,7 +371,9 @@ public class MetaAttributeManageService {
             return false;
         }
         String dataType = req.getDataType().trim();
-        return "enum".equalsIgnoreCase(dataType) || "multi-enum".equalsIgnoreCase(dataType);
+        return "enum".equalsIgnoreCase(dataType)
+                || "multi-enum".equalsIgnoreCase(dataType)
+                || "multi_enum".equalsIgnoreCase(dataType);
     }
 
     private boolean isEnumLike(String dataType) {
@@ -383,7 +385,7 @@ public class MetaAttributeManageService {
             return false;
         }
         String lower = normalized.toLowerCase(Locale.ROOT);
-        return "enum".equals(lower) || "multi-enum".equals(lower);
+        return "enum".equals(lower) || "multi-enum".equals(lower) || "multi_enum".equals(lower);
     }
 
     private int normalizePreviewCount(Integer count) {
@@ -587,6 +589,17 @@ public class MetaAttributeManageService {
                 }
                 String ruleCode = metaCodeRuleSetService.resolveAttributeRuleCode(categoryDef.getBusinessDomain());
                 yield metaCodeRuleService.generateCode(ruleCode, "ATTRIBUTE", null, context, null, operator, freezeKey);
+            }
+            case "AUTO_RESERVED" -> {
+                String ruleCode = metaCodeRuleSetService.resolveAttributeRuleCode(categoryDef.getBusinessDomain());
+                Integer ruleVersion = metaCodeRuleService.detail(ruleCode).getLatestVersionNo();
+                yield new MetaCodeRuleService.GeneratedCodeResult(
+                        requireValue(req.getKey(), "key"),
+                        ruleCode,
+                        ruleVersion,
+                        false,
+                        freezeKey
+                );
             }
             case "MANUAL" -> {
                 String ruleCode = metaCodeRuleSetService.resolveAttributeRuleCode(categoryDef.getBusinessDomain());
