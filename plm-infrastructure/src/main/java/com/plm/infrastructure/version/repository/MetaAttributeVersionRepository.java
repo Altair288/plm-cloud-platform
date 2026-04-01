@@ -54,7 +54,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         join d.categoryDef c
                         where v.isLatest = true
                             and (:includeDeleted = true or lower(d.status) <> 'deleted')
-                            and (:categoryCodePrefix is null or :categoryCodePrefix = '' or c.codeKey like concat(:categoryCodePrefix, '%'))
+                            and (:categoryCode is null or :categoryCode = '' or c.codeKey = :categoryCode)
                             and (:keyword is null or :keyword = '' or v.displayName like concat('%', :keyword, '%'))
                             and (:dataType is null or :dataType = '' or v.dataType = :dataType)
                             and (:requiredFlag is null or v.requiredFlag = :requiredFlag)
@@ -68,7 +68,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         join d.categoryDef c
                         where v.isLatest = true
                             and (:includeDeleted = true or lower(d.status) <> 'deleted')
-                            and (:categoryCodePrefix is null or :categoryCodePrefix = '' or c.codeKey like concat(:categoryCodePrefix, '%'))
+                            and (:categoryCode is null or :categoryCode = '' or c.codeKey = :categoryCode)
                             and (:keyword is null or :keyword = '' or v.displayName like concat('%', :keyword, '%'))
                             and (:dataType is null or :dataType = '' or v.dataType = :dataType)
                             and (:requiredFlag is null or v.requiredFlag = :requiredFlag)
@@ -77,7 +77,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         """
         )
         Page<MetaAttributeDefListItemDto> searchLatestListItems(
-                @Param("categoryCodePrefix") String categoryCodePrefix,
+            @Param("categoryCode") String categoryCode,
                 @Param("keyword") String keyword,
                 @Param("dataType") String dataType,
                 @Param("requiredFlag") Boolean requiredFlag,

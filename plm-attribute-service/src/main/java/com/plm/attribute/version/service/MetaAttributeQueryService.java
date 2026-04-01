@@ -42,7 +42,7 @@ public class MetaAttributeQueryService {
     }
 
     public Page<MetaAttributeDefListItemDto> list(
-            String categoryCodePrefix,
+            String categoryCode,
             String keyword,
             String dataType,
             Boolean required,
@@ -51,7 +51,7 @@ public class MetaAttributeQueryService {
             boolean includeDeleted,
             Pageable pageable) {
         return attributeVersionRepository.searchLatestListItems(
-                categoryCodePrefix,
+                categoryCode,
                 keyword,
                 dataType,
                 required,

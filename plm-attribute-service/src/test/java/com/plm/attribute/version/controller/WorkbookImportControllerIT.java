@@ -82,6 +82,9 @@ class WorkbookImportControllerIT {
         mockMvc.perform(get("/api/meta/imports/workbook/sessions/{importSessionId}", dryRun.getImportSessionId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.importSessionId").value(dryRun.getImportSessionId()))
+            .andExpect(jsonPath("$.preview.categories[0].rowNumber").value(4))
+            .andExpect(jsonPath("$.preview.attributes[0].rowNumber").value(3))
+            .andExpect(jsonPath("$.preview.enumOptions[0].rowNumber").value(3))
                 .andExpect(jsonPath("$.preview.categories.length()").value(2))
                 .andExpect(jsonPath("$.preview.attributes.length()").value(1))
                 .andExpect(jsonPath("$.preview.enumOptions.length()").value(2));
@@ -245,13 +248,16 @@ class WorkbookImportControllerIT {
                                              List<String[]> enumRows) throws Exception {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Sheet categories = workbook.createSheet("分类层级");
-            writeRow(categories, 0, "Business_Domain", "Category_Code", "Category_Path", "Category_Name");
+            writeRow(categories, 0, "分类层级：填写真实编码、完整路径、分类名称，右侧自动校验与预览");
+            writeRow(categories, 1, "", "用户填写区", "", "");
+            writeRow(categories, 2, "Business_Domain", "Category_Code", "Category_Path", "Category_Name");
             for (int index = 0; index < categoryRows.size(); index++) {
-                writeRow(categories, index + 1, categoryRows.get(index));
+                writeRow(categories, index + 3, categoryRows.get(index));
             }
 
             Sheet attributes = workbook.createSheet("属性定义");
-            writeRow(attributes, 0,
+            writeRow(attributes, 0, "属性定义：填写属性基础信息，前两行为模板说明与表头");
+            writeRow(attributes, 1,
                     "Category_Code",
                     "Category_Name",
                     "Attribute_Key",
@@ -273,13 +279,14 @@ class WorkbookImportControllerIT {
                     "True_Label",
                     "False_Label");
             for (int index = 0; index < attributeRows.size(); index++) {
-                writeRow(attributes, index + 1, attributeRows.get(index));
+                writeRow(attributes, index + 2, attributeRows.get(index));
             }
 
             Sheet enums = workbook.createSheet("枚举值定义");
-            writeRow(enums, 0, "Category_Code", "Attribute_Key", "Option_Code", "Option_Name", "Display_Label");
+            writeRow(enums, 0, "枚举值定义：填写枚举型属性的候选值，前两行为模板说明与表头");
+            writeRow(enums, 1, "Category_Code", "Attribute_Key", "Option_Code", "Option_Name", "Display_Label");
             for (int index = 0; index < enumRows.size(); index++) {
-                writeRow(enums, index + 1, enumRows.get(index));
+                writeRow(enums, index + 2, enumRows.get(index));
             }
 
             workbook.write(output);

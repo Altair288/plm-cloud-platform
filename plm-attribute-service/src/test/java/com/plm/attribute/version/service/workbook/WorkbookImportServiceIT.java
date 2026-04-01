@@ -87,6 +87,7 @@ class WorkbookImportServiceIT {
         WorkbookImportDryRunResponseDto.EnumOptionPreviewItemDto secondEnum = response.getPreview().getEnumOptions().get(1);
 
         Assertions.assertEquals("SYSTEM_RULE_AUTO", root.getCodeMode());
+        Assertions.assertEquals(4, root.getRowNumber());
         Assertions.assertTrue(root.getResolvedFinalCode().startsWith("MATERIAL-"), "actual root code=" + root.getResolvedFinalCode());
         Assertions.assertEquals("/" + root.getResolvedFinalCode(), root.getResolvedFinalPath());
 
@@ -95,12 +96,14 @@ class WorkbookImportServiceIT {
         Assertions.assertTrue(child.getResolvedFinalCode().startsWith("MATERIAL-"), "actual child code=" + child.getResolvedFinalCode());
 
         Assertions.assertEquals(child.getResolvedFinalCode(), attribute.getCategoryCode());
+        Assertions.assertEquals(3, attribute.getRowNumber());
         Assertions.assertEquals("SYSTEM_RULE_AUTO", attribute.getCodeMode());
         Assertions.assertTrue(attribute.getResolvedFinalCode().startsWith("ATTR-" + child.getResolvedFinalCode() + "-"),
                 "actual attribute code=" + attribute.getResolvedFinalCode());
 
         Assertions.assertEquals(attribute.getResolvedFinalCode(), firstEnum.getAttributeKey());
         Assertions.assertEquals(attribute.getResolvedFinalCode(), secondEnum.getAttributeKey());
+        Assertions.assertEquals(3, firstEnum.getRowNumber());
         Assertions.assertTrue(firstEnum.getResolvedFinalCode().startsWith("ENUM-" + attribute.getResolvedFinalCode() + "-"),
                 "actual enum code=" + firstEnum.getResolvedFinalCode());
         Assertions.assertTrue(secondEnum.getResolvedFinalCode().startsWith("ENUM-" + attribute.getResolvedFinalCode() + "-"),
@@ -368,13 +371,16 @@ class WorkbookImportServiceIT {
                                              List<String[]> enumRows) throws Exception {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Sheet categories = workbook.createSheet("分类层级");
-            writeRow(categories, 0, "Business_Domain", "Category_Code", "Category_Path", "Category_Name");
+            writeRow(categories, 0, "分类层级：填写真实编码、完整路径、分类名称，右侧自动校验与预览");
+            writeRow(categories, 1, "", "用户填写区", "", "");
+            writeRow(categories, 2, "Business_Domain", "Category_Code", "Category_Path", "Category_Name");
             for (int index = 0; index < categoryRows.size(); index++) {
-                writeRow(categories, index + 1, categoryRows.get(index));
+                writeRow(categories, index + 3, categoryRows.get(index));
             }
 
             Sheet attributes = workbook.createSheet("属性定义");
-            writeRow(attributes, 0,
+            writeRow(attributes, 0, "属性定义：填写属性基础信息，前两行为模板说明与表头");
+            writeRow(attributes, 1,
                     "Category_Code",
                     "Category_Name",
                     "Attribute_Key",
@@ -396,13 +402,14 @@ class WorkbookImportServiceIT {
                     "True_Label",
                     "False_Label");
             for (int index = 0; index < attributeRows.size(); index++) {
-                writeRow(attributes, index + 1, attributeRows.get(index));
+                writeRow(attributes, index + 2, attributeRows.get(index));
             }
 
             Sheet enums = workbook.createSheet("枚举值定义");
-            writeRow(enums, 0, "Category_Code", "Attribute_Key", "Option_Code", "Option_Name", "Display_Label");
+            writeRow(enums, 0, "枚举值定义：填写枚举型属性的候选值，前两行为模板说明与表头");
+            writeRow(enums, 1, "Category_Code", "Attribute_Key", "Option_Code", "Option_Name", "Display_Label");
             for (int index = 0; index < enumRows.size(); index++) {
-                writeRow(enums, index + 1, enumRows.get(index));
+                writeRow(enums, index + 2, enumRows.get(index));
             }
 
             workbook.write(output);

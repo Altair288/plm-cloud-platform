@@ -52,6 +52,9 @@ public class WorkbookImportDryRunService {
     private static final String SHEET_CATEGORIES = "分类层级";
     private static final String SHEET_ATTRIBUTES = "属性定义";
     private static final String SHEET_ENUMS = "枚举值定义";
+    private static final int CATEGORY_DATA_START_ROW_INDEX = 3;
+    private static final int ATTRIBUTE_DATA_START_ROW_INDEX = 2;
+    private static final int ENUM_DATA_START_ROW_INDEX = 2;
     private static final String MODE_EXCEL_MANUAL = "EXCEL_MANUAL";
     private static final String MODE_SYSTEM_RULE_AUTO = "SYSTEM_RULE_AUTO";
     private static final String POLICY_OVERWRITE = "OVERWRITE_EXISTING";
@@ -199,7 +202,7 @@ public class WorkbookImportDryRunService {
         Set<String> batchCodeKeys = new LinkedHashSet<>();
         Set<String> batchPathKeys = new LinkedHashSet<>();
         Set<String> seenPathKeys = new LinkedHashSet<>();
-        for (int index = 1; index <= sheet.getLastRowNum(); index++) {
+        for (int index = CATEGORY_DATA_START_ROW_INDEX; index <= sheet.getLastRowNum(); index++) {
             Row row = sheet.getRow(index);
             if (isBlankRow(row, 4)) {
                 continue;
@@ -377,7 +380,7 @@ public class WorkbookImportDryRunService {
         List<MutableAttributeRow> rows = new ArrayList<>();
         Set<String> batchKeySet = new LinkedHashSet<>();
         Set<String> batchFieldSet = new LinkedHashSet<>();
-        for (int index = 1; index <= sheet.getLastRowNum(); index++) {
+        for (int index = ATTRIBUTE_DATA_START_ROW_INDEX; index <= sheet.getLastRowNum(); index++) {
             Row row = sheet.getRow(index);
             if (isBlankRow(row, 20)) {
                 continue;
@@ -508,7 +511,7 @@ public class WorkbookImportDryRunService {
         List<MutableEnumOptionRow> rows = new ArrayList<>();
         Set<String> batchOptionKeys = new LinkedHashSet<>();
         Set<String> batchNameKeys = new LinkedHashSet<>();
-        for (int index = 1; index <= sheet.getLastRowNum(); index++) {
+        for (int index = ENUM_DATA_START_ROW_INDEX; index <= sheet.getLastRowNum(); index++) {
             Row row = sheet.getRow(index);
             if (isBlankRow(row, 5)) {
                 continue;
