@@ -21,7 +21,10 @@ import java.util.UUID;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
-        properties = "spring.main.lazy-initialization=true"
+    properties = {
+        "spring.main.lazy-initialization=true",
+        "spring.main.allow-bean-definition-overriding=true"
+    }
 )
 @ActiveProfiles("dev")
 @Transactional
@@ -163,6 +166,54 @@ class MetaAttributeManageServiceIT {
         Assertions.assertEquals("DVAL-" + detail.getKey() + "-02", detail.getLovValues().get(1).getCode());
     }
 
+    @Test
+    void createAttribute_shouldRejectDuplicateAttributeKeyAcrossCategoriesInSameBusinessDomain() {
+        String categoryA = "MAT-DUP-A-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        String categoryB = "MAT-DUP-B-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        String sharedKey = "ATTR_SHARED_" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        createCategory(categoryA, "Duplicate Category A");
+        createCategory(categoryB, "Duplicate Category B");
+
+        MetaAttributeUpsertRequestDto first = enumAttribute("Status A", "statusA");
+        first.setKey(sharedKey);
+        attributeManageService.create("MATERIAL", categoryA, first, "it-user");
+
+        MetaAttributeUpsertRequestDto second = enumAttribute("Status B", "statusB");
+        second.setKey(sharedKey);
+
+        IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class,
+                () -> attributeManageService.create("MATERIAL", categoryB, second, "it-user"));
+        Assertions.assertTrue(exception.getMessage().contains("attribute already exists"));
+    }
+
+    @Test
+    void createAttribute_shouldRejectDuplicateEnumCodeAcrossAttributesInSameBusinessDomain() {
+        String categoryA = "MAT-ENUM-A-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        String categoryB = "MAT-ENUM-B-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        String sharedEnumCode = "ENUM_SHARED_" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        createCategory(categoryA, "Enum Category A");
+        createCategory(categoryB, "Enum Category B");
+
+        MetaAttributeUpsertRequestDto first = new MetaAttributeUpsertRequestDto();
+        first.setKey("ATTR_ENUM_A_" + UUID.randomUUID().toString().replace("-", "").substring(0, 4).toUpperCase());
+        first.setDisplayName("Enum A");
+        first.setAttributeField("enumA");
+        first.setDataType("enum");
+        first.setLovValues(List.of(lovValue(sharedEnumCode, "A1")));
+        attributeManageService.create("MATERIAL", categoryA, first, "it-user");
+
+        MetaAttributeUpsertRequestDto second = new MetaAttributeUpsertRequestDto();
+        second.setKey("ATTR_ENUM_B_" + UUID.randomUUID().toString().replace("-", "").substring(0, 4).toUpperCase());
+        second.setDisplayName("Enum B");
+        second.setAttributeField("enumB");
+        second.setDataType("enum");
+        second.setLovValues(List.of(lovValue(sharedEnumCode, "B1")));
+
+        IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class,
+                () -> attributeManageService.create("MATERIAL", categoryB, second, "it-user"));
+        Assertions.assertTrue(exception.getMessage().contains("enum option code already exists in business domain"));
+    }
+
         @Test
         void previewCreateCode_shouldReturnSuggestedAttributeAndEnumValueCodes() {
         String categoryCode = "MAT-ATTR-PREVIEW-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
@@ -233,7 +284,7 @@ class MetaAttributeManageServiceIT {
         request.setDisplayName(displayName);
         request.setAttributeField(attributeField);
         request.setDataType("enum");
-        request.setLovValues(List.of(lovValue("A", "A"), lovValue("B", "B")));
+        request.setLovValues(List.of(autoLovValue("A"), autoLovValue("B")));
         return request;
     }
 

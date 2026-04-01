@@ -7,6 +7,7 @@ import java.time.OffsetDateTime;
 public class MetaAttributeDefListItemDto {
     private String key;
     private String lovKey;
+    private String businessDomain;
     private String categoryCode;
     private String status;
     private Integer latestVersionNo;
@@ -25,11 +26,12 @@ public class MetaAttributeDefListItemDto {
     public MetaAttributeDefListItemDto() {
     }
 
-    public MetaAttributeDefListItemDto(String key, String lovKey, String categoryCode, String status,
+    public MetaAttributeDefListItemDto(String key, String lovKey, String businessDomain, String categoryCode, String status,
             Integer latestVersionNo, String displayName, String attributeField, String dataType, String unit,
             Boolean hasLov, OffsetDateTime createdAt) {
         this.key = key;
         this.lovKey = lovKey;
+        this.businessDomain = businessDomain;
         this.categoryCode = categoryCode;
         this.status = status;
         this.latestVersionNo = latestVersionNo;
@@ -41,13 +43,14 @@ public class MetaAttributeDefListItemDto {
         this.createdAt = createdAt;
     }
 
-    public MetaAttributeDefListItemDto(String key, String lovKey, String categoryCode, String status,
+    public MetaAttributeDefListItemDto(String key, String lovKey, String businessDomain, String categoryCode, String status,
             Integer latestVersionNo, String displayName, String attributeField, String dataType, String unit,
             Boolean hasLov,
             Boolean required, Boolean unique, Boolean hidden, Boolean readOnly, Boolean searchable,
             OffsetDateTime createdAt) {
         this.key = key;
         this.lovKey = lovKey;
+        this.businessDomain = businessDomain;
         this.categoryCode = categoryCode;
         this.status = status;
         this.latestVersionNo = latestVersionNo;

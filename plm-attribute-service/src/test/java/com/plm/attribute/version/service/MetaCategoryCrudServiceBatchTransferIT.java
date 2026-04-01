@@ -33,7 +33,10 @@ import java.util.function.Supplier;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
-        properties = "spring.main.lazy-initialization=true"
+    properties = {
+        "spring.main.lazy-initialization=true",
+        "spring.main.allow-bean-definition-overriding=true"
+    }
 )
 @ActiveProfiles("dev")
 @Transactional

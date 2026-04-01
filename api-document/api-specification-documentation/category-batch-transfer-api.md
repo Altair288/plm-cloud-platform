@@ -49,7 +49,7 @@ copyOptions 字段：
 |---|---|---:|---|---|
 | versionPolicy | string | 否 | CURRENT_ONLY | 首期仅支持当前快照复制 |
 | codePolicy | string | 否 | AUTO_SUFFIX | 编码冲突策略 |
-| namePolicy | string | 否 | KEEP | 名称策略 |
+| namePolicy | string | 否 | AUTO_SUFFIX | 名称策略 |
 | defaultStatus | string | 否 | DRAFT | 复制后默认状态 |
 
 ### 2.2 请求示例
@@ -65,7 +65,7 @@ copyOptions 字段：
   "copyOptions": {
     "versionPolicy": "CURRENT_ONLY",
     "codePolicy": "AUTO_SUFFIX",
-    "namePolicy": "KEEP",
+    "namePolicy": "AUTO_SUFFIX",
     "defaultStatus": "DRAFT"
   },
   "operations": [
@@ -107,7 +107,7 @@ copyOptions 字段：
 - 新对象生成全新 id
 - 新版本从 versionNo=1 开始
 - codePolicy=AUTO_SUFFIX，按当前实现自动派生 `-COPY-001`、`-COPY-002`...
-- namePolicy=KEEP，默认沿用原名称
+- namePolicy=AUTO_SUFFIX，默认自动派生可用名称；显式传 KEEP 时若原名称冲突则失败
 - defaultStatus 默认写为 draft
 - 每个复制出的新分类都会写入 copiedFromCategoryId
 

@@ -318,7 +318,7 @@ curl "http://localhost:8080/api/meta/code-rules/ATTRIBUTE"
 {
   "businessDomain": "DEVICE",
   "ruleCode": "IT_RULE_ATTRIBUTE_BY_CATEGORY",
-  "name": "按分类派生的属性编码规则",
+  "name": "属性编码规则示例（引用 CATEGORY_CODE 变量）",
   "targetType": "attribute",
   "scopeType": "GLOBAL",
   "scopeValue": null,
@@ -373,7 +373,7 @@ curl -X POST "http://localhost:8080/api/meta/code-rules?operator=alice" \
   -d '{
     "businessDomain":"DEVICE",
     "ruleCode":"IT_RULE_ATTRIBUTE_BY_CATEGORY",
-    "name":"按分类派生的属性编码规则",
+    "name":"属性编码规则示例（引用 CATEGORY_CODE 变量）",
     "targetType":"attribute",
     "scopeType":"GLOBAL",
     "pattern":"ATTR-{CATEGORY_CODE}-{SEQ}",
@@ -435,7 +435,7 @@ curl -X PUT "http://localhost:8080/api/meta/code-rules/IT_RULE_ATTRIBUTE_BY_CATE
   -d '{
     "businessDomain":"DEVICE",
     "ruleCode":"IT_RULE_ATTRIBUTE_BY_CATEGORY",
-    "name":"按分类派生的属性编码规则 v2",
+    "name":"属性编码规则示例（引用 CATEGORY_CODE 变量）v2",
     "targetType":"attribute",
     "scopeType":"GLOBAL",
     "pattern":"ATTR-{CATEGORY_CODE}-{SEQ}",

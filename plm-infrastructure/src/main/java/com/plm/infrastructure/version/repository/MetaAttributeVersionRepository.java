@@ -34,6 +34,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         select new com.plm.common.api.dto.attribute.MetaAttributeDefListItemDto(
                             d.key,
                             v.lovKey,
+                            d.businessDomain,
                             c.codeKey,
                             d.status,
                             v.versionNo,
@@ -54,6 +55,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         join d.categoryDef c
                         where v.isLatest = true
                             and (:includeDeleted = true or lower(d.status) <> 'deleted')
+                            and (:businessDomain is null or :businessDomain = '' or d.businessDomain = :businessDomain)
                             and (:categoryCode is null or :categoryCode = '' or c.codeKey = :categoryCode)
                             and (:keyword is null or :keyword = '' or v.displayName like concat('%', :keyword, '%'))
                             and (:dataType is null or :dataType = '' or v.dataType = :dataType)
@@ -68,6 +70,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         join d.categoryDef c
                         where v.isLatest = true
                             and (:includeDeleted = true or lower(d.status) <> 'deleted')
+                            and (:businessDomain is null or :businessDomain = '' or d.businessDomain = :businessDomain)
                             and (:categoryCode is null or :categoryCode = '' or c.codeKey = :categoryCode)
                             and (:keyword is null or :keyword = '' or v.displayName like concat('%', :keyword, '%'))
                             and (:dataType is null or :dataType = '' or v.dataType = :dataType)
@@ -77,6 +80,7 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
                         """
         )
         Page<MetaAttributeDefListItemDto> searchLatestListItems(
+            @Param("businessDomain") String businessDomain,
             @Param("categoryCode") String categoryCode,
                 @Param("keyword") String keyword,
                 @Param("dataType") String dataType,

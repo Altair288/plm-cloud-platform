@@ -177,15 +177,15 @@
 
 ### 5.2 属性
 
-- 推荐唯一键：categoryCode + attributeKey
+- 推荐唯一键：businessDomain + attributeKey
 - 次级唯一键：categoryCode + attributeField
-- 推荐幂等键：categoryCode + attributeKey
+- 推荐幂等键：businessDomain + attributeKey
 
 ### 5.3 枚举值
 
-- 推荐唯一键：categoryCode + attributeKey + optionCode
-- 次级唯一键：categoryCode + attributeKey + optionName
-- 推荐幂等键：categoryCode + attributeKey + optionCode
+- 推荐唯一键：businessDomain + optionCode
+- 次级唯一键：categoryCode + attributeKey + optionName（仅用于同一属性内名称治理，不作为跨业务域主唯一键）
+- 推荐幂等键：同一属性更新时可使用 businessDomain + optionCode；跨属性重码必须直接判冲突
 
 ---
 
@@ -743,19 +743,21 @@ log 事件示例：
 
 属性定义：
 
-- categoryCode + attributeKey 批次内唯一
+- businessDomain + attributeKey 批次内唯一
 - categoryCode + attributeField 批次内建议唯一
 
 枚举值定义：
 
-- categoryCode + attributeKey + optionCode 批次内唯一
+- businessDomain + optionCode 批次内唯一
 - 同一属性下 optionName 建议唯一
 
 ### 11.4 跨 sheet 校验
 
 - 属性定义.categoryCode 必须能在分类层级中找到，或数据库中已存在
 - 若属性定义.categoryName 有值，建议与分类名称一致
-- 枚举值定义.categoryCode + attributeKey 必须能在属性定义中找到，或数据库中已存在
+- 枚举值定义必须先按 categoryCode 解析 businessDomain，再用 businessDomain + attributeKey 定位所属属性；若命中同业务域下其他分类则必须判冲突
+- 若数据库中存在相同 `attributeKey` 但属于同一 businessDomain 下其他分类，则必须判冲突，不允许按创建处理
+- 若数据库中存在相同 `optionCode` 但属于同一 businessDomain 下其他属性，则必须判冲突，不允许按创建处理
 - 枚举值定义只能绑定到 enum 或 multi_enum 属性
 
 ### 11.5 存量数据校验
@@ -763,8 +765,8 @@ log 事件示例：
 按推荐幂等键判定 create、update、skip、conflict：
 
 - 分类：businessDomain + categoryCode
-- 属性：categoryCode + attributeKey
-- 枚举值：categoryCode + attributeKey + optionCode
+- 属性：businessDomain + attributeKey
+- 枚举值：businessDomain + optionCode
 
 ### 11.6 重复数据策略执行规则
 

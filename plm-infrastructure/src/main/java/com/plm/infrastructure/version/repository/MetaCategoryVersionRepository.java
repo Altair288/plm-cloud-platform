@@ -17,6 +17,32 @@ public interface MetaCategoryVersionRepository extends JpaRepository<MetaCategor
     @Query("select v from MetaCategoryVersion v where v.categoryDef = :def and v.isLatest = true")
     Optional<MetaCategoryVersion> findLatestByDef(@Param("def") MetaCategoryDef def);
 
+        @Query("""
+                        select count(v.id) > 0
+                        from MetaCategoryVersion v
+                        join v.categoryDef d
+                        where v.isLatest = true
+                            and d.businessDomain = :businessDomain
+                            and lower(coalesce(v.displayName, '')) = lower(:displayName)
+                            and (d.status is null or lower(d.status) <> 'deleted')
+                        """)
+        boolean existsLatestByBusinessDomainAndDisplayName(@Param("businessDomain") String businessDomain,
+                                                                                                             @Param("displayName") String displayName);
+
+        @Query("""
+                        select count(v.id) > 0
+                        from MetaCategoryVersion v
+                        join v.categoryDef d
+                        where v.isLatest = true
+                            and d.businessDomain = :businessDomain
+                            and lower(coalesce(v.displayName, '')) = lower(:displayName)
+                            and d.id <> :excludeCategoryId
+                            and (d.status is null or lower(d.status) <> 'deleted')
+                        """)
+        boolean existsLatestByBusinessDomainAndDisplayNameAndCategoryDefIdNot(@Param("businessDomain") String businessDomain,
+                                                                                                                                                     @Param("displayName") String displayName,
+                                                                                                                                                     @Param("excludeCategoryId") UUID excludeCategoryId);
+
     List<MetaCategoryVersion> findByCategoryDefOrderByVersionNoAsc(MetaCategoryDef def);
 
     List<MetaCategoryVersion> findByCategoryDefInAndIsLatestTrue(Collection<MetaCategoryDef> defs);

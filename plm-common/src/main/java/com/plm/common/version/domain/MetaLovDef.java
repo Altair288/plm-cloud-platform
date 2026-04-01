@@ -19,6 +19,9 @@ public class MetaLovDef {
     @JoinColumn(name = "attribute_def_id", nullable = false)
     private MetaAttributeDef attributeDef;
 
+    @Column(name = "business_domain", nullable = false, length = 64)
+    private String businessDomain;
+
     @Column(name = "key", nullable = false, length = 128)
     private String key;
 

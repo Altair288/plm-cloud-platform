@@ -18,9 +18,10 @@ public class MetaAttributeImportController {
 
     @PostMapping(value = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public AttributeImportSummaryDto importAttributes(@RequestPart("file") MultipartFile file,
+            @RequestParam("businessDomain") String businessDomain,
             @RequestParam(value = "createdBy", required = false) String createdBy) throws Exception {
         if (createdBy == null || createdBy.isBlank())
             createdBy = "system";
-        return importService.importExcel(file, createdBy);
+        return importService.importExcel(businessDomain, file, createdBy);
     }
 }

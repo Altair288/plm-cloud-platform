@@ -416,14 +416,26 @@ public class WorkbookImportExecutionService {
             item.action = resolveAction(exists, categoryPolicy);
         }
         for (AttributeWorkItem item : plan.attributes) {
-            MetaCategoryDef category = item.finalCategoryCode == null ? null : categoryDefRepository.findByCodeKey(item.finalCategoryCode).orElse(null);
-            boolean exists = category != null && item.finalCode != null && attributeDefRepository.findActiveByCategoryDefAndKey(category, item.finalCode).isPresent();
-            item.action = resolveAction(exists, attributePolicy);
+            String businessDomain = item.businessDomain(plan.categories);
+            var existing = businessDomain == null || item.finalCode == null
+                    ? java.util.Optional.<com.plm.common.version.domain.MetaAttributeDef>empty()
+                    : attributeDefRepository.findActiveByBusinessDomainAndKey(businessDomain, item.finalCode);
+            if (existing.isEmpty()) {
+                item.action = resolveAction(false, attributePolicy);
+                continue;
+            }
+            MetaCategoryDef ownerCategory = existing.get().getCategoryDef();
+            if (ownerCategory != null && Objects.equals(ownerCategory.getCodeKey(), item.finalCategoryCode)) {
+                item.action = resolveAction(true, attributePolicy);
+                continue;
+            }
+            item.action = "CONFLICT";
         }
         Map<String, Map<String, String>> existingEnumCodes = new HashMap<>();
         for (EnumWorkItem item : plan.enums) {
-            String key = item.finalCategoryCode + "::" + item.finalAttributeCode;
-            Map<String, String> values = existingEnumCodes.computeIfAbsent(key, ignored -> loadExistingEnumCodes(item.finalAttributeCode));
+            String businessDomain = item.businessDomain(plan.categories);
+            String key = businessDomain + "::" + item.finalCategoryCode + "::" + item.finalAttributeCode;
+            Map<String, String> values = existingEnumCodes.computeIfAbsent(key, ignored -> loadExistingEnumCodes(businessDomain, item.finalAttributeCode));
             item.action = resolveAction(values.containsKey(item.finalCode), enumPolicy);
         }
     }
@@ -536,10 +548,10 @@ public class WorkbookImportExecutionService {
 
                 MetaAttributeUpsertRequestDto request = toAttributeRequest(item, false);
                 if ("UPDATE".equals(item.action)) {
-                    attributeManageService.update(item.finalCategoryCode, item.finalCode, request, job.getOperator());
+                    attributeManageService.update(item.businessDomain(plan.categories), item.finalCategoryCode, item.finalCode, request, job.getOperator());
                     incrementProgress(job.getJobId(), WorkbookImportSupport.STAGE_ATTRIBUTES, "updated", ++processed, total);
                 } else {
-                    attributeManageService.create(item.finalCategoryCode, request, job.getOperator());
+                    attributeManageService.create(item.businessDomain(plan.categories), item.finalCategoryCode, request, job.getOperator());
                     incrementProgress(job.getJobId(), WorkbookImportSupport.STAGE_ATTRIBUTES, "created", ++processed, total);
                 }
                 runtimeService.appendLog(job.getJobId(), log -> {
@@ -597,13 +609,13 @@ public class WorkbookImportExecutionService {
                     continue;
                 }
 
-                MetaAttributeDefDetailDto detail = attributeQueryService.detail(first.finalAttributeCode, true);
+                MetaAttributeDefDetailDto detail = attributeQueryService.detail(first.businessDomain(plan.categories), first.finalAttributeCode, true);
                 if (detail == null || detail.getLatestVersion() == null) {
                     throw new IllegalArgumentException("attribute not found for enum import: " + first.finalAttributeCode);
                 }
                 MetaAttributeUpsertRequestDto request = toAttributeRequest(detail, first.finalAttributeCode);
                 request.setLovValues(mergeEnumValues(detail, group));
-                attributeManageService.update(first.finalCategoryCode, first.finalAttributeCode, request, job.getOperator());
+                attributeManageService.update(first.businessDomain(plan.categories), first.finalCategoryCode, first.finalAttributeCode, request, job.getOperator());
 
                 for (EnumWorkItem item : group) {
                     String metric = "UPDATE".equals(item.action) ? "updated" : "created";
@@ -726,8 +738,8 @@ public class WorkbookImportExecutionService {
         return new ArrayList<>(merged.values());
     }
 
-    private Map<String, String> loadExistingEnumCodes(String attributeKey) {
-        MetaAttributeDefDetailDto detail = attributeQueryService.detail(attributeKey, true);
+    private Map<String, String> loadExistingEnumCodes(String businessDomain, String attributeKey) {
+        MetaAttributeDefDetailDto detail = attributeQueryService.detail(businessDomain, attributeKey, true);
         Map<String, String> result = new LinkedHashMap<>();
         if (detail == null || detail.getLovValues() == null) {
             return result;

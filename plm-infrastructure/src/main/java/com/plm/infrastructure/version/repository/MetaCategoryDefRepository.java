@@ -13,6 +13,7 @@ import java.util.*;
 @Repository
 public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef, UUID> {
     Optional<MetaCategoryDef> findByCodeKey(String codeKey);
+    List<MetaCategoryDef> findAllByCodeKey(String codeKey);
     boolean existsByCodeKey(String codeKey);
     Optional<MetaCategoryDef> findByBusinessDomainAndCodeKey(String businessDomain, String codeKey);
     boolean existsByBusinessDomainAndCodeKey(String businessDomain, String codeKey);

@@ -23,7 +23,10 @@ import java.util.Map;
 
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.NONE,
-    properties = "spring.main.lazy-initialization=true"
+    properties = {
+        "spring.main.lazy-initialization=true",
+        "spring.main.allow-bean-definition-overriding=true"
+    }
 )
 @ActiveProfiles("dev")
 @Transactional
@@ -76,11 +79,11 @@ public class MetaAttributeImportServiceIT {
 
         MockMultipartFile mf = new MockMultipartFile("file", "test.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bos.toByteArray());
 
-        AttributeImportSummaryDto first = importService.importExcel(mf, "tester");
-        AttributeImportSummaryDto second = importService.importExcel(mf, "tester");
+        AttributeImportSummaryDto first = importService.importExcel("MATERIAL", mf, "tester");
+        AttributeImportSummaryDto second = importService.importExcel("MATERIAL", mf, "tester");
 
         String expectedAttrKey = "ATTR-CAT001-" + String.format("%0" + CodeRuleSupport.ATTRIBUTE_SEQUENCE_WIDTH + "d", 1);
-        MetaAttributeDefDetailDto detail = queryService.detail(expectedAttrKey, true);
+        MetaAttributeDefDetailDto detail = queryService.detail("MATERIAL", expectedAttrKey, true);
 
         Assertions.assertTrue(first.getCreatedAttributeDefs() >= 0,
             "first summary: createdDefs=" + first.getCreatedAttributeDefs()
@@ -115,12 +118,12 @@ public class MetaAttributeImportServiceIT {
 
         MockMultipartFile mf = createImportFile(categoryCode, "功率", List.of("LOW", "HIGH"));
 
-        AttributeImportSummaryDto summary = importService.importExcel(mf, "tester");
+        AttributeImportSummaryDto summary = importService.importExcel("DEVICE", mf, "tester");
 
         Assertions.assertEquals(0, summary.getErrorCount(), "errors=" + summary.getErrors());
 
         String expectedAttrKey = "DATTR-" + categoryCode + "-001";
-        MetaAttributeDefDetailDto detail = queryService.detail(expectedAttrKey, true);
+        MetaAttributeDefDetailDto detail = queryService.detail("DEVICE", expectedAttrKey, true);
         Assertions.assertEquals(expectedAttrKey + "_LOV", detail.getLovKey());
         Assertions.assertEquals("DVAL-" + expectedAttrKey + "-01", detail.getLovValues().get(0).getCode());
         Assertions.assertEquals("DVAL-" + expectedAttrKey + "-02", detail.getLovValues().get(1).getCode());

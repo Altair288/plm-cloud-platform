@@ -20,21 +20,23 @@ public class MetaAttributeManageController {
 
     @PostMapping("/code-preview")
     public CreateAttributeCodePreviewResponseDto previewCreateCode(
+            @RequestParam(value = "businessDomain", required = false) String businessDomain,
             @RequestParam("categoryCode") String categoryCode,
             @RequestBody CreateAttributeCodePreviewRequestDto request) {
-        return manageService.previewCreateCode(categoryCode, request);
+        return manageService.previewCreateCode(businessDomain, categoryCode, request);
     }
 
     /** 创建属性：插入 def + 首个 version（versionNo=1, isLatest=true） */
     @PostMapping
     public ResponseEntity<MetaAttributeDefDetailDto> create(
+            @RequestParam("businessDomain") String businessDomain,
             @RequestParam("categoryCode") String categoryCode,
             @RequestBody MetaAttributeUpsertRequestDto req,
             @RequestHeader(value = "X-User", required = false) String xUser,
             @RequestParam(value = "createdBy", required = false) String createdBy,
             @RequestParam(value = "includeValues", required = false, defaultValue = "true") boolean includeValues) {
         String operator = pickOperator(xUser, createdBy);
-        MetaAttributeDefDetailDto dto = manageService.create(categoryCode, req, operator);
+        MetaAttributeDefDetailDto dto = manageService.create(businessDomain, categoryCode, req, operator);
         if (!includeValues && dto != null) {
             // 当前 manageService 返回 detail(includeValues=true)。若前端不需要枚举值可再扩展 manageService 支持。
         }
@@ -45,13 +47,14 @@ public class MetaAttributeManageController {
     @PutMapping("/{attrKey}")
     public ResponseEntity<MetaAttributeDefDetailDto> update(
             @PathVariable("attrKey") String attrKey,
+            @RequestParam("businessDomain") String businessDomain,
             @RequestParam("categoryCode") String categoryCode,
             @RequestBody MetaAttributeUpsertRequestDto req,
             @RequestHeader(value = "X-User", required = false) String xUser,
             @RequestParam(value = "createdBy", required = false) String createdBy,
             @RequestParam(value = "includeValues", required = false, defaultValue = "true") boolean includeValues) {
         String operator = pickOperator(xUser, createdBy);
-        MetaAttributeDefDetailDto dto = manageService.update(categoryCode, attrKey, req, operator);
+        MetaAttributeDefDetailDto dto = manageService.update(businessDomain, categoryCode, attrKey, req, operator);
         if (!includeValues && dto != null) {
             // 同上：如需返回不带枚举值的 detail，可扩展 manageService。
         }
@@ -61,23 +64,25 @@ public class MetaAttributeManageController {
     @PatchMapping("/{attrKey}")
     public ResponseEntity<MetaAttributeDefDetailDto> patch(
             @PathVariable("attrKey") String attrKey,
+            @RequestParam("businessDomain") String businessDomain,
             @RequestParam("categoryCode") String categoryCode,
             @RequestBody MetaAttributeUpsertRequestDto req,
             @RequestHeader(value = "X-User", required = false) String xUser,
             @RequestParam(value = "createdBy", required = false) String createdBy,
             @RequestParam(value = "includeValues", required = false, defaultValue = "true") boolean includeValues) {
-        return update(attrKey, categoryCode, req, xUser, createdBy, includeValues);
+        return update(attrKey, businessDomain, categoryCode, req, xUser, createdBy, includeValues);
     }
 
     /** 删除属性：软删（将 meta_attribute_def.status 置为 deleted） */
     @DeleteMapping("/{attrKey}")
     public ResponseEntity<Void> delete(
             @PathVariable("attrKey") String attrKey,
+            @RequestParam("businessDomain") String businessDomain,
             @RequestParam("categoryCode") String categoryCode,
             @RequestHeader(value = "X-User", required = false) String xUser,
             @RequestParam(value = "createdBy", required = false) String createdBy) {
         String operator = pickOperator(xUser, createdBy);
-        manageService.delete(categoryCode, attrKey, operator);
+        manageService.delete(businessDomain, categoryCode, attrKey, operator);
         return ResponseEntity.noContent().build();
     }
 

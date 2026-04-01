@@ -19,6 +19,9 @@ public class MetaAttributeDef {
     @JoinColumn(name = "category_def_id", nullable = false)
     private MetaCategoryDef categoryDef;
 
+    @Column(name = "business_domain", nullable = false, length = 64)
+    private String businessDomain;
+
     @Column(name = "key", nullable = false, length = 128)
     private String key;
 

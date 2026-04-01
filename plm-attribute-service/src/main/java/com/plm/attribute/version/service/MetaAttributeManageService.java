@@ -73,6 +73,14 @@ public class MetaAttributeManageService {
     @Transactional(readOnly = true)
     public CreateAttributeCodePreviewResponseDto previewCreateCode(String categoryCodeKey,
                                                                    CreateAttributeCodePreviewRequestDto req) {
+        MetaCategoryDef categoryDef = resolveCategory(null, categoryCodeKey);
+        return previewCreateCode(categoryDef.getBusinessDomain(), categoryCodeKey, req);
+    }
+
+    @Transactional(readOnly = true)
+    public CreateAttributeCodePreviewResponseDto previewCreateCode(String businessDomain,
+                                                                   String categoryCodeKey,
+                                                                   CreateAttributeCodePreviewRequestDto req) {
         if (req == null) {
             throw new IllegalArgumentException("request body is required");
         }
@@ -80,8 +88,7 @@ public class MetaAttributeManageService {
             throw new IllegalArgumentException("categoryCode is required");
         }
 
-        MetaCategoryDef categoryDef = categoryDefRepository.findByCodeKey(categoryCodeKey)
-                .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
+        MetaCategoryDef categoryDef = resolveCategory(businessDomain, categoryCodeKey);
         Map<String, String> attributeContext = buildCodeContext(categoryDef, null);
         String manualKey = trimToNull(req.getManualKey());
         String attributeRuleCode = metaCodeRuleSetService.resolveAttributeRuleCode(categoryDef.getBusinessDomain());
@@ -125,6 +132,13 @@ public class MetaAttributeManageService {
     @Transactional
     public MetaAttributeDefDetailDto create(String categoryCodeKey, MetaAttributeUpsertRequestDto req,
             String operator) {
+        MetaCategoryDef categoryDef = resolveCategory(null, categoryCodeKey);
+        return create(categoryDef.getBusinessDomain(), categoryCodeKey, req, operator);
+    }
+
+    @Transactional
+    public MetaAttributeDefDetailDto create(String businessDomain, String categoryCodeKey, MetaAttributeUpsertRequestDto req,
+            String operator) {
         if (req == null)
             throw new IllegalArgumentException("request body is required");
         if (isBlank(categoryCodeKey))
@@ -134,8 +148,7 @@ public class MetaAttributeManageService {
         if (isBlank(req.getDataType()))
             throw new IllegalArgumentException("dataType is required");
 
-        MetaCategoryDef categoryDef = categoryDefRepository.findByCodeKey(categoryCodeKey)
-                .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
+        MetaCategoryDef categoryDef = resolveCategory(businessDomain, categoryCodeKey);
         MetaCategoryVersion categoryVersion = categoryVersionRepository.findLatestByDef(categoryDef)
                 .orElseThrow(() -> new IllegalArgumentException("category has no latest version: " + categoryCodeKey));
 
@@ -144,19 +157,19 @@ public class MetaAttributeManageService {
         String lovKey = resolveLovBindingKeyForCreate(req, key);
         boolean hasLov = !isBlank(lovKey) || isEnumLike(req);
 
-        // 1) create def (unique per category)
-        MetaAttributeDef def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key).orElse(null);
+        // 1) create def (unique per business domain)
+        MetaAttributeDef def = attributeDefRepository.findActiveByBusinessDomainAndKey(categoryDef.getBusinessDomain(), key).orElse(null);
         if (def != null) {
             throw new IllegalArgumentException(
-                    "attribute already exists: category=" + categoryCodeKey + ", key=" + key);
+                    "attribute already exists: businessDomain=" + categoryDef.getBusinessDomain() + ", key=" + key);
         }
 
         UUID id = UUID.randomUUID();
         // autoBindKey 暂保持与 key 一致（与导入逻辑一致：当 key 是系统生成编码时，两者相同）
-        int inserted = attributeDefRepository.insertIgnore(id, categoryDef.getId(), key, hasLov, key, operator);
+        int inserted = attributeDefRepository.insertIgnore(id, categoryDef.getId(), categoryDef.getBusinessDomain(), key, hasLov, key, operator);
         if (inserted <= 0) {
             // 并发情况下可能被其它请求插入
-            def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key).orElseThrow();
+            def = attributeDefRepository.findActiveByBusinessDomainAndKey(categoryDef.getBusinessDomain(), key).orElseThrow();
         } else {
             def = attributeDefRepository.findById(Objects.requireNonNull(id, "attributeId")).orElseThrow();
         }
@@ -175,11 +188,18 @@ public class MetaAttributeManageService {
 
         upsertLovValuesIfNeeded(categoryDef, def, v, req, lovKey, operator);
 
-        return queryService.detail(def.getKey(), true);
+        return queryService.detail(categoryDef.getBusinessDomain(), def.getKey(), true);
     }
 
     @Transactional
     public MetaAttributeDefDetailDto update(String categoryCodeKey, String attrKey, MetaAttributeUpsertRequestDto req,
+            String operator) {
+        MetaCategoryDef categoryDef = resolveCategory(null, categoryCodeKey);
+        return update(categoryDef.getBusinessDomain(), categoryCodeKey, attrKey, req, operator);
+    }
+
+    @Transactional
+    public MetaAttributeDefDetailDto update(String businessDomain, String categoryCodeKey, String attrKey, MetaAttributeUpsertRequestDto req,
             String operator) {
         if (req == null)
             throw new IllegalArgumentException("request body is required");
@@ -188,15 +208,17 @@ public class MetaAttributeManageService {
         if (isBlank(attrKey))
             throw new IllegalArgumentException("attrKey is required");
 
-        MetaCategoryDef categoryDef = categoryDefRepository.findByCodeKey(categoryCodeKey)
-                .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
+        MetaCategoryDef categoryDef = resolveCategory(businessDomain, categoryCodeKey);
         MetaCategoryVersion categoryVersion = categoryVersionRepository.findLatestByDef(categoryDef)
                 .orElseThrow(() -> new IllegalArgumentException("category has no latest version: " + categoryCodeKey));
 
         String key = attrKey.trim();
-        MetaAttributeDef def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "attribute not found: category=" + categoryCodeKey + ", key=" + key));
+        MetaAttributeDef def = attributeDefRepository.findActiveByBusinessDomainAndKey(categoryDef.getBusinessDomain(), key)
+            .orElseThrow(() -> new IllegalArgumentException(
+                "attribute not found: businessDomain=" + categoryDef.getBusinessDomain() + ", key=" + key));
+        if (def.getCategoryDef() == null || !Objects.equals(def.getCategoryDef().getId(), categoryDef.getId())) {
+            throw new IllegalArgumentException("attribute does not belong to category: category=" + categoryCodeKey + ", key=" + key);
+        }
 
         if (isDeleted(def)) {
             throw new IllegalArgumentException("attribute is deleted: category=" + categoryCodeKey + ", key=" + key);
@@ -227,7 +249,7 @@ public class MetaAttributeManageService {
             // 结构无变化时，仍需处理可能变化的 LOV 值（如仅编辑枚举项）
             upsertLovValuesIfNeeded(categoryDef, def, latest, req, lovKey, operator);
             // 无变化：直接返回
-            return queryService.detail(def.getKey(), true);
+            return queryService.detail(categoryDef.getBusinessDomain(), def.getKey(), true);
         }
 
         MetaAttributeVersion v = new MetaAttributeVersion();
@@ -248,7 +270,7 @@ public class MetaAttributeManageService {
 
         upsertLovValuesIfNeeded(categoryDef, def, v, req, lovKey, operator);
 
-        return queryService.detail(def.getKey(), true);
+        return queryService.detail(categoryDef.getBusinessDomain(), def.getKey(), true);
     }
 
     /**
@@ -257,18 +279,26 @@ public class MetaAttributeManageService {
      */
     @Transactional
     public void delete(String categoryCodeKey, String attrKey, String operator) {
+        MetaCategoryDef categoryDef = resolveCategory(null, categoryCodeKey);
+        delete(categoryDef.getBusinessDomain(), categoryCodeKey, attrKey, operator);
+    }
+
+    @Transactional
+    public void delete(String businessDomain, String categoryCodeKey, String attrKey, String operator) {
         if (isBlank(categoryCodeKey))
             throw new IllegalArgumentException("categoryCode is required");
         if (isBlank(attrKey))
             throw new IllegalArgumentException("attrKey is required");
 
-        MetaCategoryDef categoryDef = categoryDefRepository.findByCodeKey(categoryCodeKey)
-                .orElseThrow(() -> new IllegalArgumentException("category not found: " + categoryCodeKey));
+        MetaCategoryDef categoryDef = resolveCategory(businessDomain, categoryCodeKey);
 
         String key = attrKey.trim();
-        MetaAttributeDef def = attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, key)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "attribute not found: category=" + categoryCodeKey + ", key=" + key));
+        MetaAttributeDef def = attributeDefRepository.findActiveByBusinessDomainAndKey(categoryDef.getBusinessDomain(), key)
+            .orElseThrow(() -> new IllegalArgumentException(
+                "attribute not found: businessDomain=" + categoryDef.getBusinessDomain() + ", key=" + key));
+        if (def.getCategoryDef() == null || !Objects.equals(def.getCategoryDef().getId(), categoryDef.getId())) {
+            throw new IllegalArgumentException("attribute does not belong to category: category=" + categoryCodeKey + ", key=" + key);
+        }
 
         if (isDeleted(def))
             return;
@@ -285,9 +315,39 @@ public class MetaAttributeManageService {
         attributeDefRepository.save(def);
     }
 
+    private MetaCategoryDef resolveCategory(String businessDomain, String categoryCodeKey) {
+        if (isBlank(categoryCodeKey)) {
+            throw new IllegalArgumentException("categoryCode is required");
+        }
+        String normalizedCategoryCode = categoryCodeKey.trim();
+        if (!isBlank(businessDomain)) {
+            return categoryDefRepository.findByBusinessDomainAndCodeKey(businessDomain.trim(), normalizedCategoryCode)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "category not found: businessDomain=" + businessDomain + ", categoryCode=" + normalizedCategoryCode));
+        }
+        List<MetaCategoryDef> matches = categoryDefRepository.findAllByCodeKey(normalizedCategoryCode).stream()
+                .filter(Objects::nonNull)
+                .filter(def -> def.getStatus() == null || !STATUS_DELETED.equalsIgnoreCase(def.getStatus().trim()))
+                .toList();
+        if (matches.isEmpty()) {
+            throw new IllegalArgumentException("category not found: " + normalizedCategoryCode);
+        }
+        if (matches.size() > 1) {
+            throw new IllegalArgumentException("categoryCode is ambiguous across business domains, businessDomain is required: " + normalizedCategoryCode);
+        }
+        return matches.get(0);
+    }
+
     private boolean isDeleted(MetaAttributeDef def) {
         if (def == null || def.getStatus() == null)
             return false;
+        return STATUS_DELETED.equalsIgnoreCase(def.getStatus().trim());
+    }
+
+    private boolean isDeleted(MetaLovDef def) {
+        if (def == null || def.getStatus() == null) {
+            return false;
+        }
         return STATUS_DELETED.equalsIgnoreCase(def.getStatus().trim());
     }
 
@@ -413,7 +473,7 @@ public class MetaAttributeManageService {
         MetaLovDef lovDef = lovDefRepository.findByAttributeDefAndKey(def, lovKey).orElse(null);
         if (lovDef == null) {
             UUID lovId = UUID.randomUUID();
-            int inserted = lovDefRepository.insertIgnore(lovId, def.getId(), lovKey, def.getKey(), null, operator);
+            int inserted = lovDefRepository.insertIgnore(lovId, def.getId(), categoryDef.getBusinessDomain(), lovKey, def.getKey(), null, operator);
             if (inserted > 0) {
                 lovDef = lovDefRepository.findById(Objects.requireNonNull(lovId, "lovId")).orElseThrow();
             } else {
@@ -426,6 +486,7 @@ public class MetaAttributeManageService {
         MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
         Map<String, String> existingValueCodes = extractExistingLovCodes(latest);
         String valueJson = buildLovValueJson(categoryDef, def.getKey(), req.getLovValues(), existingValueCodes, operator);
+        validateLovValueCodesUnique(categoryDef.getBusinessDomain(), lovDef, valueJson);
         String newHash = AttributeLovImportUtils.jsonHash(valueJson);
         if (latest != null && Objects.equals(latest.getHash(), newHash)) {
             return;
@@ -681,6 +742,57 @@ public class MetaAttributeManageService {
                 String code = trimToNull(node.path("code").asText(null));
                 if (name != null && code != null && !codes.containsKey(name)) {
                     codes.put(name, code);
+                }
+            });
+        } catch (Exception ignored) {
+            return new LinkedHashMap<>();
+        }
+        return codes;
+    }
+
+    private void validateLovValueCodesUnique(String businessDomain, MetaLovDef currentLovDef, String valueJson) {
+        if (isBlank(businessDomain) || isBlank(valueJson)) {
+            return;
+        }
+        Map<String, String> incomingCodes = extractLovCodeToName(valueJson);
+        if (incomingCodes.isEmpty()) {
+            return;
+        }
+        for (MetaLovDef lovDef : lovDefRepository.findByBusinessDomain(businessDomain)) {
+            if (lovDef == null || isDeleted(lovDef)) {
+                continue;
+            }
+            if (currentLovDef != null && Objects.equals(lovDef.getId(), currentLovDef.getId())) {
+                continue;
+            }
+            MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+            if (latest == null || isBlank(latest.getValueJson())) {
+                continue;
+            }
+            Map<String, String> existingCodes = extractLovCodeToName(latest.getValueJson());
+            for (String code : incomingCodes.keySet()) {
+                if (existingCodes.containsKey(code)) {
+                    throw new IllegalArgumentException("enum option code already exists in business domain: " + code);
+                }
+            }
+        }
+    }
+
+    private Map<String, String> extractLovCodeToName(String valueJson) {
+        LinkedHashMap<String, String> codes = new LinkedHashMap<>();
+        if (isBlank(valueJson)) {
+            return codes;
+        }
+        try {
+            var values = objectMapper.readTree(valueJson).path("values");
+            if (!values.isArray()) {
+                return codes;
+            }
+            values.forEach(node -> {
+                String code = trimToNull(node.path("code").asText(null));
+                String name = trimToNull(node.path("name").asText(null));
+                if (code != null && !codes.containsKey(code)) {
+                    codes.put(code, name);
                 }
             });
         } catch (Exception ignored) {

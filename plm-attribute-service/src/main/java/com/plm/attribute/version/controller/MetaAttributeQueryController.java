@@ -25,6 +25,7 @@ public class MetaAttributeQueryController {
     // 1. 列表查询（分页）
     @GetMapping
     public Page<MetaAttributeDefListItemDto> list(
+            @RequestParam(value = "businessDomain", required = false) String businessDomain,
             @RequestParam(value = "categoryCode", required = false) String categoryCode,
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "dataType", required = false) String dataType,
@@ -35,14 +36,15 @@ public class MetaAttributeQueryController {
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        return queryService.list(categoryCode, keyword, dataType, required, unique, searchable, includeDeleted, pageable);
+        return queryService.list(businessDomain, categoryCode, keyword, dataType, required, unique, searchable, includeDeleted, pageable);
     }
 
     // 2. 详情（含最新版本 + 所有历史版本摘要）
     @GetMapping("/{attrKey}")
     public MetaAttributeDefDetailDto detail(@PathVariable("attrKey") String attrKey,
+            @RequestParam("businessDomain") String businessDomain,
             @RequestParam(value = "includeValues", required = false, defaultValue = "false") boolean includeValues) {
-        MetaAttributeDefDetailDto dto = queryService.detail(attrKey, includeValues);
+        MetaAttributeDefDetailDto dto = queryService.detail(businessDomain, attrKey, includeValues);
         if (dto == null)
             throw new IllegalArgumentException("属性不存在:" + attrKey);
         return dto;
@@ -50,7 +52,8 @@ public class MetaAttributeQueryController {
 
     // 3. 版本列表摘要
     @GetMapping("/{attrKey}/versions")
-    public List<MetaAttributeVersionSummaryDto> versions(@PathVariable("attrKey") String attrKey) {
-        return queryService.versions(attrKey);
+    public List<MetaAttributeVersionSummaryDto> versions(@PathVariable("attrKey") String attrKey,
+            @RequestParam("businessDomain") String businessDomain) {
+        return queryService.versions(businessDomain, attrKey);
     }
 }

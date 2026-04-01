@@ -75,7 +75,7 @@
   "copyOptions": {
     "versionPolicy": "CURRENT_ONLY",
     "codePolicy": "AUTO_SUFFIX",
-    "namePolicy": "KEEP",
+    "namePolicy": "AUTO_SUFFIX",
     "defaultStatus": "DRAFT"
   },
   "operations": [
@@ -119,7 +119,7 @@ copyOptions 字段：
 | --- | --- | ---: | --- | --- |
 | versionPolicy | string | 否 | CURRENT_ONLY | 是否复制历史版本 |
 | codePolicy | string | 否 | AUTO_SUFFIX | 编码冲突策略 |
-| namePolicy | string | 否 | KEEP | 名称冲突策略 |
+| namePolicy | string | 否 | AUTO_SUFFIX | 名称冲突策略 |
 | defaultStatus | string | 否 | DRAFT | 复制后默认状态 |
 
 补充字段建议：
@@ -308,8 +308,8 @@ versionPolicy 首期只支持：
 
 首期建议：
 
-- 默认保持原 name（namePolicy=KEEP）。
-- 若后续业务要求同父同名唯一，可再支持 AUTO_SUFFIX。
+- 默认自动派生可用名称（namePolicy=AUTO_SUFFIX），例如追加 -COPY-001。
+- 若显式指定 namePolicy=KEEP，则仅在原名称可直接复用时成功，否则按名称冲突失败。
 
 ### 7.5 复制后默认状态
 

@@ -425,7 +425,10 @@ public class WorkbookImportDryRunService {
             }
 
             MutableCategoryRow category = resolveCategoryRow(item.categoryReferenceCode, categoryByReference, categoryByFinalCode);
-            MetaCategoryDef existingCategory = resolveExistingCategory(item.categoryReferenceCode);
+            MetaCategoryDef existingCategory = resolveExistingCategory(category != null ? category.businessDomain : null, item.categoryReferenceCode);
+            if (category == null && existingCategory == null && hasAmbiguousExistingCategory(item.categoryReferenceCode)) {
+                item.error("Category_Code", "ATTRIBUTE_CATEGORY_AMBIGUOUS", "分类编码在多个业务域中存在，必须先在工作簿分类页声明业务域", item.categoryReferenceCode, "categoryCode 在业务域内唯一");
+            }
             if (category == null && existingCategory == null) {
                 item.error("Category_Code", "ATTRIBUTE_CATEGORY_NOT_FOUND", "属性所属分类不存在", item.categoryReferenceCode, "分类必须在工作簿中或数据库中存在");
             } else {
@@ -437,10 +440,10 @@ public class WorkbookImportDryRunService {
                 }
             }
 
-            if (item.resolvedCategoryCode != null && item.attributeReferenceCode != null) {
-                String batchKey = item.resolvedCategoryCode + "::" + item.attributeReferenceCode;
+            if (item.businessDomain != null && item.attributeReferenceCode != null) {
+                String batchKey = item.businessDomain + "::" + item.attributeReferenceCode;
                 if (!batchKeySet.add(batchKey)) {
-                    item.error("Attribute_Key", "ATTRIBUTE_KEY_DUPLICATE_IN_BATCH", "批次内属性编码重复", item.attributeReferenceCode, "categoryCode + attributeKey 必须唯一");
+                    item.error("Attribute_Key", "ATTRIBUTE_KEY_DUPLICATE_IN_BATCH", "批次内属性编码重复", item.attributeReferenceCode, "businessDomain + attributeKey 必须唯一");
                 }
             }
             if (item.resolvedCategoryCode != null && item.attributeField != null) {
@@ -537,7 +540,10 @@ public class WorkbookImportDryRunService {
             }
 
             MutableCategoryRow category = resolveCategoryRow(item.categoryReferenceCode, categoryByReference, categoryByFinalCode);
-            MetaCategoryDef existingCategory = resolveExistingCategory(item.categoryReferenceCode);
+            MetaCategoryDef existingCategory = resolveExistingCategory(category != null ? category.businessDomain : null, item.categoryReferenceCode);
+            if (category == null && existingCategory == null && hasAmbiguousExistingCategory(item.categoryReferenceCode)) {
+                item.error("Category_Code", "ENUM_CATEGORY_AMBIGUOUS", "分类编码在多个业务域中存在，必须先在工作簿分类页声明业务域", item.categoryReferenceCode, "categoryCode 在业务域内唯一");
+            }
             if (category == null && existingCategory == null) {
                 item.error("Category_Code", "ENUM_CATEGORY_NOT_FOUND", "枚举值所属分类不存在", item.categoryReferenceCode, "分类必须在工作簿中或数据库中存在");
             } else {
@@ -551,6 +557,10 @@ public class WorkbookImportDryRunService {
                 if (batchAttribute == null && existingAttribute == null) {
                     item.error("Attribute_Key", "ENUM_ATTRIBUTE_NOT_FOUND", "枚举值所属属性不存在", item.attributeReferenceCode, "属性必须在工作簿中或数据库中存在");
                 } else {
+                    if (batchAttribute == null && existingAttribute != null && existingAttribute.getCategoryDef() != null
+                            && !Objects.equals(existingAttribute.getCategoryDef().getCodeKey(), item.resolvedCategoryCode)) {
+                        item.error("Attribute_Key", "ENUM_ATTRIBUTE_CATEGORY_CONFLICT", "属性编码已被业务域内其他分类占用", item.attributeReferenceCode, "businessDomain + attributeKey 必须唯一");
+                    }
                     item.resolvedAttributeCode = batchAttribute != null ? batchAttribute.resolvedFinalCode : existingAttribute.getKey();
                     String dataType = batchAttribute != null ? batchAttribute.dataType : latestAttributeDataType(existingAttribute);
                     if (!isEnumLike(dataType)) {
@@ -559,10 +569,10 @@ public class WorkbookImportDryRunService {
                 }
             }
 
-            if (item.resolvedCategoryCode != null && item.resolvedAttributeCode != null && item.optionReferenceCode != null) {
-                String batchKey = item.resolvedCategoryCode + "::" + item.resolvedAttributeCode + "::" + item.optionReferenceCode;
+            if (item.businessDomain != null && item.optionReferenceCode != null) {
+                String batchKey = item.businessDomain + "::" + item.optionReferenceCode;
                 if (!batchOptionKeys.add(batchKey)) {
-                    item.error("Option_Code", "ENUM_OPTION_CODE_DUPLICATE_IN_BATCH", "批次内枚举值编码重复", item.optionReferenceCode, "categoryCode + attributeKey + optionCode 必须唯一");
+                    item.error("Option_Code", "ENUM_OPTION_CODE_DUPLICATE_IN_BATCH", "批次内枚举值编码重复", item.optionReferenceCode, "businessDomain + optionCode 必须唯一");
                 }
             }
             if (item.resolvedCategoryCode != null && item.resolvedAttributeCode != null && item.optionName != null) {
@@ -635,19 +645,23 @@ public class WorkbookImportDryRunService {
                                          Map<String, MutableCategoryRow> categoryByReference) {
         String policy = options.getDuplicateOptions().getAttributeDuplicatePolicy();
         for (MutableAttributeRow row : rows) {
-            if (row.resolvedCategoryCode == null || row.resolvedFinalCode == null) {
+            if (row.businessDomain == null || row.resolvedCategoryCode == null || row.resolvedFinalCode == null) {
                 row.resolvedAction = "CREATE";
                 continue;
             }
-            MetaCategoryDef categoryDef = resolveExistingCategory(row.resolvedCategoryCode);
-            if (categoryDef == null) {
+            MetaAttributeDef existingAttribute = attributeDefRepository.findActiveByBusinessDomainAndKey(row.businessDomain, row.resolvedFinalCode).orElse(null);
+            if (existingAttribute == null) {
                 MutableCategoryRow batchCategory = resolveCategoryRow(row.categoryReferenceCode, categoryByReference, Map.of());
                 if (batchCategory == null) {
                     row.resolvedAction = "CREATE";
                     continue;
                 }
-            } else if (attributeDefRepository.findActiveByCategoryDefAndKey(categoryDef, row.resolvedFinalCode).isPresent()) {
+            } else if (existingAttribute.getCategoryDef() != null && Objects.equals(existingAttribute.getCategoryDef().getCodeKey(), row.resolvedCategoryCode)) {
                 applyResolvedAction(policy, row, "Attribute_Key", "ATTRIBUTE_DUPLICATE");
+                continue;
+            } else {
+                row.error("Attribute_Key", "ATTRIBUTE_KEY_CONFLICT_IN_DOMAIN", "属性编码已被业务域内其他分类占用", row.resolvedFinalCode, "businessDomain + attributeKey 必须唯一");
+                row.resolvedAction = "CONFLICT";
                 continue;
             }
             row.resolvedAction = "CREATE";
@@ -660,8 +674,9 @@ public class WorkbookImportDryRunService {
                                     Map<String, MutableAttributeRow> attributeByReference,
                                     Map<String, MutableAttributeRow> attributeByFinalCode) {
         String policy = options.getDuplicateOptions().getEnumOptionDuplicatePolicy();
+        Map<String, Map<String, ExistingEnumValue>> existingByBusinessDomain = new LinkedHashMap<>();
         for (MutableEnumOptionRow row : rows) {
-            if (row.resolvedCategoryCode == null || row.resolvedAttributeCode == null || row.resolvedFinalCode == null) {
+            if (row.businessDomain == null || row.resolvedCategoryCode == null || row.resolvedAttributeCode == null || row.resolvedFinalCode == null) {
                 row.resolvedAction = "CREATE";
                 continue;
             }
@@ -670,10 +685,15 @@ public class WorkbookImportDryRunService {
                 row.resolvedAction = "CREATE";
                 continue;
             }
-            Map<String, ExistingEnumValue> existingValues = loadExistingEnumValues(existingAttribute);
+            Map<String, ExistingEnumValue> existingValues = existingByBusinessDomain.computeIfAbsent(row.businessDomain, this::loadExistingEnumValuesByBusinessDomain);
             ExistingEnumValue existing = existingValues.get(row.resolvedFinalCode);
             if (existing != null) {
-                applyResolvedAction(policy, row, "Option_Code", "ENUM_OPTION_DUPLICATE");
+                if (Objects.equals(existing.attributeCode(), row.resolvedAttributeCode)) {
+                    applyResolvedAction(policy, row, "Option_Code", "ENUM_OPTION_DUPLICATE");
+                } else {
+                    row.error("Option_Code", "ENUM_OPTION_CODE_CONFLICT_IN_DOMAIN", "枚举值编码已被业务域内其他属性占用", row.resolvedFinalCode, "businessDomain + optionCode 必须唯一");
+                    row.resolvedAction = "CONFLICT";
+                }
             } else {
                 row.resolvedAction = "CREATE";
             }
@@ -903,62 +923,74 @@ public class WorkbookImportDryRunService {
         return attributeByFinalCode.get(composeAttributeKey(enumRow.businessDomain, enumRow.resolvedCategoryCode, enumRow.attributeReferenceCode));
     }
 
-    private MetaCategoryDef resolveExistingCategory(String categoryCode) {
+    private MetaCategoryDef resolveExistingCategory(String businessDomain, String categoryCode) {
         if (categoryCode == null) {
             return null;
         }
-        return categoryDefRepository.findByCodeKey(categoryCode).orElse(null);
+        if (businessDomain != null) {
+            return categoryDefRepository.findByBusinessDomainAndCodeKey(businessDomain, categoryCode).orElse(null);
+        }
+        List<MetaCategoryDef> matches = categoryDefRepository.findAllByCodeKey(categoryCode).stream()
+                .filter(Objects::nonNull)
+                .filter(def -> def.getStatus() == null || !"deleted".equalsIgnoreCase(def.getStatus().trim()))
+                .toList();
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    private boolean hasAmbiguousExistingCategory(String categoryCode) {
+        if (categoryCode == null) {
+            return false;
+        }
+        long count = categoryDefRepository.findAllByCodeKey(categoryCode).stream()
+                .filter(Objects::nonNull)
+                .filter(def -> def.getStatus() == null || !"deleted".equalsIgnoreCase(def.getStatus().trim()))
+                .count();
+        return count > 1;
     }
 
     private MetaAttributeDef resolveExistingAttribute(String businessDomain, String categoryCode, String attributeKey) {
-        if (categoryCode == null || attributeKey == null) {
+        if (businessDomain == null || attributeKey == null) {
             return null;
         }
-        MetaCategoryDef category = categoryDefRepository.findByCodeKey(categoryCode).orElse(null);
-        if (category == null) {
-            return null;
-        }
-        return attributeDefRepository.findActiveByCategoryDefAndKey(category, attributeKey).orElse(null);
+        return attributeDefRepository.findActiveByBusinessDomainAndKey(businessDomain, attributeKey).orElse(null);
     }
 
-    private Map<String, ExistingEnumValue> loadExistingEnumValues(MetaAttributeDef attributeDef) {
-        if (attributeDef == null) {
-            return Collections.emptyMap();
-        }
-        MetaLovDef lovDef = lovDefRepository.findByAttributeDef(attributeDef).stream()
-                .filter(Objects::nonNull)
-                .filter(item -> item.getStatus() == null || !"deleted".equalsIgnoreCase(item.getStatus()))
-                .findFirst()
-                .orElse(null);
-        if (lovDef == null) {
-            return Collections.emptyMap();
-        }
-        MetaLovVersion version = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
-        if (version == null || version.getValueJson() == null || version.getValueJson().isBlank()) {
+    private Map<String, ExistingEnumValue> loadExistingEnumValuesByBusinessDomain(String businessDomain) {
+        if (businessDomain == null) {
             return Collections.emptyMap();
         }
         Map<String, ExistingEnumValue> result = new LinkedHashMap<>();
-        try {
-            JsonNode root = objectMapper.readTree(version.getValueJson());
-            JsonNode values = root.path("values");
-            if (!values.isArray()) {
-                return Collections.emptyMap();
+        for (MetaLovDef lovDef : lovDefRepository.findByBusinessDomain(businessDomain)) {
+            if (lovDef == null || (lovDef.getStatus() != null && "deleted".equalsIgnoreCase(lovDef.getStatus().trim()))) {
+                continue;
             }
-            for (JsonNode item : values) {
-                if (item == null || item.isNull()) {
+            MetaLovVersion version = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+            if (version == null || version.getValueJson() == null || version.getValueJson().isBlank()) {
+                continue;
+            }
+            try {
+                JsonNode root = objectMapper.readTree(version.getValueJson());
+                JsonNode values = root.path("values");
+                if (!values.isArray()) {
                     continue;
                 }
-                String code = trimToNull(item.path("code").asText(null));
-                String name = trimToNull(item.path("name").asText(null));
-                if (name == null) {
-                    name = trimToNull(item.path("value").asText(null));
+                String attributeCode = lovDef.getAttributeDef() == null ? null : lovDef.getAttributeDef().getKey();
+                for (JsonNode item : values) {
+                    if (item == null || item.isNull()) {
+                        continue;
+                    }
+                    String code = trimToNull(item.path("code").asText(null));
+                    String name = trimToNull(item.path("name").asText(null));
+                    if (name == null) {
+                        name = trimToNull(item.path("value").asText(null));
+                    }
+                    if (code != null && !result.containsKey(code)) {
+                        result.put(code, new ExistingEnumValue(code, name, attributeCode));
+                    }
                 }
-                if (code != null) {
-                    result.put(code, new ExistingEnumValue(code, name));
-                }
+            } catch (Exception ignored) {
+                return Collections.emptyMap();
             }
-        } catch (Exception ignored) {
-            return Collections.emptyMap();
         }
         return result;
     }
@@ -1167,7 +1199,7 @@ public class WorkbookImportDryRunService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    private record ExistingEnumValue(String code, String name) {
+    private record ExistingEnumValue(String code, String name, String attributeCode) {
     }
 
     private interface MutableIssueHolder {

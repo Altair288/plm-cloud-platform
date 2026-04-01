@@ -65,7 +65,8 @@ public class MetaAttributeImportService {
      * Excel 模板(示例): 分类编号 | 分类名称 | 属性名称 | 属性类型 | 单位 | 枚举值1 | 枚举值2 | ...
      */
     @Transactional
-    public AttributeImportSummaryDto importExcel(MultipartFile file, String createdBy) throws IOException {
+    public AttributeImportSummaryDto importExcel(String businessDomain, MultipartFile file, String createdBy) throws IOException {
+        String normalizedBusinessDomain = requireValue(businessDomain, "businessDomain");
         if (file == null || file.isEmpty())
             throw new IllegalArgumentException("上传文件为空");
         Workbook workbook = WorkbookFactory.create(file.getInputStream());
@@ -129,7 +130,8 @@ public class MetaAttributeImportService {
         Set<String> allCatCodes = new HashSet<>();
         groups.values().forEach(g -> allCatCodes.add(g.categoryCode));
         allCatCodes
-                .forEach(code -> categoryDefRepository.findByCodeKey(code).ifPresent(d -> categoryCache.put(code, d)));
+            .forEach(code -> categoryDefRepository.findByBusinessDomainAndCodeKey(normalizedBusinessDomain, code)
+                .ifPresent(d -> categoryCache.put(code, d)));
 
         // 预加载分类下已有属性 -> (categoryDefId -> (semanticDisplayName->MetaAttributeDef))
         Map<UUID, Map<String, MetaAttributeDef>> attrCache = new HashMap<>();
@@ -174,7 +176,7 @@ public class MetaAttributeImportService {
                 );
                 attrKey = attrCode.code();
                 UUID newId = UUID.randomUUID();
-                int inserted = attributeDefRepository.insertIgnore(newId, catDef.getId(), attrKey, true, attrKey,
+                int inserted = attributeDefRepository.insertIgnore(newId, catDef.getId(), catDef.getBusinessDomain(), attrKey, true, attrKey,
                         createdBy);
                 if (inserted > 0) {
                     // 查询持久化实体，保证关系映射使用托管对象
@@ -228,7 +230,7 @@ public class MetaAttributeImportService {
             }
 
             // LOV 定义 & 版本（使用与 JSON 相同的 lovKey）
-            MetaLovDef lovDef = lovDefRepository.findByKey(lovKey).orElse(null);
+            MetaLovDef lovDef = lovDefRepository.findByBusinessDomainAndKey(catDef.getBusinessDomain(), lovKey).orElse(null);
             boolean newlyCreatedLov = false;
             if (lovDef == null) {
                 if (attrDef == null) {
@@ -237,19 +239,20 @@ public class MetaAttributeImportService {
                     continue; // 安全提前
                 }
                 UUID lovId = UUID.randomUUID();
-                int insLov = lovDefRepository.insertIgnore(lovId, attrDef.getId(), lovKey, attrKey, null, createdBy);
+                int insLov = lovDefRepository.insertIgnore(lovId, attrDef.getId(), catDef.getBusinessDomain(), lovKey, attrKey, null, createdBy);
                 if (insLov > 0) {
                     lovDef = lovDefRepository.findById(Objects.requireNonNull(lovId, "lovId")).orElseThrow();
                     newlyCreatedLov = true;
                     createdLovDefs++;
                 } else {
-                    lovDef = lovDefRepository.findByKey(lovKey).orElse(null);
+                    lovDef = lovDefRepository.findByBusinessDomainAndKey(catDef.getBusinessDomain(), lovKey).orElse(null);
                 }
             }
             MetaLovVersion latestLovVer = newlyCreatedLov ? null
                     : lovVersionRepository.findLatestByDef(lovDef).orElse(null);
                 Map<String, String> existingValueCodes = extractExistingLovCodes(latestLovVer);
                 String valueJson = buildLovJson(catDef, attrKey, g.values, existingValueCodes, createdBy);
+                validateLovValueCodesUnique(catDef.getBusinessDomain(), lovDef, valueJson);
                 String valueHash = AttributeLovImportUtils.jsonHash(valueJson);
             boolean needNewLovVersion = newlyCreatedLov || latestLovVer == null
                     || (valueHash != null && !valueHash.equals(latestLovVer.getHash()));
@@ -292,7 +295,14 @@ public class MetaAttributeImportService {
     }
 
     private MetaAttributeDef findAttributeDef(MetaCategoryDef catDef, String attrKey) {
-        return attributeDefRepository.findActiveByCategoryDefAndKey(catDef, attrKey).orElse(null);
+        if (catDef == null || attrKey == null) {
+            return null;
+        }
+        MetaAttributeDef def = attributeDefRepository.findActiveByBusinessDomainAndKey(catDef.getBusinessDomain(), attrKey).orElse(null);
+        if (def == null) {
+            return null;
+        }
+        return def.getCategoryDef() != null && Objects.equals(def.getCategoryDef().getId(), catDef.getId()) ? def : null;
     }
 
     private MetaAttributeDef findAttributeDefByDisplayName(MetaCategoryDef catDef, String displayName) {
@@ -454,6 +464,61 @@ public class MetaAttributeImportService {
         } catch (Exception ex) {
             return new LinkedHashMap<>();
         }
+    }
+
+    private void validateLovValueCodesUnique(String businessDomain, MetaLovDef currentLovDef, String valueJson) {
+        if (isBlank(businessDomain) || isBlank(valueJson)) {
+            return;
+        }
+        Map<String, String> incomingCodes = extractLovCodeToName(valueJson);
+        if (incomingCodes.isEmpty()) {
+            return;
+        }
+        for (MetaLovDef lovDef : lovDefRepository.findByBusinessDomain(businessDomain)) {
+            if (lovDef == null || isDeleted(lovDef.getStatus())) {
+                continue;
+            }
+            if (currentLovDef != null && Objects.equals(lovDef.getId(), currentLovDef.getId())) {
+                continue;
+            }
+            MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+            if (latest == null || isBlank(latest.getValueJson())) {
+                continue;
+            }
+            Map<String, String> existingCodes = extractLovCodeToName(latest.getValueJson());
+            for (String code : incomingCodes.keySet()) {
+                if (existingCodes.containsKey(code)) {
+                    throw new IllegalArgumentException("enum option code already exists in business domain: " + code);
+                }
+            }
+        }
+    }
+
+    private Map<String, String> extractLovCodeToName(String valueJson) {
+        LinkedHashMap<String, String> codes = new LinkedHashMap<>();
+        if (isBlank(valueJson)) {
+            return codes;
+        }
+        try {
+            var values = objectMapper.readTree(valueJson).path("values");
+            if (!values.isArray()) {
+                return codes;
+            }
+            values.forEach(node -> {
+                String code = trim(node.path("code").asText(null));
+                String name = trim(node.path("name").asText(null));
+                if (code != null && !codes.containsKey(code)) {
+                    codes.put(code, name);
+                }
+            });
+        } catch (Exception ex) {
+            return new LinkedHashMap<>();
+        }
+        return codes;
+    }
+
+    private boolean isDeleted(String status) {
+        return status != null && "deleted".equalsIgnoreCase(status.trim());
     }
 
     private String requireValue(String value, String fieldName) {

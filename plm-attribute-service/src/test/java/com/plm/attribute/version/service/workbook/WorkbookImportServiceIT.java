@@ -185,7 +185,7 @@ class WorkbookImportServiceIT {
 
         String[] attributeKeyParts = attributeImportedLog.getEntityKey().split("/");
         String actualAttributeKey = attributeKeyParts[attributeKeyParts.length - 1];
-        MetaAttributeDefDetailDto detail = attributeQueryService.detail(actualAttributeKey, true);
+        MetaAttributeDefDetailDto detail = attributeQueryService.detail("MATERIAL", actualAttributeKey, true);
         Assertions.assertNotNull(detail);
         Assertions.assertEquals("Color " + suffix, detail.getLatestVersion().getDisplayName());
         Assertions.assertEquals(2, detail.getLovValues().size());
@@ -237,7 +237,7 @@ class WorkbookImportServiceIT {
         Assertions.assertTrue(hasLogCode(logs.getItems(), "ATTRIBUTE_SKIPPED"));
         Assertions.assertTrue(hasLogCode(logs.getItems(), "ENUM_OPTION_SKIPPED"));
 
-        MetaAttributeDefDetailDto detail = attributeQueryService.detail(attributeKey, true);
+        MetaAttributeDefDetailDto detail = attributeQueryService.detail("MATERIAL", attributeKey, true);
         Assertions.assertEquals("Existing Status " + suffix, detail.getLatestVersion().getDisplayName());
         Assertions.assertEquals(1, detail.getLovValues().size());
         Assertions.assertEquals(enumCode, detail.getLovValues().get(0).getCode());

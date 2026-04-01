@@ -308,6 +308,8 @@ public class MetaCategoryCrudService {
         String businessDomain = normalizeBusinessDomain(req.getBusinessDomain());
         String status = mapApiStatusToDb(req.getStatus(), true);
 
+        ensureCategoryNameUnique(businessDomain, name, null);
+
         MetaCategoryDef parent = resolveCreateParent(req.getParentId(), businessDomain);
 
         MetaCategoryDef def = new MetaCategoryDef();
@@ -454,6 +456,10 @@ public class MetaCategoryCrudService {
 
         String nextName = patchMode ? coalesceTrim(req.getName(), latest.getDisplayName()) : requireName(req.getName());
         String nextDescription = patchMode ? coalesceTrim(req.getDescription(), readDescription(latest.getStructureJson())) : trimToNull(req.getDescription());
+
+        if (!Objects.equals(nextName, latest.getDisplayName())) {
+            ensureCategoryNameUnique(def.getBusinessDomain(), nextName, def.getId());
+        }
 
         boolean versionChanged = !Objects.equals(nextName, latest.getDisplayName())
                 || !Objects.equals(nextDescription, readDescription(latest.getStructureJson()));
@@ -1638,7 +1644,8 @@ public class MetaCategoryCrudService {
             MetaCategoryVersion copiedVersion = new MetaCategoryVersion();
             copiedVersion.setCategoryDef(copied);
             copiedVersion.setVersionNo(1);
-            copiedVersion.setDisplayName(resolveCopyDisplayName(currentVersion, options));
+            String copiedDisplayName = resolveCopyDisplayName(businessDomain, currentVersion, options);
+            copiedVersion.setDisplayName(copiedDisplayName);
             copiedVersion.setRuleResolvedCodePrefix(currentVersion.getRuleResolvedCodePrefix());
             copiedVersion.setStructureJson(currentVersion.getStructureJson());
             copiedVersion.setHash(currentVersion.getHash());
@@ -1682,11 +1689,36 @@ public class MetaCategoryCrudService {
         );
     }
 
-    private String resolveCopyDisplayName(MetaCategoryVersion version, CopyOptionsResolved options) {
-        if (!"KEEP".equals(options.namePolicy)) {
-            throw new IllegalArgumentException("unsupported namePolicy: " + options.namePolicy);
+    private String resolveCopyDisplayName(String businessDomain, MetaCategoryVersion version, CopyOptionsResolved options) {
+        String sourceDisplayName = trimToNull(version.getDisplayName());
+        if (sourceDisplayName == null) {
+            throw new IllegalArgumentException("category name is required");
         }
-        return version.getDisplayName();
+        return switch (options.namePolicy) {
+            case "KEEP" -> {
+                ensureCategoryNameUnique(businessDomain, sourceDisplayName, null);
+                yield sourceDisplayName;
+            }
+            case "AUTO_SUFFIX" -> generateCopyDisplayName(businessDomain, sourceDisplayName);
+            default -> throw new IllegalArgumentException("unsupported namePolicy: " + options.namePolicy);
+        };
+    }
+
+    private void ensureCategoryNameUnique(String businessDomain, String displayName, UUID excludeCategoryId) {
+        String normalizedDisplayName = trimToNull(displayName);
+        if (normalizedDisplayName == null) {
+            throw new IllegalArgumentException("category name is required");
+        }
+        boolean exists = excludeCategoryId == null
+                ? versionRepository.existsLatestByBusinessDomainAndDisplayName(businessDomain, normalizedDisplayName)
+                : versionRepository.existsLatestByBusinessDomainAndDisplayNameAndCategoryDefIdNot(
+                        businessDomain,
+                        normalizedDisplayName,
+                        excludeCategoryId);
+        if (exists) {
+            throw new IllegalArgumentException(
+                    "category name already exists in businessDomain: businessDomain=" + businessDomain + ", name=" + normalizedDisplayName);
+        }
     }
 
     private MetaCategoryDef loadActiveCategory(UUID id, String notFoundCode) {
@@ -1720,7 +1752,7 @@ public class MetaCategoryCrudService {
         }
         String versionPolicy = normalizeOption(copyOptions == null ? null : copyOptions.getVersionPolicy(), "CURRENT_ONLY");
         String codePolicy = normalizeOption(copyOptions == null ? null : copyOptions.getCodePolicy(), "AUTO_SUFFIX");
-        String namePolicy = normalizeOption(copyOptions == null ? null : copyOptions.getNamePolicy(), "KEEP");
+        String namePolicy = normalizeOption(copyOptions == null ? null : copyOptions.getNamePolicy(), "AUTO_SUFFIX");
         String defaultStatus = normalizeCopyDefaultStatus(copyOptions == null ? null : copyOptions.getDefaultStatus());
 
         if (!"CURRENT_ONLY".equals(versionPolicy)) {
@@ -1729,7 +1761,7 @@ public class MetaCategoryCrudService {
         if (!"AUTO_SUFFIX".equals(codePolicy)) {
             throw new IllegalArgumentException("unsupported codePolicy: " + codePolicy);
         }
-        if (!"KEEP".equals(namePolicy)) {
+        if (!"KEEP".equals(namePolicy) && !"AUTO_SUFFIX".equals(namePolicy)) {
             throw new IllegalArgumentException("unsupported namePolicy: " + namePolicy);
         }
         return new CopyOptionsResolved(namePolicy, defaultStatus);
@@ -2038,6 +2070,23 @@ public class MetaCategoryCrudService {
             }
         }
         throw new CategoryConflictException("CATEGORY_CODE_CONFLICT", "unable to allocate copy code for source code=" + sourceCode);
+    }
+
+    private String generateCopyDisplayName(String businessDomain, String sourceDisplayName) {
+        String baseName = trimToNull(sourceDisplayName);
+        if (baseName == null) {
+            throw new IllegalArgumentException("category name is required");
+        }
+        if (!versionRepository.existsLatestByBusinessDomainAndDisplayName(businessDomain, baseName)) {
+            return baseName;
+        }
+        for (int i = 1; i <= 999; i++) {
+            String candidate = baseName + String.format(Locale.ROOT, "-COPY-%03d", i);
+            if (!versionRepository.existsLatestByBusinessDomainAndDisplayName(businessDomain, candidate)) {
+                return candidate;
+            }
+        }
+        throw new CategoryConflictException("CATEGORY_NAME_CONFLICT", "unable to allocate copy name for source name=" + sourceDisplayName);
     }
 
     private void ensureVersionBelongsToCategory(MetaCategoryDef def, MetaCategoryVersion version, String fieldName) {

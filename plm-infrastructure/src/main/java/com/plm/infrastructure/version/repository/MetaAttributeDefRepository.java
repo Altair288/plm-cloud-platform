@@ -17,6 +17,22 @@ public interface MetaAttributeDefRepository extends JpaRepository<MetaAttributeD
 
     @Query("""
             select d from MetaAttributeDef d
+            where d.businessDomain = :businessDomain
+              and d.key = :key
+              and lower(d.status) <> 'deleted'
+            """)
+    Optional<MetaAttributeDef> findActiveByBusinessDomainAndKey(@Param("businessDomain") String businessDomain,
+                                                                @Param("key") String key);
+
+    @Query("""
+            select d from MetaAttributeDef d
+            where d.key = :key
+              and lower(d.status) <> 'deleted'
+            """)
+    List<MetaAttributeDef> findActiveByKey(@Param("key") String key);
+
+    @Query("""
+            select d from MetaAttributeDef d
             where d.categoryDef = :categoryDef
               and d.key = :key
               and lower(d.status) <> 'deleted'
@@ -28,11 +44,12 @@ public interface MetaAttributeDefRepository extends JpaRepository<MetaAttributeD
     List<MetaAttributeDef> findByCategoryDefIdIn(Collection<UUID> categoryDefIds);
 
     @Modifying
-    @Query(value = "INSERT INTO plm_meta.meta_attribute_def (id, category_def_id, key, lov_flag, auto_bind_key, created_by, created_at) " +
-            "VALUES (:id, :categoryDefId, :key, :lovFlag, :autoBindKey, :createdBy, now()) " +
-            "ON CONFLICT (category_def_id, key) WHERE (status <> 'deleted') DO NOTHING", nativeQuery = true)
+    @Query(value = "INSERT INTO plm_meta.meta_attribute_def (id, category_def_id, business_domain, key, lov_flag, auto_bind_key, created_by, created_at) " +
+            "VALUES (:id, :categoryDefId, :businessDomain, :key, :lovFlag, :autoBindKey, :createdBy, now()) " +
+            "ON CONFLICT (business_domain, key) WHERE status <> 'deleted' DO NOTHING", nativeQuery = true)
     int insertIgnore(@Param("id") UUID id,
                      @Param("categoryDefId") UUID categoryDefId,
+                     @Param("businessDomain") String businessDomain,
                      @Param("key") String key,
                      @Param("lovFlag") boolean lovFlag,
                      @Param("autoBindKey") String autoBindKey,

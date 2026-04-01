@@ -42,6 +42,7 @@ public class MetaAttributeQueryService {
     }
 
     public Page<MetaAttributeDefListItemDto> list(
+            String businessDomain,
             String categoryCode,
             String keyword,
             String dataType,
@@ -51,6 +52,7 @@ public class MetaAttributeQueryService {
             boolean includeDeleted,
             Pageable pageable) {
         return attributeVersionRepository.searchLatestListItems(
+                businessDomain,
                 categoryCode,
                 keyword,
                 dataType,
@@ -62,14 +64,23 @@ public class MetaAttributeQueryService {
     }
 
     public MetaAttributeDefDetailDto detail(String attrKey) {
-        return detail(attrKey, false);
+        String businessDomain = resolveSingleBusinessDomain(attrKey);
+        return businessDomain == null ? null : detail(businessDomain, attrKey, false);
     }
 
     public MetaAttributeDefDetailDto detail(String attrKey, boolean includeValues) {
-        // attrKey is globally unique; fetch by unique key requires custom query;
-        // fallback: scan page (simplified)
+        String businessDomain = resolveSingleBusinessDomain(attrKey);
+        return businessDomain == null ? null : detail(businessDomain, attrKey, includeValues);
+    }
+
+    public MetaAttributeDefDetailDto detail(String businessDomain, String attrKey) {
+        return detail(businessDomain, attrKey, false);
+    }
+
+    public MetaAttributeDefDetailDto detail(String businessDomain, String attrKey, boolean includeValues) {
         MetaAttributeDef def = em
-            .createQuery("select d from MetaAttributeDef d where d.key = :k and lower(d.status) <> 'deleted'", MetaAttributeDef.class)
+            .createQuery("select d from MetaAttributeDef d where d.businessDomain = :businessDomain and d.key = :k and lower(d.status) <> 'deleted'", MetaAttributeDef.class)
+                .setParameter("businessDomain", requireBusinessDomain(businessDomain))
                 .setParameter("k", attrKey)
                 .getResultStream().findFirst().orElse(null);
         if (def == null)
@@ -77,6 +88,7 @@ public class MetaAttributeQueryService {
         MetaAttributeVersion latest = attributeVersionRepository.findLatestByDef(def).orElse(null);
         MetaAttributeDefDetailDto dto = new MetaAttributeDefDetailDto();
         dto.setKey(def.getKey());
+        dto.setBusinessDomain(def.getBusinessDomain());
         dto.setCategoryCode(def.getCategoryDef().getCodeKey());
         dto.setStatus(def.getStatus());
         dto.setCreatedBy(def.getCreatedBy());
@@ -137,8 +149,14 @@ public class MetaAttributeQueryService {
     }
 
     public List<MetaAttributeVersionSummaryDto> versions(String attrKey) {
+        String businessDomain = resolveSingleBusinessDomain(attrKey);
+        return businessDomain == null ? Collections.emptyList() : versions(businessDomain, attrKey);
+    }
+
+    public List<MetaAttributeVersionSummaryDto> versions(String businessDomain, String attrKey) {
         MetaAttributeDef def = em
-            .createQuery("select d from MetaAttributeDef d where d.key = :k and lower(d.status) <> 'deleted'", MetaAttributeDef.class)
+            .createQuery("select d from MetaAttributeDef d where d.businessDomain = :businessDomain and d.key = :k and lower(d.status) <> 'deleted'", MetaAttributeDef.class)
+                .setParameter("businessDomain", requireBusinessDomain(businessDomain))
                 .setParameter("k", attrKey).getResultStream().findFirst().orElse(null);
         if (def == null)
             return Collections.emptyList();
@@ -148,6 +166,31 @@ public class MetaAttributeQueryService {
                 .setParameter("d", def).getResultList();
         return versions.stream().map(v -> new MetaAttributeVersionSummaryDto(v.getVersionNo(), v.getHash(),
                 v.getIsLatest(), v.getCreatedAt())).toList();
+    }
+
+    private String resolveSingleBusinessDomain(String attrKey) {
+        List<String> businessDomains = em.createQuery(
+                "select distinct d.businessDomain from MetaAttributeDef d where d.key = :k and lower(d.status) <> 'deleted'",
+                String.class)
+            .setParameter("k", attrKey)
+            .getResultList();
+        if (businessDomains.isEmpty()) {
+            return null;
+        }
+        if (businessDomains.size() > 1) {
+            String domainsList = String.join(", ", businessDomains);
+            throw new IllegalArgumentException(
+                "attribute key exists in multiple business domains [" + domainsList + "], businessDomain is required: " + attrKey
+            );
+        }
+        return businessDomains.get(0);
+    }
+
+    private String requireBusinessDomain(String businessDomain) {
+        if (businessDomain == null || businessDomain.isBlank()) {
+            throw new IllegalArgumentException("businessDomain is required");
+        }
+        return businessDomain.trim();
     }
 
     private ParsedAttributeJson parseAttributeJson(String json) {

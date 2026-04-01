@@ -8,6 +8,7 @@ import java.util.List;
 @Data
 public class MetaAttributeDefDetailDto {
     private String key;
+    private String businessDomain;
     private String categoryCode;
     private String status;
     private String createdBy;

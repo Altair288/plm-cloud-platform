@@ -8,6 +8,8 @@
 >
 > - `categoryCode` 使用业务域内分类的 `codeKey`（例如：`44120000`）。
 > - `attrKey` 对应 `meta_attribute_def.key`（即属性编码）。
+> - 分类编码、分类名称、属性编码、枚举值编码均按 `businessDomain` 维度唯一。
+> - 属性名称、枚举值名称允许在不同分类下重复，但编码不允许在同一 `businessDomain` 下重复。
 
 ---
 
@@ -16,12 +18,12 @@
 | 功能 | 相关接口 | 是否实现 | 备注 |
 |---|---|---:|---|
 | 元数据属性列表（分页） | `GET /api/meta/attribute-defs` | ✅ | 支持 `keyword/dataType/required/unique/searchable` 过滤 |
-| 元数据属性详情（最新版本 + 版本摘要） | `GET /api/meta/attribute-defs/{attrKey}` | ✅ | `includeValues=true` 时返回最新 LOV 值列表 |
-| 元数据属性版本摘要列表 | `GET /api/meta/attribute-defs/{attrKey}/versions` | ✅ | 返回 versionNo/hash/latest/createdAt |
-| 创建元数据属性（写入 def + 首个 version） | `POST /api/meta/attribute-defs` | ✅ | `categoryCode` 必填；属性编码与 LOV 编码统一走规则服务 |
-| 更新元数据属性（新增 version） | `PUT/PATCH /api/meta/attribute-defs/{attrKey}` | ✅ | 若 hash 未变化会跳过新增版本 |
-| 删除元数据属性（软删） | `DELETE /api/meta/attribute-defs/{attrKey}` | ✅ | 仅将 def.status 置为 `deleted`；列表默认不返回已删除 |
-| 导入元数据属性（Excel） | `POST /api/meta/attributes/import` | ✅ | `multipart/form-data` 上传文件 |
+| 元数据属性详情（最新版本 + 版本摘要） | `GET /api/meta/attribute-defs/{attrKey}` | ✅ | `businessDomain` 必填；`includeValues=true` 时返回最新 LOV 值列表 |
+| 元数据属性版本摘要列表 | `GET /api/meta/attribute-defs/{attrKey}/versions` | ✅ | `businessDomain` 必填；返回 versionNo/hash/latest/createdAt |
+| 创建元数据属性（写入 def + 首个 version） | `POST /api/meta/attribute-defs` | ✅ | `businessDomain/categoryCode` 必填；属性编码与 LOV 编码统一走规则服务 |
+| 更新元数据属性（新增 version） | `PUT/PATCH /api/meta/attribute-defs/{attrKey}` | ✅ | `businessDomain/categoryCode` 必填；若 hash 未变化会跳过新增版本 |
+| 删除元数据属性（软删） | `DELETE /api/meta/attribute-defs/{attrKey}` | ✅ | `businessDomain/categoryCode` 必填；仅将 def.status 置为 `deleted` |
+| 导入元数据属性（Excel） | `POST /api/meta/attributes/import` | ✅ | `multipart/form-data` 上传文件，`businessDomain` 必填 |
 | 旧版属性实例接口（`/api/attributes`） | - | ❌（已移除） | 已删除 Controller/Service/Repository/Domain 代码 |
 
 ---
