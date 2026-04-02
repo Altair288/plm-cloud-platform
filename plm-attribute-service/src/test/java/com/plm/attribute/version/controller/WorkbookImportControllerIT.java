@@ -36,6 +36,7 @@ import java.util.UUID;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -108,6 +109,17 @@ class WorkbookImportControllerIT {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_ARGUMENT"))
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("invalid workbook import options format")));
+    }
+
+    @Test
+    void streamEndpoint_shouldReturnEventStreamErrorPayloadWhenJobDoesNotExist() throws Exception {
+        mockMvc.perform(get("/api/meta/imports/workbook/jobs/{jobId}/stream", "missing-job")
+                        .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("event: failed")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"code\":\"INVALID_ARGUMENT\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("workbook import job not found")));
     }
 
             @Test
