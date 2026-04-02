@@ -19,6 +19,8 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
     @Query("select v from MetaAttributeVersion v where v.attributeDef = :def and v.isLatest = true")
     Optional<MetaAttributeVersion> findLatestByDef(@Param("def") MetaAttributeDef def);
 
+    List<MetaAttributeVersion> findByAttributeDefInAndIsLatestTrue(Collection<MetaAttributeDef> defs);
+
         @Modifying
         @Query("""
                         update MetaAttributeVersion v

@@ -17,6 +17,13 @@ public interface MetaLovDefRepository extends JpaRepository<MetaLovDef, UUID> {
     List<MetaLovDef> findByAttributeDef(MetaAttributeDef attributeDef);
     List<MetaLovDef> findByAttributeDefIn(Collection<MetaAttributeDef> attributeDefs);
     List<MetaLovDef> findByBusinessDomain(String businessDomain);
+        @Query("""
+                        select d from MetaLovDef d
+                        join fetch d.attributeDef a
+                        where d.businessDomain in :businessDomains
+                            and (d.status is null or lower(d.status) <> 'deleted')
+                        """)
+        List<MetaLovDef> findActiveByBusinessDomainIn(@Param("businessDomains") Collection<String> businessDomains);
     Optional<MetaLovDef> findByKey(String key);
     Optional<MetaLovDef> findByAttributeDefAndKey(MetaAttributeDef attributeDef, String key);
 

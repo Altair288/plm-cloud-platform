@@ -286,6 +286,56 @@ public class MetaCodeRuleService {
         return new GeneratedCodeResult(code, rule.getCode(), latest.getVersionNo(), manualOverride, freezeAfterGenerate);
     }
 
+    @Transactional
+    public ReservedCodeBatchResult reserveCodes(String ruleCode,
+                                                String targetType,
+                                                Map<String, String> context,
+                                                int count,
+                                                String operator,
+                                                boolean freezeAfterGenerate) {
+        MetaCodeRule rule = loadRule(ruleCode);
+        if (!STATUS_ACTIVE.equalsIgnoreCase(rule.getStatus()) || !Boolean.TRUE.equals(rule.getActive())) {
+            throw new IllegalArgumentException("code rule is not active: ruleCode=" + ruleCode);
+        }
+        MetaCodeRuleVersion latest = loadLatestVersion(rule);
+        Map<String, String> safeContext = context == null ? Collections.emptyMap() : new LinkedHashMap<>(context);
+        int reservationCount = Math.max(1, count);
+
+        CodeRuleGenerator.ReservationResult reservation = codeRuleGenerator.reserve(rule.getCode(), safeContext, reservationCount);
+        List<String> codes = reservation.codes();
+        for (String code : codes) {
+            validateCodeAgainstRule(rule, code, false);
+        }
+
+        List<MetaCodeGenerationAudit> audits = new ArrayList<>(codes.size());
+        String normalizedTargetType = normalizeTargetAuditType(targetType);
+        String normalizedOperator = normalizeOperator(operator);
+        String contextJson = writeJson(safeContext);
+        for (String code : codes) {
+            MetaCodeGenerationAudit audit = new MetaCodeGenerationAudit();
+            audit.setRuleCode(rule.getCode());
+            audit.setRuleVersionNo(latest.getVersionNo());
+            audit.setGeneratedCode(code);
+            audit.setTargetType(normalizedTargetType);
+            audit.setTargetId(null);
+            audit.setContextJson(contextJson);
+            audit.setManualOverrideFlag(Boolean.FALSE);
+            audit.setFrozenFlag(freezeAfterGenerate);
+            audit.setCreatedBy(normalizedOperator);
+            audits.add(audit);
+        }
+        codeGenerationAuditRepository.saveAll(audits);
+
+        return new ReservedCodeBatchResult(
+                codes,
+                rule.getCode(),
+                latest.getVersionNo(),
+                freezeAfterGenerate,
+                reservation.resolvedSequenceScope(),
+                reservation.resolvedPeriodKey()
+        );
+    }
+
     private MetaCodeRuleVersion appendVersion(MetaCodeRule rule, CodeRuleSaveRequestDto request, String operator) {
         codeRuleVersionRepository.findByCodeRuleAndIsLatestTrue(rule).ifPresent(existing -> {
             existing.setIsLatest(Boolean.FALSE);
@@ -935,4 +985,14 @@ public class MetaCodeRuleService {
             boolean frozen
     ) {
     }
+
+        public record ReservedCodeBatchResult(
+            List<String> codes,
+            String ruleCode,
+            Integer ruleVersion,
+            boolean frozen,
+            String resolvedSequenceScope,
+            String resolvedPeriodKey
+        ) {
+        }
 }

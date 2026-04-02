@@ -120,6 +120,70 @@ public class CodeRuleGenerator {
         );
     }
 
+    @Transactional
+    public ReservationResult reserve(String ruleCode, Map<String, String> context, int count) {
+        Map<String, String> safeContext = copyContext(context);
+        RuleMeta meta = loadRuleMeta(ruleCode);
+        StructuredRule structuredRule = resolveStructuredRule(meta, safeContext);
+        int reservationCount = Math.max(1, count);
+        List<String> codes = new ArrayList<>(reservationCount);
+        String resolvedSequenceScope = null;
+        String resolvedPeriodKey = null;
+
+        if (structuredRule != null) {
+            boolean hasSequenceSegment = structuredRuleHasSequence(structuredRule);
+            if (!hasSequenceSegment) {
+                for (int index = 0; index < reservationCount; index++) {
+                    RenderOutcome outcome = renderStructured(meta, structuredRule, safeContext, 1, false);
+                    codes.add(outcome.code());
+                }
+            } else {
+                StructuredReservation reservation = reserveStructured(meta, structuredRule, safeContext, reservationCount);
+                for (int index = 0; index < reservationCount; index++) {
+                    RenderOutcome outcome = renderStructuredReserved(meta, structuredRule, safeContext, index, reservation.sequenceAllocations());
+                    codes.add(outcome.code());
+                    if (resolvedSequenceScope == null) {
+                        resolvedSequenceScope = outcome.resolvedSequenceScope();
+                    }
+                    if (resolvedPeriodKey == null) {
+                        resolvedPeriodKey = outcome.resolvedPeriodKey();
+                    }
+                }
+            }
+        } else {
+            if (!meta.pattern().contains("{SEQ}")) {
+                for (int index = 0; index < reservationCount; index++) {
+                    RenderOutcome outcome = renderLegacy(meta, safeContext, 1, false);
+                    codes.add(outcome.code());
+                }
+            } else {
+                SequenceBatchAllocation allocation = reserveSequenceRange(
+                        meta.code(),
+                        DEFAULT_SUB_RULE_KEY,
+                        GLOBAL_SCOPE_KEY,
+                        GLOBAL_SCOPE_VALUE,
+                        RESET_NEVER,
+                        DEFAULT_PERIOD_KEY,
+                        1L,
+                        1L,
+                        reservationCount
+                );
+                for (int index = 0; index < reservationCount; index++) {
+                    RenderOutcome outcome = renderLegacyReserved(meta, safeContext, index, allocation);
+                    codes.add(outcome.code());
+                    if (resolvedSequenceScope == null) {
+                        resolvedSequenceScope = outcome.resolvedSequenceScope();
+                    }
+                    if (resolvedPeriodKey == null) {
+                        resolvedPeriodKey = outcome.resolvedPeriodKey();
+                    }
+                }
+            }
+        }
+
+        return new ReservationResult(meta.pattern(), codes, safeContext, resolvedSequenceScope, resolvedPeriodKey);
+    }
+
     private List<String> extractPreviewWarnings(IllegalArgumentException ex,
                                                 String pattern,
                                                 Map<String, String> context) {
@@ -442,6 +506,188 @@ public class CodeRuleGenerator {
         return new RenderOutcome(result, resolvedSequenceScope, resolvedPeriodKey);
     }
 
+    private StructuredReservation reserveStructured(RuleMeta meta,
+                                                    StructuredRule structuredRule,
+                                                    Map<String, String> context,
+                                                    int count) {
+        Map<String, Object> subRule = structuredRule.definition();
+        String hierarchyMode = normalizeHierarchyMode(readString(structuredRule.rootJson(), "hierarchyMode"));
+        List<Map<String, Object>> childSegments = readObjectList(subRule.get("childSegments"));
+        boolean childMode = "category".equalsIgnoreCase(structuredRule.subRuleKey())
+                && "APPEND_CHILD_SUFFIX".equals(hierarchyMode)
+                && !childSegments.isEmpty()
+                && trimToNull(context.get("PARENT_CODE")) != null;
+        List<Map<String, Object>> segments = childMode
+                ? childSegments
+                : readObjectList(subRule.get("segments"));
+        Map<Integer, SequenceBatchAllocation> sequenceAllocations = new LinkedHashMap<>();
+        for (int index = 0; index < segments.size(); index++) {
+            Map<String, Object> segment = segments.get(index);
+            String type = normalizeSegmentType(readString(segment, "type"));
+            if (!"SEQUENCE".equals(type)) {
+                continue;
+            }
+            long startValue = readLong(segment, "startValue", 1L);
+            long step = readLong(segment, "step", 1L);
+            String resetRule = normalizeResetRule(readString(segment, "resetRule"));
+            String scopeKey = normalizeScopeKey(readString(segment, "scopeKey"), resetRule);
+            String scopeValue = resolveScopeValue(scopeKey, context);
+            String periodKey = resolvePeriodKey(resetRule, LocalDate.now());
+            String effectiveSubRuleKey = buildSequenceSubRuleKey(structuredRule.subRuleKey(), index);
+            sequenceAllocations.put(index, reserveSequenceRange(
+                    meta.code(),
+                    effectiveSubRuleKey,
+                    scopeKey,
+                    scopeValue,
+                    resetRule,
+                    periodKey,
+                    startValue,
+                    step,
+                    count
+            ));
+        }
+        return new StructuredReservation(sequenceAllocations);
+    }
+
+    private RenderOutcome renderStructuredReserved(RuleMeta meta,
+                                                   StructuredRule structuredRule,
+                                                   Map<String, String> context,
+                                                   int batchIndex,
+                                                   Map<Integer, SequenceBatchAllocation> sequenceAllocations) {
+        Map<String, Object> subRule = structuredRule.definition();
+        String separator = readString(subRule, "separator");
+        String effectiveSeparator = separator == null ? "-" : separator;
+        String hierarchyMode = normalizeHierarchyMode(readString(structuredRule.rootJson(), "hierarchyMode"));
+        List<Map<String, Object>> childSegments = readObjectList(subRule.get("childSegments"));
+        boolean childMode = "category".equalsIgnoreCase(structuredRule.subRuleKey())
+                && "APPEND_CHILD_SUFFIX".equals(hierarchyMode)
+                && !childSegments.isEmpty()
+                && trimToNull(context.get("PARENT_CODE")) != null;
+
+        SequenceMetaHolder sequenceMetaHolder = new SequenceMetaHolder();
+        List<String> parts = new ArrayList<>();
+        if (childMode) {
+            parts.add(requireContext(context, "PARENT_CODE"));
+            String suffix = renderReservedSegments(
+                    childSegments,
+                    effectiveSeparator,
+                    context,
+                    batchIndex,
+                    sequenceAllocations,
+                    sequenceMetaHolder
+            );
+            if (trimToNull(suffix) != null) {
+                parts.add(suffix);
+            }
+        } else {
+            String rendered = renderReservedSegments(
+                    readObjectList(subRule.get("segments")),
+                    effectiveSeparator,
+                    context,
+                    batchIndex,
+                    sequenceAllocations,
+                    sequenceMetaHolder
+            );
+            if (trimToNull(rendered) != null) {
+                parts.add(rendered);
+            }
+        }
+
+        String result = String.join(effectiveSeparator, parts);
+        if (meta.inheritPrefix() && meta.parentRuleId() != null && !containsAnyParentPlaceholder(result)) {
+            String parentCode = firstNonNull(context.get("PARENT_CODE"), context.get("CATEGORY_CODE"), context.get("ATTRIBUTE_CODE"));
+            if (parentCode != null && !result.startsWith(parentCode)) {
+                result = parentCode + (result.startsWith(effectiveSeparator) ? "" : effectiveSeparator) + result;
+            }
+        }
+
+        return new RenderOutcome(result, sequenceMetaHolder.scopeDescriptor, sequenceMetaHolder.periodKey);
+    }
+
+    private String renderReservedSegments(List<Map<String, Object>> segments,
+                                          String separator,
+                                          Map<String, String> context,
+                                          int batchIndex,
+                                          Map<Integer, SequenceBatchAllocation> sequenceAllocations,
+                                          SequenceMetaHolder sequenceMetaHolder) {
+        if (segments.isEmpty()) {
+            throw new IllegalArgumentException("structured rule segments must not be empty");
+        }
+        List<String> renderedParts = new ArrayList<>();
+        for (int index = 0; index < segments.size(); index++) {
+            Map<String, Object> segment = segments.get(index);
+            String value = renderReservedSegment(segment, index, context, batchIndex, sequenceAllocations, sequenceMetaHolder);
+            if (trimToNull(value) != null) {
+                renderedParts.add(value);
+            }
+        }
+        return String.join(separator, renderedParts);
+    }
+
+    private String renderReservedSegment(Map<String, Object> segment,
+                                         int segmentIndex,
+                                         Map<String, String> context,
+                                         int batchIndex,
+                                         Map<Integer, SequenceBatchAllocation> sequenceAllocations,
+                                         SequenceMetaHolder sequenceMetaHolder) {
+        String type = normalizeSegmentType(readString(segment, "type"));
+        return switch (type) {
+            case "STRING" -> renderStringSegment(segment);
+            case "VARIABLE" -> renderVariableSegment(segment, context);
+            case "DATE" -> renderDateSegment(segment);
+            case "SEQUENCE" -> renderReservedSequenceSegment(segment, segmentIndex, batchIndex, sequenceAllocations, sequenceMetaHolder);
+            default -> throw new IllegalArgumentException("unsupported segment type: " + type);
+        };
+    }
+
+    private String renderReservedSequenceSegment(Map<String, Object> segment,
+                                                 int segmentIndex,
+                                                 int batchIndex,
+                                                 Map<Integer, SequenceBatchAllocation> sequenceAllocations,
+                                                 SequenceMetaHolder sequenceMetaHolder) {
+        SequenceBatchAllocation allocation = sequenceAllocations.get(segmentIndex);
+        if (allocation == null) {
+            throw new IllegalArgumentException("sequence allocation not found for segment index: " + segmentIndex);
+        }
+        int length = readInt(segment, "length", 6);
+        if (sequenceMetaHolder.scopeDescriptor == null) {
+            sequenceMetaHolder.scopeDescriptor = allocation.scopeDescriptor();
+            sequenceMetaHolder.periodKey = allocation.periodKey();
+        }
+        long sequenceValue = allocation.firstValue() + (allocation.step() * batchIndex);
+        return String.format("%0" + length + "d", sequenceValue);
+    }
+
+    private RenderOutcome renderLegacyReserved(RuleMeta meta,
+                                               Map<String, String> context,
+                                               int batchIndex,
+                                               SequenceBatchAllocation allocation) {
+        String pattern = meta.pattern();
+        String result = pattern.contains("{DATE}")
+                ? pattern.replace("{DATE}", LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE))
+                : pattern;
+        if (result.contains("{SEQ}")) {
+            long sequenceValue = allocation.firstValue() + (allocation.step() * batchIndex);
+            result = result.replace("{SEQ}", String.format("%0" + sequenceWidth(meta.code()) + "d", sequenceValue));
+        }
+        for (Map.Entry<String, String> entry : context.entrySet()) {
+            if (entry.getKey() == null || entry.getValue() == null) {
+                continue;
+            }
+            result = result.replace("{" + entry.getKey() + "}", entry.getValue());
+        }
+        if (result.contains("{")) {
+            throw new IllegalArgumentException("rule context is incomplete for pattern: " + pattern);
+        }
+        if (meta.inheritPrefix() && meta.parentRuleId() != null && !containsAnyParentPlaceholder(pattern)) {
+            String parentCode = firstNonNull(context.get("PARENT_CODE"), context.get("CATEGORY_CODE"), context.get("ATTRIBUTE_CODE"));
+            if (parentCode != null && !result.startsWith(parentCode)) {
+                result = parentCode + (result.startsWith("-") ? "" : "-") + result;
+            }
+        }
+        return new RenderOutcome(result, allocation.scopeDescriptor(), allocation.periodKey());
+    }
+
     private long nextSequenceValue(String ruleCode,
                                    String subRuleKey,
                                    String scopeKey,
@@ -492,6 +738,64 @@ public class CodeRuleGenerator {
         );
         return nextValue;
     }
+
+        private SequenceBatchAllocation reserveSequenceRange(String ruleCode,
+                                                                                                                 String subRuleKey,
+                                                                                                                 String scopeKey,
+                                                                                                                 String scopeValue,
+                                                                                                                 String resetRule,
+                                                                                                                 String periodKey,
+                                                                                                                 long startValue,
+                                                                                                                 long step,
+                                                                                                                 int count) {
+                ensureSequenceRow(ruleCode, subRuleKey, scopeKey, scopeValue, resetRule, periodKey, startValue, step);
+                List<Long> rows = jdbcTemplate.query(
+                                """
+                                SELECT current_value
+                                FROM plm_meta.meta_code_sequence
+                                WHERE rule_code = ?
+                                    AND sub_rule_key = ?
+                                    AND scope_key = ?
+                                    AND scope_value = ?
+                                    AND period_key = ?
+                                FOR UPDATE
+                                """,
+                                (rs, rowNum) -> rs.getLong(1),
+                                ruleCode,
+                                subRuleKey,
+                                scopeKey,
+                                scopeValue,
+                                periodKey
+                );
+                long currentValue = rows.isEmpty() ? startValue - step : rows.get(0);
+                long firstValue = currentValue + step;
+                long reservedEndValue = currentValue + (step * count);
+                jdbcTemplate.update(
+                                """
+                                UPDATE plm_meta.meta_code_sequence
+                                SET current_value = ?,
+                                        reset_rule = ?
+                                WHERE rule_code = ?
+                                    AND sub_rule_key = ?
+                                    AND scope_key = ?
+                                    AND scope_value = ?
+                                    AND period_key = ?
+                                """,
+                                reservedEndValue,
+                                resetRule,
+                                ruleCode,
+                                subRuleKey,
+                                scopeKey,
+                                scopeValue,
+                                periodKey
+                );
+                return new SequenceBatchAllocation(
+                                firstValue,
+                                step,
+                                subRuleKey + ":" + scopeKey + "=" + scopeValue,
+                                periodKey
+                );
+        }
 
     private long previewSequenceValue(String ruleCode,
                                       String subRuleKey,
@@ -770,6 +1074,12 @@ public class CodeRuleGenerator {
     private record StructuredRule(Map<String, Object> rootJson, String subRuleKey, Map<String, Object> definition) {
     }
 
+    private record StructuredReservation(Map<Integer, SequenceBatchAllocation> sequenceAllocations) {
+    }
+
+    private record SequenceBatchAllocation(long firstValue, long step, String scopeDescriptor, String periodKey) {
+    }
+
     private record RenderOutcome(String code, String resolvedSequenceScope, String resolvedPeriodKey) {
     }
 
@@ -784,5 +1094,12 @@ public class CodeRuleGenerator {
                                 Map<String, String> resolvedContext,
                                 String resolvedSequenceScope,
                                 String resolvedPeriodKey) {
+    }
+
+    public record ReservationResult(String pattern,
+                                    List<String> codes,
+                                    Map<String, String> resolvedContext,
+                                    String resolvedSequenceScope,
+                                    String resolvedPeriodKey) {
     }
 }

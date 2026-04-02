@@ -66,6 +66,7 @@ public class WorkbookImportProperties {
         private long cleanupIntervalMillis = 600_000L;
         private long emitterTimeoutMillis = 1_800_000L;
         private long sessionRetentionMillis = 86_400_000L;
+        private long snapshotRetentionMillis = 7_200_000L;
         private long terminalJobRetentionMillis = 3_600_000L;
 
         public long getCleanupIntervalMillis() {
@@ -90,6 +91,14 @@ public class WorkbookImportProperties {
 
         public void setSessionRetentionMillis(long sessionRetentionMillis) {
             this.sessionRetentionMillis = sessionRetentionMillis;
+        }
+
+        public long getSnapshotRetentionMillis() {
+            return snapshotRetentionMillis;
+        }
+
+        public void setSnapshotRetentionMillis(long snapshotRetentionMillis) {
+            this.snapshotRetentionMillis = snapshotRetentionMillis;
         }
 
         public long getTerminalJobRetentionMillis() {

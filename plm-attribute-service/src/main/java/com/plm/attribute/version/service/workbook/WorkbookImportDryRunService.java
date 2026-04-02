@@ -2,12 +2,14 @@ package com.plm.attribute.version.service.workbook;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.plm.attribute.version.service.MetaCodeRuleService;
 import com.plm.attribute.version.service.MetaCodeRuleSetService;
 import com.plm.common.api.dto.code.CodeRulePreviewRequestDto;
 import com.plm.common.api.dto.code.CodeRulePreviewResponseDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunOptionsDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunResponseDto;
+import com.plm.common.version.util.AttributeLovImportUtils;
 import com.plm.common.version.domain.MetaAttributeDef;
 import com.plm.common.version.domain.MetaAttributeVersion;
 import com.plm.common.version.domain.MetaCategoryDef;
@@ -29,6 +31,7 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -60,6 +63,23 @@ public class WorkbookImportDryRunService {
     private static final String POLICY_OVERWRITE = "OVERWRITE_EXISTING";
     private static final String POLICY_KEEP = "KEEP_EXISTING";
     private static final String POLICY_FAIL = "FAIL_ON_DUPLICATE";
+    private static final String ACTION_CREATE = "CREATE";
+    private static final String ACTION_UPDATE = "UPDATE";
+    private static final String ACTION_KEEP_EXISTING = "KEEP_EXISTING";
+    private static final String ACTION_SKIP_NO_CHANGE = "SKIP_NO_CHANGE";
+    private static final String ACTION_CONFLICT = "CONFLICT";
+    private static final String WRITE_MODE_CATEGORY_CREATE = "CATEGORY_CREATE";
+    private static final String WRITE_MODE_CATEGORY_UPDATE = "CATEGORY_UPDATE";
+    private static final String WRITE_MODE_CATEGORY_SKIP = "CATEGORY_SKIP";
+    private static final String WRITE_MODE_CATEGORY_CONFLICT = "CATEGORY_CONFLICT";
+    private static final String WRITE_MODE_ATTRIBUTE_CREATE = "ATTRIBUTE_CREATE";
+    private static final String WRITE_MODE_ATTRIBUTE_UPDATE = "ATTRIBUTE_UPDATE";
+    private static final String WRITE_MODE_ATTRIBUTE_SKIP = "ATTRIBUTE_SKIP";
+    private static final String WRITE_MODE_ATTRIBUTE_CONFLICT = "ATTRIBUTE_CONFLICT";
+    private static final String WRITE_MODE_ENUM_CREATE = "ENUM_CREATE";
+    private static final String WRITE_MODE_ENUM_UPDATE = "ENUM_UPDATE";
+    private static final String WRITE_MODE_ENUM_SKIP = "ENUM_SKIP";
+    private static final String WRITE_MODE_ENUM_CONFLICT = "ENUM_CONFLICT";
     private static final Set<String> SUPPORTED_DATA_TYPES = Set.of("string", "number", "bool", "enum", "multi_enum", "date");
 
     private final WorkbookImportRuntimeService runtimeService;
@@ -101,38 +121,67 @@ public class WorkbookImportDryRunService {
             throw new IllegalArgumentException("file is required");
         }
 
+        try {
+            return dryRun(file.getBytes(), file.getOriginalFilename(), operator, rawOptions, DryRunProgressListener.noop());
+        } catch (IOException ex) {
+            throw new IllegalArgumentException("failed to read workbook", ex);
+        }
+    }
+
+    public WorkbookImportDryRunResponseDto dryRun(byte[] fileContent,
+                                                  String originalFilename,
+                                                  String operator,
+                                                  WorkbookImportDryRunOptionsDto rawOptions,
+                                                  DryRunProgressListener progressListener) {
+        if (fileContent == null || fileContent.length == 0) {
+            throw new IllegalArgumentException("file is required");
+        }
+
         WorkbookImportDryRunOptionsDto options = normalizeOptions(rawOptions);
         String normalizedOperator = normalizeOperator(operator);
         OffsetDateTime now = OffsetDateTime.now();
+        DryRunProgressListener listener = progressListener == null ? DryRunProgressListener.noop() : progressListener;
 
-        try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(fileContent))) {
             Sheet categorySheet = requireSheet(workbook, SHEET_CATEGORIES);
             Sheet attributeSheet = requireSheet(workbook, SHEET_ATTRIBUTES);
             Sheet enumSheet = requireSheet(workbook, SHEET_ENUMS);
 
-            List<MutableCategoryRow> categoryRows = parseCategoryRows(categorySheet);
+            listener.onPreloadingStarted();
+            WorkbookImportSupport.ExistingDataSnapshot existingData = preloadExistingData(categorySheet, attributeSheet, enumSheet);
+
+            List<MutableCategoryRow> categoryRows = parseCategoryRows(categorySheet, existingData);
             assignPreviewCategoryCodes(categoryRows, options);
+            preloadResolvedCategoryCodes(existingData, categoryRows);
             CategoryIndexes categoryIndexes = indexCategories(categoryRows);
             Map<String, MutableCategoryRow> categoryByReference = categoryIndexes.byReference();
             Map<String, MutableCategoryRow> categoryByFinalCode = categoryIndexes.byFinalCode();
 
-            List<MutableAttributeRow> attributeRows = parseAttributeRows(attributeSheet, categoryByReference, categoryByFinalCode);
+            List<MutableAttributeRow> attributeRows = parseAttributeRows(attributeSheet, categoryByReference, categoryByFinalCode, existingData);
             assignPreviewAttributeCodes(attributeRows, options, categoryByReference);
+            preloadResolvedAttributeKeys(existingData, attributeRows);
             AttributeIndexes attributeIndexes = indexAttributes(attributeRows);
             Map<String, MutableAttributeRow> attributeByReference = attributeIndexes.byReference();
             Map<String, MutableAttributeRow> attributeByFinalCode = attributeIndexes.byFinalCode();
 
-            List<MutableEnumOptionRow> enumRows = parseEnumRows(enumSheet, categoryByReference, categoryByFinalCode, attributeByReference, attributeByFinalCode);
+            List<MutableEnumOptionRow> enumRows = parseEnumRows(enumSheet, categoryByReference, categoryByFinalCode, attributeByReference, attributeByFinalCode, existingData);
             assignPreviewEnumCodes(enumRows, options, categoryByReference, attributeByReference, attributeByFinalCode);
 
-            resolveCategoryActions(categoryRows, options);
-            resolveAttributeActions(attributeRows, options, categoryByReference);
-            resolveEnumActions(enumRows, options, categoryByReference, attributeByReference, attributeByFinalCode);
+            listener.onRowsParsed(categoryRows.size(), attributeRows.size(), enumRows.size(), originalFilename);
 
+            resolveCategoryActions(categoryRows, options, existingData);
+            listener.onCategoriesResolved(categoryRows.size());
+            resolveAttributeActions(attributeRows, options, categoryByReference, existingData);
+            listener.onAttributesResolved(attributeRows.size());
+            resolveEnumActions(enumRows, options, categoryByReference, attributeByReference, attributeByFinalCode, existingData);
+            listener.onEnumOptionsResolved(enumRows.size());
+
+            listener.onPreviewBuilding();
             WorkbookImportDryRunResponseDto response = buildResponse(workbook, options, categoryRows, attributeRows, enumRows, now);
             String importSessionId = UUID.randomUUID().toString();
             response.setImportSessionId(importSessionId);
             response.setCreatedAt(now);
+            OffsetDateTime expiresAt = runtimeService.resolveSessionExpiresAt(now);
 
             WorkbookImportSupport.ImportSessionState session = new WorkbookImportSupport.ImportSessionState(
                     importSessionId,
@@ -142,8 +191,13 @@ public class WorkbookImportDryRunService {
                     toCategoryRecords(categoryRows),
                     toAttributeRecords(attributeRows),
                     toEnumRecords(enumRows),
-                    now);
+                    existingData,
+                    toExecutionPlan(categoryRows, attributeRows, enumRows, existingData),
+                    null,
+                    now,
+                    expiresAt);
             runtimeService.saveSession(session);
+            listener.onCompleted(response);
             return response;
         } catch (IOException ex) {
             throw new IllegalArgumentException("failed to read workbook", ex);
@@ -197,7 +251,8 @@ public class WorkbookImportDryRunService {
         return normalized;
     }
 
-    private List<MutableCategoryRow> parseCategoryRows(Sheet sheet) {
+    private List<MutableCategoryRow> parseCategoryRows(Sheet sheet,
+                                                       WorkbookImportSupport.ExistingDataSnapshot existingData) {
         List<MutableCategoryRow> rows = new ArrayList<>();
         Set<String> batchCodeKeys = new LinkedHashSet<>();
         Set<String> batchPathKeys = new LinkedHashSet<>();
@@ -240,8 +295,7 @@ public class WorkbookImportDryRunService {
                 }
                 item.parentPath = parentPath(item.categoryPath);
                 if (item.parentPath != null && item.businessDomain != null && !seenPathKeys.contains(composeCategoryPathKey(item.businessDomain, item.parentPath))) {
-                    String parentCode = pathLeaf(item.parentPath);
-                    boolean parentExists = parentCode != null && categoryDefRepository.findByBusinessDomainAndCodeKey(item.businessDomain, parentCode).isPresent();
+                    boolean parentExists = existingData.categoriesByDomainPath().containsKey(composeCategoryPathKey(item.businessDomain, item.parentPath));
                     if (!parentExists) {
                         item.error("Category_Path", "CATEGORY_PARENT_NOT_FOUND", "父级路径未在当前批次上方出现", item.parentPath, "父节点必须先于子节点出现");
                     }
@@ -376,7 +430,8 @@ public class WorkbookImportDryRunService {
 
     private List<MutableAttributeRow> parseAttributeRows(Sheet sheet,
                                                          Map<String, MutableCategoryRow> categoryByReference,
-                                                         Map<String, MutableCategoryRow> categoryByFinalCode) {
+                                                         Map<String, MutableCategoryRow> categoryByFinalCode,
+                                                         WorkbookImportSupport.ExistingDataSnapshot existingData) {
         List<MutableAttributeRow> rows = new ArrayList<>();
         Set<String> batchKeySet = new LinkedHashSet<>();
         Set<String> batchFieldSet = new LinkedHashSet<>();
@@ -425,15 +480,15 @@ public class WorkbookImportDryRunService {
             }
 
             MutableCategoryRow category = resolveCategoryRow(item.categoryReferenceCode, categoryByReference, categoryByFinalCode);
-            MetaCategoryDef existingCategory = resolveExistingCategory(category != null ? category.businessDomain : null, item.categoryReferenceCode);
-            if (category == null && existingCategory == null && hasAmbiguousExistingCategory(item.categoryReferenceCode)) {
+            WorkbookImportSupport.ExistingCategoryRef existingCategory = resolveExistingCategory(existingData, category != null ? category.businessDomain : null, item.categoryReferenceCode);
+            if (category == null && existingCategory == null && hasAmbiguousExistingCategory(existingData, item.categoryReferenceCode)) {
                 item.error("Category_Code", "ATTRIBUTE_CATEGORY_AMBIGUOUS", "分类编码在多个业务域中存在，必须先在工作簿分类页声明业务域", item.categoryReferenceCode, "categoryCode 在业务域内唯一");
             }
             if (category == null && existingCategory == null) {
                 item.error("Category_Code", "ATTRIBUTE_CATEGORY_NOT_FOUND", "属性所属分类不存在", item.categoryReferenceCode, "分类必须在工作簿中或数据库中存在");
             } else {
-                item.businessDomain = category != null ? category.businessDomain : existingCategory.getBusinessDomain();
-                item.resolvedCategoryCode = category != null ? category.resolvedFinalCode : existingCategory.getCodeKey();
+                item.businessDomain = category != null ? category.businessDomain : existingCategory.businessDomain();
+                item.resolvedCategoryCode = category != null ? category.resolvedFinalCode : existingCategory.code();
                 String resolvedCategoryName = category != null ? category.categoryName : latestCategoryName(existingCategory);
                 if (item.categoryName != null && resolvedCategoryName != null && !Objects.equals(item.categoryName, resolvedCategoryName)) {
                     item.warn("Category_Name", "ATTRIBUTE_CATEGORY_NAME_MISMATCH", "分类名称与解析结果不一致", item.categoryName, resolvedCategoryName);
@@ -510,7 +565,8 @@ public class WorkbookImportDryRunService {
                                                      Map<String, MutableCategoryRow> categoryByReference,
                                                      Map<String, MutableCategoryRow> categoryByFinalCode,
                                                      Map<String, MutableAttributeRow> attributeByReference,
-                                                     Map<String, MutableAttributeRow> attributeByFinalCode) {
+                                                     Map<String, MutableAttributeRow> attributeByFinalCode,
+                                                     WorkbookImportSupport.ExistingDataSnapshot existingData) {
         List<MutableEnumOptionRow> rows = new ArrayList<>();
         Set<String> batchOptionKeys = new LinkedHashSet<>();
         Set<String> batchNameKeys = new LinkedHashSet<>();
@@ -540,28 +596,28 @@ public class WorkbookImportDryRunService {
             }
 
             MutableCategoryRow category = resolveCategoryRow(item.categoryReferenceCode, categoryByReference, categoryByFinalCode);
-            MetaCategoryDef existingCategory = resolveExistingCategory(category != null ? category.businessDomain : null, item.categoryReferenceCode);
-            if (category == null && existingCategory == null && hasAmbiguousExistingCategory(item.categoryReferenceCode)) {
+            WorkbookImportSupport.ExistingCategoryRef existingCategory = resolveExistingCategory(existingData, category != null ? category.businessDomain : null, item.categoryReferenceCode);
+            if (category == null && existingCategory == null && hasAmbiguousExistingCategory(existingData, item.categoryReferenceCode)) {
                 item.error("Category_Code", "ENUM_CATEGORY_AMBIGUOUS", "分类编码在多个业务域中存在，必须先在工作簿分类页声明业务域", item.categoryReferenceCode, "categoryCode 在业务域内唯一");
             }
             if (category == null && existingCategory == null) {
                 item.error("Category_Code", "ENUM_CATEGORY_NOT_FOUND", "枚举值所属分类不存在", item.categoryReferenceCode, "分类必须在工作簿中或数据库中存在");
             } else {
-                item.businessDomain = category != null ? category.businessDomain : existingCategory.getBusinessDomain();
-                item.resolvedCategoryCode = category != null ? category.resolvedFinalCode : existingCategory.getCodeKey();
+                item.businessDomain = category != null ? category.businessDomain : existingCategory.businessDomain();
+                item.resolvedCategoryCode = category != null ? category.resolvedFinalCode : existingCategory.code();
             }
 
             if (item.businessDomain != null) {
                 MutableAttributeRow batchAttribute = resolveAttributeRow(item, attributeByReference, attributeByFinalCode);
-                MetaAttributeDef existingAttribute = resolveExistingAttribute(item.businessDomain, item.resolvedCategoryCode, item.attributeReferenceCode);
+                WorkbookImportSupport.ExistingAttributeRef existingAttribute = resolveExistingAttribute(existingData, item.businessDomain, item.attributeReferenceCode);
                 if (batchAttribute == null && existingAttribute == null) {
                     item.error("Attribute_Key", "ENUM_ATTRIBUTE_NOT_FOUND", "枚举值所属属性不存在", item.attributeReferenceCode, "属性必须在工作簿中或数据库中存在");
                 } else {
-                    if (batchAttribute == null && existingAttribute != null && existingAttribute.getCategoryDef() != null
-                            && !Objects.equals(existingAttribute.getCategoryDef().getCodeKey(), item.resolvedCategoryCode)) {
+                    if (batchAttribute == null && existingAttribute != null
+                            && !Objects.equals(existingAttribute.categoryCode(), item.resolvedCategoryCode)) {
                         item.error("Attribute_Key", "ENUM_ATTRIBUTE_CATEGORY_CONFLICT", "属性编码已被业务域内其他分类占用", item.attributeReferenceCode, "businessDomain + attributeKey 必须唯一");
                     }
-                    item.resolvedAttributeCode = batchAttribute != null ? batchAttribute.resolvedFinalCode : existingAttribute.getKey();
+                    item.resolvedAttributeCode = batchAttribute != null ? batchAttribute.resolvedFinalCode : existingAttribute.key();
                     String dataType = batchAttribute != null ? batchAttribute.dataType : latestAttributeDataType(existingAttribute);
                     if (!isEnumLike(dataType)) {
                         item.error("Attribute_Key", "ENUM_ATTRIBUTE_TYPE_INVALID", "枚举值只能绑定到 enum 或 multi_enum 属性", item.attributeReferenceCode, "属性类型必须是 enum 或 multi_enum");
@@ -624,16 +680,23 @@ public class WorkbookImportDryRunService {
         }
     }
 
-    private void resolveCategoryActions(List<MutableCategoryRow> rows, WorkbookImportDryRunOptionsDto options) {
+    private void resolveCategoryActions(List<MutableCategoryRow> rows,
+                                        WorkbookImportDryRunOptionsDto options,
+                                        WorkbookImportSupport.ExistingDataSnapshot existingData) {
         String policy = options.getDuplicateOptions().getCategoryDuplicatePolicy();
         for (MutableCategoryRow row : rows) {
             if (row.businessDomain == null || row.resolvedFinalCode == null) {
-                row.resolvedAction = "CREATE";
+                row.resolvedAction = ACTION_CREATE;
                 continue;
             }
-            boolean exists = categoryDefRepository.findByBusinessDomainAndCodeKey(row.businessDomain, row.resolvedFinalCode).isPresent();
-            if (!exists) {
-                row.resolvedAction = "CREATE";
+            WorkbookImportSupport.ExistingCategoryRef existingCategory = existingData.categoriesByDomainCode()
+                    .get(composeCategoryCodeKey(row.businessDomain, row.resolvedFinalCode));
+            if (existingCategory == null) {
+                row.resolvedAction = ACTION_CREATE;
+                continue;
+            }
+            if (POLICY_OVERWRITE.equals(policy) && isNoChangeCategory(row, existingCategory)) {
+                row.resolvedAction = ACTION_SKIP_NO_CHANGE;
                 continue;
             }
             applyResolvedAction(policy, row, "Category_Code", "CATEGORY_DUPLICATE");
@@ -642,29 +705,34 @@ public class WorkbookImportDryRunService {
 
     private void resolveAttributeActions(List<MutableAttributeRow> rows,
                                          WorkbookImportDryRunOptionsDto options,
-                                         Map<String, MutableCategoryRow> categoryByReference) {
+                                         Map<String, MutableCategoryRow> categoryByReference,
+                                         WorkbookImportSupport.ExistingDataSnapshot existingData) {
         String policy = options.getDuplicateOptions().getAttributeDuplicatePolicy();
         for (MutableAttributeRow row : rows) {
             if (row.businessDomain == null || row.resolvedCategoryCode == null || row.resolvedFinalCode == null) {
-                row.resolvedAction = "CREATE";
+                row.resolvedAction = ACTION_CREATE;
                 continue;
             }
-            MetaAttributeDef existingAttribute = attributeDefRepository.findActiveByBusinessDomainAndKey(row.businessDomain, row.resolvedFinalCode).orElse(null);
+            WorkbookImportSupport.ExistingAttributeRef existingAttribute = resolveExistingAttribute(existingData, row.businessDomain, row.resolvedFinalCode);
             if (existingAttribute == null) {
                 MutableCategoryRow batchCategory = resolveCategoryRow(row.categoryReferenceCode, categoryByReference, Map.of());
                 if (batchCategory == null) {
-                    row.resolvedAction = "CREATE";
+                    row.resolvedAction = ACTION_CREATE;
                     continue;
                 }
-            } else if (existingAttribute.getCategoryDef() != null && Objects.equals(existingAttribute.getCategoryDef().getCodeKey(), row.resolvedCategoryCode)) {
+            } else if (Objects.equals(existingAttribute.categoryCode(), row.resolvedCategoryCode)) {
+                if (POLICY_OVERWRITE.equals(policy) && isNoChangeAttribute(row, existingAttribute)) {
+                    row.resolvedAction = ACTION_SKIP_NO_CHANGE;
+                    continue;
+                }
                 applyResolvedAction(policy, row, "Attribute_Key", "ATTRIBUTE_DUPLICATE");
                 continue;
             } else {
                 row.error("Attribute_Key", "ATTRIBUTE_KEY_CONFLICT_IN_DOMAIN", "属性编码已被业务域内其他分类占用", row.resolvedFinalCode, "businessDomain + attributeKey 必须唯一");
-                row.resolvedAction = "CONFLICT";
+                row.resolvedAction = ACTION_CONFLICT;
                 continue;
             }
-            row.resolvedAction = "CREATE";
+            row.resolvedAction = ACTION_CREATE;
         }
     }
 
@@ -672,30 +740,34 @@ public class WorkbookImportDryRunService {
                                     WorkbookImportDryRunOptionsDto options,
                                     Map<String, MutableCategoryRow> categoryByReference,
                                     Map<String, MutableAttributeRow> attributeByReference,
-                                    Map<String, MutableAttributeRow> attributeByFinalCode) {
+                                    Map<String, MutableAttributeRow> attributeByFinalCode,
+                                    WorkbookImportSupport.ExistingDataSnapshot existingData) {
         String policy = options.getDuplicateOptions().getEnumOptionDuplicatePolicy();
-        Map<String, Map<String, ExistingEnumValue>> existingByBusinessDomain = new LinkedHashMap<>();
         for (MutableEnumOptionRow row : rows) {
             if (row.businessDomain == null || row.resolvedCategoryCode == null || row.resolvedAttributeCode == null || row.resolvedFinalCode == null) {
-                row.resolvedAction = "CREATE";
+                row.resolvedAction = ACTION_CREATE;
                 continue;
             }
-            MetaAttributeDef existingAttribute = resolveExistingAttribute(row.businessDomain, row.resolvedCategoryCode, row.resolvedAttributeCode);
+            WorkbookImportSupport.ExistingAttributeRef existingAttribute = resolveExistingAttribute(existingData, row.businessDomain, row.resolvedAttributeCode);
             if (existingAttribute == null) {
-                row.resolvedAction = "CREATE";
+                row.resolvedAction = ACTION_CREATE;
                 continue;
             }
-            Map<String, ExistingEnumValue> existingValues = existingByBusinessDomain.computeIfAbsent(row.businessDomain, this::loadExistingEnumValuesByBusinessDomain);
-            ExistingEnumValue existing = existingValues.get(row.resolvedFinalCode);
+            Map<String, WorkbookImportSupport.ExistingEnumValueRef> existingValues = existingData.enumValuesByBusinessDomain().getOrDefault(row.businessDomain, Map.of());
+            WorkbookImportSupport.ExistingEnumValueRef existing = existingValues.get(row.resolvedFinalCode);
             if (existing != null) {
                 if (Objects.equals(existing.attributeCode(), row.resolvedAttributeCode)) {
+                    if (POLICY_OVERWRITE.equals(policy) && isNoChangeEnum(row, existing)) {
+                        row.resolvedAction = ACTION_SKIP_NO_CHANGE;
+                        continue;
+                    }
                     applyResolvedAction(policy, row, "Option_Code", "ENUM_OPTION_DUPLICATE");
                 } else {
                     row.error("Option_Code", "ENUM_OPTION_CODE_CONFLICT_IN_DOMAIN", "枚举值编码已被业务域内其他属性占用", row.resolvedFinalCode, "businessDomain + optionCode 必须唯一");
-                    row.resolvedAction = "CONFLICT";
+                    row.resolvedAction = ACTION_CONFLICT;
                 }
             } else {
-                row.resolvedAction = "CREATE";
+                row.resolvedAction = ACTION_CREATE;
             }
         }
     }
@@ -819,10 +891,10 @@ public class WorkbookImportDryRunService {
 
     private WorkbookImportDryRunResponseDto.ChangeCounterDto buildCounters(Collection<String> actions) {
         WorkbookImportDryRunResponseDto.ChangeCounterDto dto = new WorkbookImportDryRunResponseDto.ChangeCounterDto();
-        dto.setCreate(countAction(actions, "CREATE"));
-        dto.setUpdate(countAction(actions, "UPDATE"));
-        dto.setSkip(countAction(actions, "KEEP_EXISTING"));
-        dto.setConflict(countAction(actions, "CONFLICT"));
+        dto.setCreate(countAction(actions, ACTION_CREATE));
+        dto.setUpdate(countAction(actions, ACTION_UPDATE));
+        dto.setSkip(countAction(actions, ACTION_KEEP_EXISTING) + countAction(actions, ACTION_SKIP_NO_CHANGE));
+        dto.setConflict(countAction(actions, ACTION_CONFLICT));
         return dto;
     }
 
@@ -891,6 +963,432 @@ public class WorkbookImportDryRunService {
                 new ArrayList<>(row.issues))).toList();
     }
 
+    private WorkbookImportSupport.ExecutionPlanSnapshot toExecutionPlan(List<MutableCategoryRow> categories,
+                                                                        List<MutableAttributeRow> attributes,
+                                                                        List<MutableEnumOptionRow> enumOptions,
+                                                                        WorkbookImportSupport.ExistingDataSnapshot existingData) {
+        return new WorkbookImportSupport.ExecutionPlanSnapshot(
+                categories.stream().map(row -> toCategoryPlanItem(row, existingData)).toList(),
+                attributes.stream().map(row -> toAttributePlanItem(row, existingData)).toList(),
+                enumOptions.stream().map(row -> toEnumPlanItem(row, existingData)).toList());
+    }
+
+    private WorkbookImportSupport.CategoryPlanItem toCategoryPlanItem(MutableCategoryRow row,
+                                                                      WorkbookImportSupport.ExistingDataSnapshot existingData) {
+        WorkbookImportSupport.ExistingCategoryRef existingCategory = resolveExistingCategory(existingData, row.businessDomain, row.resolvedFinalCode);
+        String oldStateHash = existingCategory == null ? null : buildCategoryStateHash(existingCategory.path(), existingCategory.latestName());
+        String newStateHash = buildCategoryStateHash(row.resolvedFinalPath, row.categoryName);
+        return new WorkbookImportSupport.CategoryPlanItem(
+                row.sheetName,
+                row.rowNumber,
+                row.businessDomain,
+                row.excelReferenceCode,
+                row.categoryPath,
+                row.categoryName,
+                row.parentPath,
+                row.resolvedFinalCode,
+                row.resolvedFinalPath,
+                row.resolvedAction,
+                resolveCategoryWriteMode(row.resolvedAction),
+                existingCategory == null ? null : existingCategory.id(),
+                oldStateHash,
+                newStateHash,
+                shouldWrite(row.resolvedAction),
+                row.codeMode());
+    }
+
+            private WorkbookImportSupport.AttributePlanItem toAttributePlanItem(MutableAttributeRow row,
+                                            WorkbookImportSupport.ExistingDataSnapshot existingData) {
+            WorkbookImportSupport.ExistingAttributeRef existingAttribute = resolveExistingAttribute(existingData, row.businessDomain, row.resolvedFinalCode);
+            String newStructureHash = buildAttributeStructureHash(row, existingAttribute);
+        return new WorkbookImportSupport.AttributePlanItem(
+                row.sheetName,
+                row.rowNumber,
+                row.businessDomain,
+                row.categoryReferenceCode,
+                row.categoryName,
+                row.attributeReferenceCode,
+                row.attributeName,
+                row.attributeField,
+                row.description,
+                row.dataType,
+                row.unit,
+                row.defaultValue,
+                row.required,
+                row.unique,
+                row.searchable,
+                row.hidden,
+                row.readOnly,
+                row.minValue,
+                row.maxValue,
+                row.step,
+                row.precision,
+                row.trueLabel,
+                row.falseLabel,
+                row.resolvedCategoryCode,
+                row.resolvedFinalCode,
+                row.resolvedAction,
+                resolveAttributeWriteMode(row.resolvedAction),
+                existingAttribute == null ? null : existingAttribute.id(),
+                existingAttribute == null ? null : trimToNull(existingAttribute.structureHash()),
+                newStructureHash,
+                shouldWrite(row.resolvedAction),
+                row.codeMode());
+    }
+
+            private WorkbookImportSupport.EnumPlanItem toEnumPlanItem(MutableEnumOptionRow row,
+                                          WorkbookImportSupport.ExistingDataSnapshot existingData) {
+            Map<String, WorkbookImportSupport.ExistingEnumValueRef> existingValues = existingData.enumValuesByBusinessDomain().getOrDefault(row.businessDomain, Map.of());
+            WorkbookImportSupport.ExistingEnumValueRef existingEnum = row.resolvedFinalCode == null ? null : existingValues.get(row.resolvedFinalCode);
+            String oldValueHash = existingEnum == null ? null : buildEnumValueHash(existingEnum.name(), existingEnum.label());
+            String newValueHash = buildEnumValueHash(row.optionName, row.displayLabel);
+        return new WorkbookImportSupport.EnumPlanItem(
+                row.sheetName,
+                row.rowNumber,
+                row.businessDomain,
+                row.categoryReferenceCode,
+                row.attributeReferenceCode,
+                row.optionReferenceCode,
+                row.optionName,
+                row.displayLabel,
+                row.resolvedCategoryCode,
+                row.resolvedAttributeCode,
+                row.resolvedFinalCode,
+                row.resolvedAction,
+                resolveEnumWriteMode(row.resolvedAction),
+                existingEnum == null ? null : existingEnum.code(),
+                oldValueHash,
+                newValueHash,
+                shouldWrite(row.resolvedAction),
+                row.codeMode());
+    }
+
+    private String resolveCategoryWriteMode(String resolvedAction) {
+        return switch (resolvedAction) {
+            case ACTION_CREATE -> WRITE_MODE_CATEGORY_CREATE;
+            case ACTION_UPDATE -> WRITE_MODE_CATEGORY_UPDATE;
+            case ACTION_KEEP_EXISTING, ACTION_SKIP_NO_CHANGE -> WRITE_MODE_CATEGORY_SKIP;
+            case ACTION_CONFLICT -> WRITE_MODE_CATEGORY_CONFLICT;
+            default -> WRITE_MODE_CATEGORY_CONFLICT;
+        };
+    }
+
+    private String resolveAttributeWriteMode(String resolvedAction) {
+        return switch (resolvedAction) {
+            case ACTION_CREATE -> WRITE_MODE_ATTRIBUTE_CREATE;
+            case ACTION_UPDATE -> WRITE_MODE_ATTRIBUTE_UPDATE;
+            case ACTION_KEEP_EXISTING, ACTION_SKIP_NO_CHANGE -> WRITE_MODE_ATTRIBUTE_SKIP;
+            case ACTION_CONFLICT -> WRITE_MODE_ATTRIBUTE_CONFLICT;
+            default -> WRITE_MODE_ATTRIBUTE_CONFLICT;
+        };
+    }
+
+    private String resolveEnumWriteMode(String resolvedAction) {
+        return switch (resolvedAction) {
+            case ACTION_CREATE -> WRITE_MODE_ENUM_CREATE;
+            case ACTION_UPDATE -> WRITE_MODE_ENUM_UPDATE;
+            case ACTION_KEEP_EXISTING, ACTION_SKIP_NO_CHANGE -> WRITE_MODE_ENUM_SKIP;
+            case ACTION_CONFLICT -> WRITE_MODE_ENUM_CONFLICT;
+            default -> WRITE_MODE_ENUM_CONFLICT;
+        };
+    }
+
+    private WorkbookImportSupport.ExistingDataSnapshot preloadExistingData(Sheet categorySheet,
+                                                                           Sheet attributeSheet,
+                                                                           Sheet enumSheet) {
+        Map<String, Set<String>> categoryCodesByBusinessDomain = collectCategoryCodesByBusinessDomain(categorySheet);
+        Map<String, Set<String>> categoryPathsByBusinessDomain = collectCategoryPathsByBusinessDomain(categorySheet);
+        Set<String> referencedCategoryCodes = collectReferencedCategoryCodes(attributeSheet, enumSheet);
+        Set<String> referencedAttributeKeys = collectReferencedAttributeKeys(attributeSheet, enumSheet);
+
+        Map<String, WorkbookImportSupport.ExistingCategoryRef> categoriesByDomainCode = new LinkedHashMap<>();
+        Map<String, WorkbookImportSupport.ExistingCategoryRef> categoriesByDomainPath = new LinkedHashMap<>();
+        Set<String> ambiguousCategoryCodes = new LinkedHashSet<>();
+        Set<MetaCategoryDef> categoryDefs = new LinkedHashSet<>();
+
+        categoryCodesByBusinessDomain.forEach((businessDomain, codes) -> {
+            if (codes == null || codes.isEmpty()) {
+                return;
+            }
+            categoryDefs.addAll(categoryDefRepository.findByBusinessDomainAndCodeKeyIn(businessDomain, codes).stream()
+                    .filter(this::isActive)
+                    .toList());
+        });
+        categoryPathsByBusinessDomain.forEach((businessDomain, paths) -> {
+            if (paths == null || paths.isEmpty()) {
+                return;
+            }
+            categoryDefs.addAll(categoryDefRepository.findActiveByBusinessDomainAndPathIn(businessDomain, paths));
+        });
+
+        List<MetaCategoryDef> unscopedCategoryMatches = referencedCategoryCodes.isEmpty()
+                ? List.of()
+                : categoryDefRepository.findByCodeKeyIn(referencedCategoryCodes).stream()
+                .filter(this::isActive)
+                .toList();
+        categoryDefs.addAll(unscopedCategoryMatches);
+
+        Map<UUID, String> latestCategoryNames = loadLatestCategoryNames(categoryDefs);
+        for (MetaCategoryDef categoryDef : categoryDefs) {
+            WorkbookImportSupport.ExistingCategoryRef ref = toExistingCategoryRef(categoryDef, latestCategoryNames.get(categoryDef.getId()));
+            categoriesByDomainCode.put(composeCategoryCodeKey(ref.businessDomain(), ref.code()), ref);
+            if (ref.path() != null) {
+                categoriesByDomainPath.put(composeCategoryPathKey(ref.businessDomain(), ref.path()), ref);
+            }
+        }
+        Map<String, Set<String>> domainsByCode = new LinkedHashMap<>();
+        for (MetaCategoryDef categoryDef : unscopedCategoryMatches) {
+            domainsByCode.computeIfAbsent(categoryDef.getCodeKey(), ignored -> new LinkedHashSet<>()).add(categoryDef.getBusinessDomain());
+        }
+        domainsByCode.forEach((code, domains) -> {
+            if (domains.size() > 1) {
+                ambiguousCategoryCodes.add(code);
+            }
+        });
+
+        Set<String> candidateBusinessDomains = new LinkedHashSet<>();
+        candidateBusinessDomains.addAll(categoryCodesByBusinessDomain.keySet());
+        candidateBusinessDomains.addAll(categoryPathsByBusinessDomain.keySet());
+        categoryDefs.stream().map(MetaCategoryDef::getBusinessDomain).filter(Objects::nonNull).forEach(candidateBusinessDomains::add);
+
+        Map<String, WorkbookImportSupport.ExistingAttributeRef> attributesByDomainKey = new LinkedHashMap<>();
+        if (!referencedAttributeKeys.isEmpty()) {
+            Set<MetaAttributeDef> attributeDefs = new LinkedHashSet<>();
+            for (String businessDomain : candidateBusinessDomains) {
+                attributeDefs.addAll(attributeDefRepository.findActiveByBusinessDomainAndKeyIn(businessDomain, referencedAttributeKeys));
+            }
+            Map<UUID, MetaAttributeVersion> latestAttributeVersions = loadLatestAttributeVersions(attributeDefs);
+            for (MetaAttributeDef attributeDef : attributeDefs) {
+                WorkbookImportSupport.ExistingAttributeRef ref = toExistingAttributeRef(attributeDef, latestAttributeVersions.get(attributeDef.getId()));
+                attributesByDomainKey.put(composeAttributeLookupKey(ref.businessDomain(), ref.key()), ref);
+            }
+        }
+
+        Map<String, Map<String, WorkbookImportSupport.ExistingEnumValueRef>> enumValuesByBusinessDomain = new LinkedHashMap<>();
+        if (!candidateBusinessDomains.isEmpty()) {
+            List<MetaLovDef> lovDefs = lovDefRepository.findActiveByBusinessDomainIn(candidateBusinessDomains);
+            Map<UUID, MetaLovVersion> latestLovVersions = lovVersionRepository.findByLovDefInAndIsLatestTrue(lovDefs).stream()
+                    .collect(LinkedHashMap::new, (map, item) -> map.put(item.getLovDef().getId(), item), Map::putAll);
+            for (MetaLovDef lovDef : lovDefs) {
+                MetaLovVersion version = latestLovVersions.get(lovDef.getId());
+                if (version == null || version.getValueJson() == null || version.getValueJson().isBlank()) {
+                    continue;
+                }
+                Map<String, WorkbookImportSupport.ExistingEnumValueRef> existingByCode = enumValuesByBusinessDomain.computeIfAbsent(lovDef.getBusinessDomain(), ignored -> new LinkedHashMap<>());
+                mergeExistingEnumValues(existingByCode, lovDef, version);
+            }
+        }
+
+        return new WorkbookImportSupport.ExistingDataSnapshot(
+                categoriesByDomainCode,
+                categoriesByDomainPath,
+                ambiguousCategoryCodes,
+                attributesByDomainKey,
+                enumValuesByBusinessDomain);
+    }
+
+    private void preloadResolvedCategoryCodes(WorkbookImportSupport.ExistingDataSnapshot existingData,
+                                              List<MutableCategoryRow> rows) {
+        Map<String, Set<String>> missingCodesByBusinessDomain = new LinkedHashMap<>();
+        for (MutableCategoryRow row : rows) {
+            if (row.businessDomain == null || row.resolvedFinalCode == null) {
+                continue;
+            }
+            String key = composeCategoryCodeKey(row.businessDomain, row.resolvedFinalCode);
+            if (!existingData.categoriesByDomainCode().containsKey(key)) {
+                missingCodesByBusinessDomain.computeIfAbsent(row.businessDomain, ignored -> new LinkedHashSet<>()).add(row.resolvedFinalCode);
+            }
+        }
+        hydrateExistingCategories(existingData, missingCodesByBusinessDomain);
+    }
+
+    private void preloadResolvedAttributeKeys(WorkbookImportSupport.ExistingDataSnapshot existingData,
+                                              List<MutableAttributeRow> rows) {
+        Map<String, Set<String>> missingKeysByBusinessDomain = new LinkedHashMap<>();
+        for (MutableAttributeRow row : rows) {
+            if (row.businessDomain == null || row.resolvedFinalCode == null) {
+                continue;
+            }
+            String key = composeAttributeLookupKey(row.businessDomain, row.resolvedFinalCode);
+            if (!existingData.attributesByDomainKey().containsKey(key)) {
+                missingKeysByBusinessDomain.computeIfAbsent(row.businessDomain, ignored -> new LinkedHashSet<>()).add(row.resolvedFinalCode);
+            }
+        }
+        hydrateExistingAttributes(existingData, missingKeysByBusinessDomain);
+    }
+
+    private void hydrateExistingCategories(WorkbookImportSupport.ExistingDataSnapshot existingData,
+                                           Map<String, Set<String>> codesByBusinessDomain) {
+        Set<MetaCategoryDef> defs = new LinkedHashSet<>();
+        codesByBusinessDomain.forEach((businessDomain, codes) -> {
+            if (codes == null || codes.isEmpty()) {
+                return;
+            }
+            defs.addAll(categoryDefRepository.findByBusinessDomainAndCodeKeyIn(businessDomain, codes).stream()
+                    .filter(this::isActive)
+                    .toList());
+        });
+        Map<UUID, String> latestCategoryNames = loadLatestCategoryNames(defs);
+        for (MetaCategoryDef categoryDef : defs) {
+            WorkbookImportSupport.ExistingCategoryRef ref = toExistingCategoryRef(categoryDef, latestCategoryNames.get(categoryDef.getId()));
+            existingData.categoriesByDomainCode().put(composeCategoryCodeKey(ref.businessDomain(), ref.code()), ref);
+            if (ref.path() != null) {
+                existingData.categoriesByDomainPath().put(composeCategoryPathKey(ref.businessDomain(), ref.path()), ref);
+            }
+        }
+    }
+
+    private void hydrateExistingAttributes(WorkbookImportSupport.ExistingDataSnapshot existingData,
+                                           Map<String, Set<String>> keysByBusinessDomain) {
+        Set<MetaAttributeDef> defs = new LinkedHashSet<>();
+        keysByBusinessDomain.forEach((businessDomain, keys) -> {
+            if (keys == null || keys.isEmpty()) {
+                return;
+            }
+            defs.addAll(attributeDefRepository.findActiveByBusinessDomainAndKeyIn(businessDomain, keys));
+        });
+        Map<UUID, MetaAttributeVersion> latestAttributeVersions = loadLatestAttributeVersions(defs);
+        for (MetaAttributeDef attributeDef : defs) {
+            WorkbookImportSupport.ExistingAttributeRef ref = toExistingAttributeRef(attributeDef, latestAttributeVersions.get(attributeDef.getId()));
+            existingData.attributesByDomainKey().put(composeAttributeLookupKey(ref.businessDomain(), ref.key()), ref);
+        }
+    }
+
+    private Map<String, Set<String>> collectCategoryCodesByBusinessDomain(Sheet categorySheet) {
+        Map<String, Set<String>> result = new LinkedHashMap<>();
+        for (int index = CATEGORY_DATA_START_ROW_INDEX; index <= categorySheet.getLastRowNum(); index++) {
+            Row row = categorySheet.getRow(index);
+            if (isBlankRow(row, 4)) {
+                continue;
+            }
+            String businessDomain = normalizeBusinessDomain(readCell(row, 0));
+            String categoryCode = trimToNull(readCell(row, 1));
+            if (businessDomain != null && categoryCode != null) {
+                result.computeIfAbsent(businessDomain, ignored -> new LinkedHashSet<>()).add(categoryCode);
+            }
+        }
+        return result;
+    }
+
+    private Map<String, Set<String>> collectCategoryPathsByBusinessDomain(Sheet categorySheet) {
+        Map<String, Set<String>> result = new LinkedHashMap<>();
+        for (int index = CATEGORY_DATA_START_ROW_INDEX; index <= categorySheet.getLastRowNum(); index++) {
+            Row row = categorySheet.getRow(index);
+            if (isBlankRow(row, 4)) {
+                continue;
+            }
+            String businessDomain = normalizeBusinessDomain(readCell(row, 0));
+            String categoryPath = trimToNull(readCell(row, 2));
+            if (businessDomain == null || categoryPath == null) {
+                continue;
+            }
+            result.computeIfAbsent(businessDomain, ignored -> new LinkedHashSet<>()).add(categoryPath);
+            String parentPath = parentPath(categoryPath);
+            if (parentPath != null) {
+                result.get(businessDomain).add(parentPath);
+            }
+        }
+        return result;
+    }
+
+    private Set<String> collectReferencedCategoryCodes(Sheet attributeSheet, Sheet enumSheet) {
+        Set<String> result = new LinkedHashSet<>();
+        collectColumnValues(attributeSheet, ATTRIBUTE_DATA_START_ROW_INDEX, 0, 20, result);
+        collectColumnValues(enumSheet, ENUM_DATA_START_ROW_INDEX, 0, 5, result);
+        return result;
+    }
+
+    private Set<String> collectReferencedAttributeKeys(Sheet attributeSheet, Sheet enumSheet) {
+        Set<String> result = new LinkedHashSet<>();
+        collectColumnValues(attributeSheet, ATTRIBUTE_DATA_START_ROW_INDEX, 2, 20, result);
+        collectColumnValues(enumSheet, ENUM_DATA_START_ROW_INDEX, 1, 5, result);
+        return result;
+    }
+
+    private void collectColumnValues(Sheet sheet,
+                                     int startRowIndex,
+                                     int columnIndex,
+                                     int blankColumnCount,
+                                     Set<String> target) {
+        for (int index = startRowIndex; index <= sheet.getLastRowNum(); index++) {
+            Row row = sheet.getRow(index);
+            if (isBlankRow(row, blankColumnCount)) {
+                continue;
+            }
+            String value = trimToNull(readCell(row, columnIndex));
+            if (value != null) {
+                target.add(value);
+            }
+        }
+    }
+
+    private Map<UUID, String> loadLatestCategoryNames(Collection<MetaCategoryDef> defs) {
+        if (defs == null || defs.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> result = new LinkedHashMap<>();
+        categoryVersionRepository.findByCategoryDefInAndIsLatestTrue(defs).forEach(item -> result.put(item.getCategoryDef().getId(), item.getDisplayName()));
+        return result;
+    }
+
+    private Map<UUID, MetaAttributeVersion> loadLatestAttributeVersions(Collection<MetaAttributeDef> defs) {
+        if (defs == null || defs.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, MetaAttributeVersion> result = new LinkedHashMap<>();
+        attributeVersionRepository.findByAttributeDefInAndIsLatestTrue(defs).forEach(item -> result.put(item.getAttributeDef().getId(), item));
+        return result;
+    }
+
+    private WorkbookImportSupport.ExistingCategoryRef toExistingCategoryRef(MetaCategoryDef categoryDef, String latestName) {
+        return new WorkbookImportSupport.ExistingCategoryRef(
+                categoryDef.getId(),
+                categoryDef.getBusinessDomain(),
+                categoryDef.getCodeKey(),
+                trimToNull(categoryDef.getPath()),
+                latestName == null ? categoryDef.getCodeKey() : latestName);
+    }
+
+    private WorkbookImportSupport.ExistingAttributeRef toExistingAttributeRef(MetaAttributeDef attributeDef, MetaAttributeVersion latestVersion) {
+        return new WorkbookImportSupport.ExistingAttributeRef(
+                attributeDef.getId(),
+                attributeDef.getBusinessDomain(),
+                attributeDef.getCategoryDef() == null ? null : attributeDef.getCategoryDef().getCodeKey(),
+                attributeDef.getKey(),
+                latestVersion == null ? null : latestVersion.getDataType(),
+                latestVersion == null ? null : trimToNull(latestVersion.getLovKey()),
+                latestVersion == null ? null : trimToNull(latestVersion.getHash()));
+    }
+
+    private void mergeExistingEnumValues(Map<String, WorkbookImportSupport.ExistingEnumValueRef> existingByCode,
+                                         MetaLovDef lovDef,
+                                         MetaLovVersion version) {
+        try {
+            JsonNode root = objectMapper.readTree(version.getValueJson());
+            JsonNode values = root.path("values");
+            if (!values.isArray()) {
+                return;
+            }
+            String attributeCode = lovDef.getAttributeDef() == null ? null : trimToNull(lovDef.getAttributeDef().getKey());
+            for (JsonNode item : values) {
+                if (item == null || item.isNull()) {
+                    continue;
+                }
+                String code = trimToNull(item.path("code").asText(null));
+                String name = trimToNull(item.path("name").asText(null));
+                String label = trimToNull(item.path("label").asText(null));
+                if (name == null) {
+                    name = trimToNull(item.path("value").asText(null));
+                }
+                if (code == null || existingByCode.containsKey(code)) {
+                    continue;
+                }
+                existingByCode.put(code, new WorkbookImportSupport.ExistingEnumValueRef(code, name, label, attributeCode));
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     private MutableCategoryRow resolveCategoryRow(String categoryCode,
                                                   Map<String, MutableCategoryRow> categoryByReference,
                                                   Map<String, MutableCategoryRow> categoryByFinalCode) {
@@ -923,90 +1421,50 @@ public class WorkbookImportDryRunService {
         return attributeByFinalCode.get(composeAttributeKey(enumRow.businessDomain, enumRow.resolvedCategoryCode, enumRow.attributeReferenceCode));
     }
 
-    private MetaCategoryDef resolveExistingCategory(String businessDomain, String categoryCode) {
+    private WorkbookImportSupport.ExistingCategoryRef resolveExistingCategory(WorkbookImportSupport.ExistingDataSnapshot existingData,
+                                                                              String businessDomain,
+                                                                              String categoryCode) {
         if (categoryCode == null) {
             return null;
         }
         if (businessDomain != null) {
-            return categoryDefRepository.findByBusinessDomainAndCodeKey(businessDomain, categoryCode).orElse(null);
+            return existingData.categoriesByDomainCode().get(composeCategoryCodeKey(businessDomain, categoryCode));
         }
-        List<MetaCategoryDef> matches = categoryDefRepository.findAllByCodeKey(categoryCode).stream()
-                .filter(Objects::nonNull)
-                .filter(def -> def.getStatus() == null || !"deleted".equalsIgnoreCase(def.getStatus().trim()))
-                .toList();
-        return matches.size() == 1 ? matches.get(0) : null;
+        if (existingData.ambiguousCategoryCodes().contains(categoryCode)) {
+            return null;
+        }
+        return existingData.categoriesByDomainCode().values().stream()
+                .filter(item -> Objects.equals(item.code(), categoryCode))
+                .findFirst()
+                .orElse(null);
     }
 
-    private boolean hasAmbiguousExistingCategory(String categoryCode) {
-        if (categoryCode == null) {
-            return false;
-        }
-        long count = categoryDefRepository.findAllByCodeKey(categoryCode).stream()
-                .filter(Objects::nonNull)
-                .filter(def -> def.getStatus() == null || !"deleted".equalsIgnoreCase(def.getStatus().trim()))
-                .count();
-        return count > 1;
+    private boolean hasAmbiguousExistingCategory(WorkbookImportSupport.ExistingDataSnapshot existingData,
+                                                 String categoryCode) {
+        return categoryCode != null && existingData.ambiguousCategoryCodes().contains(categoryCode);
     }
 
-    private MetaAttributeDef resolveExistingAttribute(String businessDomain, String categoryCode, String attributeKey) {
+    private WorkbookImportSupport.ExistingAttributeRef resolveExistingAttribute(WorkbookImportSupport.ExistingDataSnapshot existingData,
+                                                                                String businessDomain,
+                                                                                String attributeKey) {
         if (businessDomain == null || attributeKey == null) {
             return null;
         }
-        return attributeDefRepository.findActiveByBusinessDomainAndKey(businessDomain, attributeKey).orElse(null);
+        return existingData.attributesByDomainKey().get(composeAttributeLookupKey(businessDomain, attributeKey));
     }
 
-    private Map<String, ExistingEnumValue> loadExistingEnumValuesByBusinessDomain(String businessDomain) {
-        if (businessDomain == null) {
-            return Collections.emptyMap();
-        }
-        Map<String, ExistingEnumValue> result = new LinkedHashMap<>();
-        for (MetaLovDef lovDef : lovDefRepository.findByBusinessDomain(businessDomain)) {
-            if (lovDef == null || (lovDef.getStatus() != null && "deleted".equalsIgnoreCase(lovDef.getStatus().trim()))) {
-                continue;
-            }
-            MetaLovVersion version = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
-            if (version == null || version.getValueJson() == null || version.getValueJson().isBlank()) {
-                continue;
-            }
-            try {
-                JsonNode root = objectMapper.readTree(version.getValueJson());
-                JsonNode values = root.path("values");
-                if (!values.isArray()) {
-                    continue;
-                }
-                String attributeCode = lovDef.getAttributeDef() == null ? null : lovDef.getAttributeDef().getKey();
-                for (JsonNode item : values) {
-                    if (item == null || item.isNull()) {
-                        continue;
-                    }
-                    String code = trimToNull(item.path("code").asText(null));
-                    String name = trimToNull(item.path("name").asText(null));
-                    if (name == null) {
-                        name = trimToNull(item.path("value").asText(null));
-                    }
-                    if (code != null && !result.containsKey(code)) {
-                        result.put(code, new ExistingEnumValue(code, name, attributeCode));
-                    }
-                }
-            } catch (Exception ignored) {
-                return Collections.emptyMap();
-            }
-        }
-        return result;
-    }
-
-    private String latestCategoryName(MetaCategoryDef def) {
+    private String latestCategoryName(WorkbookImportSupport.ExistingCategoryRef def) {
         if (def == null) {
             return null;
         }
-        return categoryVersionRepository.findLatestByDef(def).map(MetaCategoryVersion::getDisplayName).orElse(def.getCodeKey());
+        return def.latestName();
     }
 
-    private String latestAttributeDataType(MetaAttributeDef def) {
+    private String latestAttributeDataType(WorkbookImportSupport.ExistingAttributeRef def) {
         if (def == null) {
             return null;
         }
-        return attributeVersionRepository.findLatestByDef(def).map(MetaAttributeVersion::getDataType).orElse(null);
+        return def.dataType();
     }
 
     private void validateTypeDrivenColumns(MutableAttributeRow row) {
@@ -1090,15 +1548,147 @@ public class WorkbookImportDryRunService {
         return "enum".equalsIgnoreCase(dataType) || "multi_enum".equalsIgnoreCase(dataType) || "multi-enum".equalsIgnoreCase(dataType);
     }
 
+    private boolean isNoChangeCategory(MutableCategoryRow row,
+                                       WorkbookImportSupport.ExistingCategoryRef existingCategory) {
+        return Objects.equals(trimToNull(row.resolvedFinalPath), trimToNull(existingCategory.path()))
+                && Objects.equals(trimToNull(row.categoryName), trimToNull(existingCategory.latestName()));
+    }
+
+    private boolean isNoChangeAttribute(MutableAttributeRow row,
+                                        WorkbookImportSupport.ExistingAttributeRef existingAttribute) {
+        String desiredHash = buildAttributeStructureHash(row, existingAttribute);
+        return desiredHash != null && Objects.equals(desiredHash, trimToNull(existingAttribute.structureHash()));
+    }
+
+    private boolean isNoChangeEnum(MutableEnumOptionRow row,
+                                   WorkbookImportSupport.ExistingEnumValueRef existing) {
+        return Objects.equals(trimToNull(row.optionName), trimToNull(existing.name()))
+                && Objects.equals(trimToNull(row.displayLabel), trimToNull(existing.label()));
+    }
+
+    private boolean shouldWrite(String resolvedAction) {
+        return ACTION_CREATE.equals(resolvedAction) || ACTION_UPDATE.equals(resolvedAction);
+    }
+
+    private String buildCategoryStateHash(String path, String name) {
+        ObjectNode node = objectMapper.createObjectNode();
+        String normalizedPath = trimToNull(path);
+        if (normalizedPath != null) {
+            node.put("path", normalizedPath);
+        }
+        String normalizedName = trimToNull(name);
+        if (normalizedName != null) {
+            node.put("name", normalizedName);
+        }
+        return AttributeLovImportUtils.jsonHash(node.toString());
+    }
+
+    private String buildEnumValueHash(String name, String label) {
+        ObjectNode node = objectMapper.createObjectNode();
+        String normalizedName = trimToNull(name);
+        if (normalizedName != null) {
+            node.put("name", normalizedName);
+        }
+        String normalizedLabel = trimToNull(label);
+        if (normalizedLabel != null) {
+            node.put("label", normalizedLabel);
+        }
+        return AttributeLovImportUtils.jsonHash(node.toString());
+    }
+
+    private String buildAttributeStructureHash(MutableAttributeRow row,
+                                               WorkbookImportSupport.ExistingAttributeRef existingAttribute) {
+        String attributeName = trimToNull(row.attributeName);
+        String dataType = trimToNull(row.dataType);
+        if (attributeName == null || dataType == null) {
+            return null;
+        }
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("displayName", attributeName);
+        node.put("dataType", dataType);
+
+        String description = trimToNull(row.description);
+        if (description != null) {
+            node.put("description", description);
+        }
+        String attributeField = trimToNull(row.attributeField);
+        if (attributeField != null) {
+            node.put("attributeField", attributeField);
+        }
+        String unit = trimToNull(row.unit);
+        if (unit != null) {
+            node.put("unit", unit);
+        }
+        String defaultValue = trimToNull(row.defaultValue);
+        if (defaultValue != null) {
+            node.put("defaultValue", defaultValue);
+        }
+        if (row.required != null) {
+            node.put("required", row.required);
+        }
+        if (row.unique != null) {
+            node.put("unique", row.unique);
+        }
+        if (row.hidden != null) {
+            node.put("hidden", row.hidden);
+        }
+        if (row.readOnly != null) {
+            node.put("readOnly", row.readOnly);
+        }
+        if (row.searchable != null) {
+            node.put("searchable", row.searchable);
+        }
+        if (row.minValue != null) {
+            node.put("minValue", row.minValue);
+        }
+        if (row.maxValue != null) {
+            node.put("maxValue", row.maxValue);
+        }
+        if (row.step != null) {
+            node.put("step", row.step);
+        }
+        if (row.precision != null) {
+            node.put("precision", row.precision);
+        }
+
+        String trueLabel = trimToNull(row.trueLabel);
+        if (trueLabel != null) {
+            node.put("trueLabel", trueLabel);
+        }
+        String falseLabel = trimToNull(row.falseLabel);
+        if (falseLabel != null) {
+            node.put("falseLabel", falseLabel);
+        }
+
+        String lovKey = resolveDryRunLovBindingKey(existingAttribute, row.resolvedFinalCode, row.dataType);
+        if (trimToNull(lovKey) != null) {
+            node.put("lovKey", lovKey.trim());
+        }
+        return AttributeLovImportUtils.jsonHash(node.toString());
+    }
+
+    private String resolveDryRunLovBindingKey(WorkbookImportSupport.ExistingAttributeRef existingAttribute,
+                                              String attributeKey,
+                                              String dataType) {
+        if (!isEnumLike(dataType)) {
+            return null;
+        }
+        String existingLovKey = existingAttribute == null ? null : trimToNull(existingAttribute.lovKey());
+        if (existingLovKey != null) {
+            return existingLovKey;
+        }
+        return trimToNull(attributeKey) == null ? null : attributeKey.trim() + "_LOV";
+    }
+
     private void applyResolvedAction(String policy, MutableIssueHolder row, String columnName, String code) {
         switch (policy) {
-            case POLICY_OVERWRITE -> row.setResolvedAction("UPDATE");
-            case POLICY_KEEP -> row.setResolvedAction("KEEP_EXISTING");
+            case POLICY_OVERWRITE -> row.setResolvedAction(ACTION_UPDATE);
+            case POLICY_KEEP -> row.setResolvedAction(ACTION_KEEP_EXISTING);
             case POLICY_FAIL -> {
-                row.setResolvedAction("CONFLICT");
+                row.setResolvedAction(ACTION_CONFLICT);
                 row.error(columnName, code, "检测到重复数据，且当前策略为 FAIL_ON_DUPLICATE", null, "请改为覆盖或保留已有数据");
             }
-            default -> row.setResolvedAction("CREATE");
+            default -> row.setResolvedAction(ACTION_CREATE);
         }
     }
 
@@ -1112,6 +1702,14 @@ public class WorkbookImportDryRunService {
             }
         }
         return true;
+    }
+
+    private boolean isActive(MetaCategoryDef def) {
+        return def != null && isActiveStatus(def.getStatus());
+    }
+
+    private boolean isActiveStatus(String status) {
+        return status == null || !"deleted".equalsIgnoreCase(status.trim());
     }
 
     private String readCell(Row row, int index) {
@@ -1186,9 +1784,66 @@ public class WorkbookImportDryRunService {
         return (businessDomain == null ? "" : businessDomain) + "::" + (categoryCode == null ? "" : categoryCode) + "::" + (attributeKey == null ? "" : attributeKey);
     }
 
+    private String composeAttributeLookupKey(String businessDomain, String attributeKey) {
+        return (businessDomain == null ? "" : businessDomain) + "::" + (attributeKey == null ? "" : attributeKey);
+    }
+
     private String normalizeOperator(String operator) {
         String normalized = trimToNull(operator);
         return normalized == null ? "system" : normalized;
+    }
+
+    public interface DryRunProgressListener {
+
+        void onPreloadingStarted();
+
+        void onRowsParsed(int categoryCount, int attributeCount, int enumCount, String originalFilename);
+
+        void onCategoriesResolved(int count);
+
+        void onAttributesResolved(int count);
+
+        void onEnumOptionsResolved(int count);
+
+        void onPreviewBuilding();
+
+        void onCompleted(WorkbookImportDryRunResponseDto response);
+
+        static DryRunProgressListener noop() {
+            return NoopDryRunProgressListener.INSTANCE;
+        }
+    }
+
+    private enum NoopDryRunProgressListener implements DryRunProgressListener {
+        INSTANCE;
+
+        @Override
+        public void onPreloadingStarted() {
+        }
+
+        @Override
+        public void onRowsParsed(int categoryCount, int attributeCount, int enumCount, String originalFilename) {
+        }
+
+        @Override
+        public void onCategoriesResolved(int count) {
+        }
+
+        @Override
+        public void onAttributesResolved(int count) {
+        }
+
+        @Override
+        public void onEnumOptionsResolved(int count) {
+        }
+
+        @Override
+        public void onPreviewBuilding() {
+        }
+
+        @Override
+        public void onCompleted(WorkbookImportDryRunResponseDto response) {
+        }
     }
 
     private String trimToNull(String value) {
@@ -1197,9 +1852,6 @@ public class WorkbookImportDryRunService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    private record ExistingEnumValue(String code, String name, String attributeCode) {
     }
 
     private interface MutableIssueHolder {

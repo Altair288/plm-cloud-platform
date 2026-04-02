@@ -23,6 +23,16 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
             @Param("businessDomain") String businessDomain,
             @Param("codeKeys") Collection<String> codeKeys);
 
+        @Query("""
+            select d from MetaCategoryDef d
+            where d.businessDomain = :businessDomain
+              and d.path in :paths
+              and (d.status is null or lower(d.status) <> 'deleted')
+            """)
+        List<MetaCategoryDef> findActiveByBusinessDomainAndPathIn(
+            @Param("businessDomain") String businessDomain,
+            @Param("paths") Collection<String> paths);
+
         @Query("select d.codeKey from MetaCategoryDef d where d.businessDomain = :businessDomain and d.codeKey like concat(:prefix, '%')")
         List<String> findCodeKeysByBusinessDomainAndCodeKeyPrefix(
             @Param("businessDomain") String businessDomain,

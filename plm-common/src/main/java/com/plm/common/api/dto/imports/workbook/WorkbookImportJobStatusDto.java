@@ -8,13 +8,19 @@ import java.util.List;
 @Data
 public class WorkbookImportJobStatusDto {
     private String jobId;
+    private String jobType;
     private String importSessionId;
     private String status;
     private String currentStage;
+    private String executionMode;
+    private Integer totalRows;
+    private Integer processedRows;
     private Integer overallPercent;
     private Integer stagePercent;
     private OffsetDateTime startedAt;
     private OffsetDateTime updatedAt;
+    private String currentEntityType;
+    private String currentBusinessDomain;
     private ProgressDto progress;
     private String latestLogCursor;
     private List<WorkbookImportLogEventDto> latestLogs;

@@ -3,6 +3,7 @@ package com.plm.attribute.version.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunOptionsDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunResponseDto;
+import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunStartResponseDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportJobStatusDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportLogEventDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportLogPageDto;
@@ -109,6 +110,69 @@ class WorkbookImportControllerIT {
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("invalid workbook import options format")));
     }
 
+            @Test
+            void dryRunJobEndpoints_shouldExposeAsyncWorkflow() throws Exception {
+            String suffix = uniqueSuffix();
+            MockMultipartFile workbook = Objects.requireNonNull(createAutoWorkbook(suffix));
+            MockMultipartFile options = Objects.requireNonNull(jsonPart("options", autoOptions()));
+
+            MvcResult startResult = mockMvc.perform(multipart("/api/meta/imports/workbook/dry-run-jobs")
+                    .file(workbook)
+                    .file(options)
+                    .param("operator", "it-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId").isNotEmpty())
+                .andReturn();
+            WorkbookImportDryRunStartResponseDto start = readValue(startResult, WorkbookImportDryRunStartResponseDto.class);
+
+            mockMvc.perform(get("/api/meta/imports/workbook/dry-run-jobs/{jobId}", start.getJobId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobType").value("DRY_RUN"))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.currentStage").value("FINALIZING"))
+                .andExpect(jsonPath("$.totalRows").value(5))
+                .andExpect(jsonPath("$.processedRows").value(5))
+                .andExpect(jsonPath("$.progress.categories.total").value(2))
+                .andExpect(jsonPath("$.progress.categories.processed").value(2))
+                .andExpect(jsonPath("$.progress.attributes.total").value(1))
+                .andExpect(jsonPath("$.progress.attributes.processed").value(1))
+                .andExpect(jsonPath("$.progress.enumOptions.total").value(2))
+                .andExpect(jsonPath("$.progress.enumOptions.processed").value(2))
+                .andExpect(jsonPath("$.importSessionId").isNotEmpty());
+
+            MvcResult result = mockMvc.perform(get("/api/meta/imports/workbook/dry-run-jobs/{jobId}/result", start.getJobId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.importSessionId").isNotEmpty())
+                .andExpect(jsonPath("$.summary.errorCount").value(0))
+                .andExpect(jsonPath("$.summary.canImport").value(true))
+                .andReturn();
+            WorkbookImportDryRunResponseDto dryRun = readValue(result, WorkbookImportDryRunResponseDto.class);
+
+            mockMvc.perform(get("/api/meta/imports/workbook/sessions/{importSessionId}", dryRun.getImportSessionId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.importSessionId").value(dryRun.getImportSessionId()));
+
+            MvcResult logResult = mockMvc.perform(get("/api/meta/imports/workbook/dry-run-jobs/{jobId}/logs", start.getJobId())
+                    .param("limit", "200"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId").value(start.getJobId()))
+                .andExpect(jsonPath("$.items.length()").isNotEmpty())
+                .andReturn();
+            WorkbookImportLogPageDto logPage = readValue(logResult, WorkbookImportLogPageDto.class);
+            Assertions.assertTrue(hasLogCode(logPage.getItems(), "WORKBOOK_DRY_RUN_PRELOADING_STARTED"));
+            Assertions.assertTrue(hasLogCode(logPage.getItems(), "WORKBOOK_DRY_RUN_PARSED"));
+            Assertions.assertTrue(hasLogCode(logPage.getItems(), "WORKBOOK_DRY_RUN_CATEGORY_ANALYZED"));
+            Assertions.assertTrue(hasLogCode(logPage.getItems(), "WORKBOOK_DRY_RUN_ATTRIBUTE_ANALYZED"));
+            Assertions.assertTrue(hasLogCode(logPage.getItems(), "WORKBOOK_DRY_RUN_ENUM_ANALYZED"));
+            Assertions.assertTrue(hasLogCode(logPage.getItems(), "WORKBOOK_DRY_RUN_PREVIEW_BUILDING"));
+            Assertions.assertTrue(hasLogCode(logPage.getItems(), "WORKBOOK_DRY_RUN_COMPLETED"));
+
+            MvcResult streamResult = mockMvc.perform(get("/api/meta/imports/workbook/dry-run-jobs/{jobId}/stream", start.getJobId()))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+            Objects.requireNonNull(streamResult.getRequest().getAsyncContext(), "asyncContext").complete();
+        }
+
     @Test
     void importJobLogsAndStreamEndpoints_shouldExposeHttpWorkflow() throws Exception {
         String suffix = uniqueSuffix();
@@ -117,14 +181,17 @@ class WorkbookImportControllerIT {
         WorkbookImportStartRequestDto startRequest = new WorkbookImportStartRequestDto();
         startRequest.setImportSessionId(dryRun.getImportSessionId());
         startRequest.setOperator("it-user");
-        startRequest.setAtomic(Boolean.TRUE);
+        startRequest.setAtomic(Boolean.FALSE);
+        startRequest.setExecutionMode("STAGE_TX");
 
-        MvcResult startResult = mockMvc.perform(post("/api/meta/imports/workbook/import")
+        MvcResult startResult = mockMvc.perform(post("/api/meta/imports/workbook/import-jobs")
                         .contentType(Objects.requireNonNull(MediaType.APPLICATION_JSON))
                         .content(Objects.requireNonNull(objectMapper.writeValueAsBytes(startRequest))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.jobId").isNotEmpty())
                 .andExpect(jsonPath("$.importSessionId").value(dryRun.getImportSessionId()))
+            .andExpect(jsonPath("$.atomic").value(false))
+            .andExpect(jsonPath("$.executionMode").value("STAGE_TX"))
                 .andReturn();
 
         WorkbookImportStartResponseDto start = readValue(startResult, WorkbookImportStartResponseDto.class);
@@ -133,6 +200,9 @@ class WorkbookImportControllerIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINALIZING"))
+                .andExpect(jsonPath("$.executionMode").value("STAGE_TX"))
+            .andExpect(jsonPath("$.totalRows").value(5))
+            .andExpect(jsonPath("$.processedRows").value(5))
                 .andExpect(jsonPath("$.progress.categories.created").value(2))
                 .andExpect(jsonPath("$.progress.attributes.created").value(1))
                 .andExpect(jsonPath("$.progress.enumOptions.created").value(2))
@@ -153,10 +223,84 @@ class WorkbookImportControllerIT {
         Assertions.assertTrue(hasLogCode(logPage.getItems(), "ENUM_OPTION_IMPORTED"));
         Assertions.assertTrue(hasLogCode(logPage.getItems(), "CATEGORY_CODE_SEQUENCE_RESERVED"));
 
+        mockMvc.perform(post("/api/meta/imports/workbook/jobs/{jobId}/post-process/closure-rebuild", start.getJobId())
+                .param("operator", "repair-user"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.jobId").value(start.getJobId()))
+            .andExpect(jsonPath("$.action").value("REBUILD_CLOSURE"))
+            .andExpect(jsonPath("$.status").value("COMPLETED"))
+            .andExpect(jsonPath("$.executionMode").value("STAGE_TX"))
+            .andExpect(jsonPath("$.details.strategy").value("ancestor_list_dp"));
+
         MvcResult streamResult = mockMvc.perform(get("/api/meta/imports/workbook/jobs/{jobId}/stream", start.getJobId()))
                 .andExpect(request().asyncStarted())
                 .andReturn();
         Objects.requireNonNull(streamResult.getRequest().getAsyncContext(), "asyncContext").complete();
+    }
+
+        @Test
+        void importEndpoint_shouldAcceptDryRunJobId() throws Exception {
+        String suffix = uniqueSuffix();
+        MockMultipartFile workbook = Objects.requireNonNull(createAutoWorkbook(suffix));
+        MockMultipartFile options = Objects.requireNonNull(jsonPart("options", autoOptions()));
+
+        MvcResult dryRunStartResult = mockMvc.perform(multipart("/api/meta/imports/workbook/dry-run-jobs")
+                .file(workbook)
+                .file(options)
+                .param("operator", "it-user"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.jobId").isNotEmpty())
+            .andReturn();
+        WorkbookImportDryRunStartResponseDto dryRunStart = readValue(dryRunStartResult, WorkbookImportDryRunStartResponseDto.class);
+
+        WorkbookImportStartRequestDto importRequest = new WorkbookImportStartRequestDto();
+        importRequest.setDryRunJobId(dryRunStart.getJobId());
+        importRequest.setOperator("it-user");
+        importRequest.setAtomic(Boolean.TRUE);
+
+        mockMvc.perform(post("/api/meta/imports/workbook/import-jobs")
+                .contentType(Objects.requireNonNull(MediaType.APPLICATION_JSON))
+                .content(Objects.requireNonNull(objectMapper.writeValueAsBytes(importRequest))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.jobId").isNotEmpty())
+            .andExpect(jsonPath("$.importSessionId").isNotEmpty());
+        }
+
+    @Test
+    void importEndpoint_shouldSupportStagingAtomicExecutionMode() throws Exception {
+        String suffix = uniqueSuffix();
+        WorkbookImportDryRunResponseDto dryRun = performDryRun(suffix);
+
+        WorkbookImportStartRequestDto importRequest = new WorkbookImportStartRequestDto();
+        importRequest.setImportSessionId(dryRun.getImportSessionId());
+        importRequest.setOperator("it-user");
+        importRequest.setAtomic(Boolean.TRUE);
+        importRequest.setExecutionMode("STAGING_ATOMIC");
+
+        MvcResult startResult = mockMvc.perform(post("/api/meta/imports/workbook/import-jobs")
+                .contentType(Objects.requireNonNull(MediaType.APPLICATION_JSON))
+                .content(Objects.requireNonNull(objectMapper.writeValueAsBytes(importRequest))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.jobId").isNotEmpty())
+            .andExpect(jsonPath("$.atomic").value(true))
+            .andExpect(jsonPath("$.executionMode").value("STAGING_ATOMIC"))
+            .andReturn();
+
+        WorkbookImportStartResponseDto start = readValue(startResult, WorkbookImportStartResponseDto.class);
+
+        mockMvc.perform(get("/api/meta/imports/workbook/jobs/{jobId}", start.getJobId()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("COMPLETED"))
+            .andExpect(jsonPath("$.executionMode").value("STAGING_ATOMIC"))
+            .andExpect(jsonPath("$.progress.categories.created").value(2))
+            .andExpect(jsonPath("$.progress.attributes.created").value(1))
+            .andExpect(jsonPath("$.progress.enumOptions.created").value(2));
+
+        mockMvc.perform(get("/api/meta/imports/workbook/jobs/{jobId}/logs", start.getJobId())
+                .param("limit", "200"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items[?(@.code=='WORKBOOK_STAGING_PLAN_PREPARED')]").isNotEmpty())
+            .andExpect(jsonPath("$.items[?(@.code=='WORKBOOK_STAGING_MERGE_STARTED')]").isNotEmpty());
     }
 
     private WorkbookImportDryRunResponseDto performDryRun(String suffix) throws Exception {

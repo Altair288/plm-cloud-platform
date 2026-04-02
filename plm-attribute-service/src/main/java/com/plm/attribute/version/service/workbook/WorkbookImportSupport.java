@@ -9,14 +9,25 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.UUID;
 
 public final class WorkbookImportSupport {
 
+    public static final String JOB_TYPE_IMPORT = "IMPORT";
+    public static final String JOB_TYPE_DRY_RUN = "DRY_RUN";
     public static final String STATUS_QUEUED = "QUEUED";
+    public static final String STATUS_PARSING = "PARSING";
+    public static final String STATUS_PRELOADING = "PRELOADING";
+    public static final String STATUS_VALIDATING_CATEGORIES = "VALIDATING_CATEGORIES";
+    public static final String STATUS_VALIDATING_ATTRIBUTES = "VALIDATING_ATTRIBUTES";
+    public static final String STATUS_VALIDATING_ENUMS = "VALIDATING_ENUMS";
+    public static final String STATUS_BUILDING_PREVIEW = "BUILDING_PREVIEW";
     public static final String STATUS_PREPARING = "PREPARING";
     public static final String STATUS_IMPORTING_CATEGORIES = "IMPORTING_CATEGORIES";
     public static final String STATUS_IMPORTING_ATTRIBUTES = "IMPORTING_ATTRIBUTES";
@@ -24,6 +35,12 @@ public final class WorkbookImportSupport {
     public static final String STATUS_FINALIZING = "FINALIZING";
     public static final String STATUS_COMPLETED = "COMPLETED";
     public static final String STATUS_FAILED = "FAILED";
+    public static final String STAGE_PARSING = "PARSING";
+    public static final String STAGE_PRELOADING = "PRELOADING";
+    public static final String STAGE_VALIDATING_CATEGORIES = "VALIDATING_CATEGORIES";
+    public static final String STAGE_VALIDATING_ATTRIBUTES = "VALIDATING_ATTRIBUTES";
+    public static final String STAGE_VALIDATING_ENUMS = "VALIDATING_ENUMS";
+    public static final String STAGE_BUILDING_PREVIEW = "BUILDING_PREVIEW";
     public static final String STAGE_PREPARING = "PREPARING";
     public static final String STAGE_CATEGORIES = "CATEGORIES";
     public static final String STAGE_ATTRIBUTES = "ATTRIBUTES";
@@ -41,9 +58,135 @@ public final class WorkbookImportSupport {
             List<ParsedCategoryRow> categories,
             List<ParsedAttributeRow> attributes,
             List<ParsedEnumOptionRow> enumOptions,
-            OffsetDateTime createdAt
+            ExistingDataSnapshot existingData,
+            ExecutionPlanSnapshot executionPlan,
+            ExecutionPlanSnapshot stagedExecutionPlan,
+            OffsetDateTime createdAt,
+            OffsetDateTime expiresAt
     ) {
     }
+
+            public record ExistingDataSnapshot(
+            Map<String, ExistingCategoryRef> categoriesByDomainCode,
+            Map<String, ExistingCategoryRef> categoriesByDomainPath,
+            Set<String> ambiguousCategoryCodes,
+            Map<String, ExistingAttributeRef> attributesByDomainKey,
+            Map<String, Map<String, ExistingEnumValueRef>> enumValuesByBusinessDomain
+            ) {
+            }
+
+            public record ExistingCategoryRef(
+            UUID id,
+            String businessDomain,
+            String code,
+            String path,
+            String latestName
+            ) {
+            }
+
+            public record ExistingAttributeRef(
+            UUID id,
+            String businessDomain,
+            String categoryCode,
+            String key,
+            String dataType,
+            String lovKey,
+            String structureHash
+            ) {
+            }
+
+            public record ExistingEnumValueRef(
+            String code,
+            String name,
+            String label,
+            String attributeCode
+            ) {
+            }
+
+            public record ExecutionPlanSnapshot(
+                List<CategoryPlanItem> categories,
+                List<AttributePlanItem> attributes,
+                List<EnumPlanItem> enumOptions
+            ) {
+            }
+
+            public record CategoryPlanItem(
+                String sheetName,
+                int rowNumber,
+                String businessDomain,
+                String excelReferenceCode,
+                String categoryPath,
+                String categoryName,
+                String parentPath,
+                String resolvedFinalCode,
+                String resolvedFinalPath,
+                String resolvedAction,
+                String resolvedWriteMode,
+                UUID existingCategoryId,
+                String oldStateHash,
+                String newStateHash,
+                boolean shouldWrite,
+                String codeMode
+            ) {
+            }
+
+            public record AttributePlanItem(
+                String sheetName,
+                int rowNumber,
+                String businessDomain,
+                String categoryReferenceCode,
+                String categoryName,
+                String attributeReferenceCode,
+                String attributeName,
+                String attributeField,
+                String description,
+                String dataType,
+                String unit,
+                String defaultValue,
+                Boolean required,
+                Boolean unique,
+                Boolean searchable,
+                Boolean hidden,
+                Boolean readOnly,
+                BigDecimal minValue,
+                BigDecimal maxValue,
+                BigDecimal step,
+                Integer precision,
+                String trueLabel,
+                String falseLabel,
+                String resolvedCategoryCode,
+                String resolvedFinalCode,
+                String resolvedAction,
+                String resolvedWriteMode,
+                UUID existingAttributeId,
+                String oldStructureHash,
+                String newStructureHash,
+                boolean shouldWrite,
+                String codeMode
+            ) {
+            }
+
+            public record EnumPlanItem(
+                String sheetName,
+                int rowNumber,
+                String businessDomain,
+                String categoryReferenceCode,
+                String attributeReferenceCode,
+                String optionReferenceCode,
+                String optionName,
+                String displayLabel,
+                String resolvedCategoryCode,
+                String resolvedAttributeCode,
+                String resolvedFinalCode,
+                String resolvedAction,
+                String resolvedWriteMode,
+                String existingOptionCode,
+                String oldValueHash,
+                String newValueHash,
+                boolean shouldWrite,
+                String codeMode
+            ) {
+            }
 
     public record ParsedCategoryRow(
             String sheetName,
@@ -107,27 +250,47 @@ public final class WorkbookImportSupport {
      */
     public static final class JobState {
         private final String jobId;
-        private final String importSessionId;
+        private final String jobType;
         private final String operator;
         private final boolean atomic;
+        private final String executionMode;
         private final WorkbookImportJobStatusDto status;
         private final CopyOnWriteArrayList<WorkbookImportLogEventDto> logs = new CopyOnWriteArrayList<>();
         private final AtomicLong sequence = new AtomicLong(0);
+        private volatile WorkbookImportDryRunResponseDto dryRunResult;
 
-        public JobState(String jobId, String importSessionId, String operator, boolean atomic, WorkbookImportJobStatusDto status) {
+        public JobState(String jobId,
+                        String jobType,
+                        String importSessionId,
+                        String operator,
+                        boolean atomic,
+                        String executionMode,
+                        WorkbookImportJobStatusDto status) {
             this.jobId = jobId;
-            this.importSessionId = importSessionId;
+            this.jobType = jobType;
             this.operator = operator;
             this.atomic = atomic;
+            this.executionMode = executionMode;
             this.status = status;
+            this.status.setJobType(jobType);
+            this.status.setImportSessionId(importSessionId);
+            this.status.setExecutionMode(executionMode);
         }
 
         public String getJobId() {
             return jobId;
         }
 
+        public String getJobType() {
+            return jobType;
+        }
+
         public String getImportSessionId() {
-            return importSessionId;
+            return readStatus(WorkbookImportJobStatusDto::getImportSessionId);
+        }
+
+        public void setImportSessionId(String importSessionId) {
+            updateStatus(dto -> dto.setImportSessionId(importSessionId));
         }
 
         public String getOperator() {
@@ -136,6 +299,10 @@ public final class WorkbookImportSupport {
 
         public boolean isAtomic() {
             return atomic;
+        }
+
+        public String getExecutionMode() {
+            return executionMode;
         }
 
         public synchronized <T> T readStatus(Function<WorkbookImportJobStatusDto, T> reader) {
@@ -159,6 +326,14 @@ public final class WorkbookImportSupport {
         public long nextSequence() {
             return sequence.incrementAndGet();
         }
+
+        public WorkbookImportDryRunResponseDto getDryRunResult() {
+            return dryRunResult;
+        }
+
+        public void setDryRunResult(WorkbookImportDryRunResponseDto dryRunResult) {
+            this.dryRunResult = dryRunResult;
+        }
     }
 
     public static WorkbookImportJobStatusDto newJobStatus(String jobId,
@@ -171,6 +346,8 @@ public final class WorkbookImportSupport {
         dto.setImportSessionId(importSessionId);
         dto.setStatus(STATUS_QUEUED);
         dto.setCurrentStage(STAGE_PREPARING);
+        dto.setTotalRows(categoryTotal + attributeTotal + enumTotal);
+        dto.setProcessedRows(0);
         dto.setOverallPercent(0);
         dto.setStagePercent(0);
         dto.setStartedAt(OffsetDateTime.now());

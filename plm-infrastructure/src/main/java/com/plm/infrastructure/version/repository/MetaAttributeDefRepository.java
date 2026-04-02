@@ -24,6 +24,16 @@ public interface MetaAttributeDefRepository extends JpaRepository<MetaAttributeD
     Optional<MetaAttributeDef> findActiveByBusinessDomainAndKey(@Param("businessDomain") String businessDomain,
                                                                 @Param("key") String key);
 
+                @Query("""
+                            select d from MetaAttributeDef d
+                            join fetch d.categoryDef c
+                                                where d.businessDomain = :businessDomain
+                                                        and d.key in :keys
+                                                        and lower(d.status) <> 'deleted'
+                                                """)
+                List<MetaAttributeDef> findActiveByBusinessDomainAndKeyIn(@Param("businessDomain") String businessDomain,
+                                                                                                                                                                                                                                                        @Param("keys") Collection<String> keys);
+
     @Query("""
             select d from MetaAttributeDef d
             where d.key = :key

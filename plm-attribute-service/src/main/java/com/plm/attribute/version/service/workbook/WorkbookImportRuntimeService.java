@@ -32,34 +32,112 @@ public class WorkbookImportRuntimeService {
     private static final long DEFAULT_EMITTER_TIMEOUT_MILLIS = 1_800_000L;
 
     private final WorkbookImportProperties properties;
+    private final WorkbookImportSnapshotStore snapshotStore;
     private final Map<String, WorkbookImportSupport.ImportSessionState> sessions = new ConcurrentHashMap<>();
     private final Map<String, WorkbookImportSupport.JobState> jobs = new ConcurrentHashMap<>();
     private final Map<String, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
 
-    public WorkbookImportRuntimeService(WorkbookImportProperties properties) {
+    public WorkbookImportRuntimeService(WorkbookImportProperties properties,
+                                        WorkbookImportSnapshotStore snapshotStore) {
         this.properties = Objects.requireNonNull(properties, "properties");
+        this.snapshotStore = Objects.requireNonNull(snapshotStore, "snapshotStore");
     }
 
     public WorkbookImportSupport.ImportSessionState saveSession(WorkbookImportSupport.ImportSessionState session) {
-        sessions.put(session.importSessionId(), session);
-        return session;
+        WorkbookImportSupport.ImportSessionState persisted = snapshotStore.save(session);
+        sessions.put(persisted.importSessionId(), persisted);
+        return persisted;
+    }
+
+    public WorkbookImportSupport.ImportSessionState saveStagedExecutionPlan(String importSessionId,
+                                                                            WorkbookImportSupport.ExecutionPlanSnapshot stagedExecutionPlan) {
+        return saveSession(rebuildSessionWithStagedPlan(getSession(importSessionId), stagedExecutionPlan));
+    }
+
+    public WorkbookImportSupport.ImportSessionState clearStagedExecutionPlan(String importSessionId) {
+        return saveSession(rebuildSessionWithStagedPlan(getSession(importSessionId), null));
     }
 
     public WorkbookImportSupport.ImportSessionState getSession(String importSessionId) {
+        OffsetDateTime now = OffsetDateTime.now();
         WorkbookImportSupport.ImportSessionState session = sessions.get(importSessionId);
-        if (session == null) {
-            throw new IllegalArgumentException("workbook import session not found: importSessionId=" + importSessionId);
+        if (session != null) {
+            if (!isExpired(session.expiresAt(), now)) {
+                return session;
+            }
+            sessions.remove(importSessionId);
         }
-        return session;
+        WorkbookImportSupport.ImportSessionState restored = snapshotStore.loadActiveSession(importSessionId, now)
+                .orElseThrow(() -> new IllegalArgumentException("workbook import session not found: importSessionId=" + importSessionId));
+        sessions.put(importSessionId, restored);
+        return restored;
+    }
+
+    public WorkbookImportSupport.ImportSessionState getSessionByDryRunJobId(String dryRunJobId) {
+        if (dryRunJobId == null || dryRunJobId.isBlank()) {
+            throw new IllegalArgumentException("dryRunJobId is required");
+        }
+        WorkbookImportSupport.JobState job = jobs.get(dryRunJobId);
+        if (job != null) {
+            String importSessionId = job.getImportSessionId();
+            if (importSessionId != null && !importSessionId.isBlank()) {
+                return getSession(importSessionId);
+            }
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        WorkbookImportSupport.ImportSessionState restored = snapshotStore.loadActiveSessionByDryRunJobId(dryRunJobId, now)
+                .orElseThrow(() -> new IllegalArgumentException("workbook dry-run snapshot not found: jobId=" + dryRunJobId));
+        sessions.put(restored.importSessionId(), restored);
+        return restored;
+    }
+
+    public OffsetDateTime resolveSessionExpiresAt(OffsetDateTime createdAt) {
+        OffsetDateTime base = createdAt == null ? OffsetDateTime.now() : createdAt;
+        return base.plus(Duration.ofMillis(properties.getRuntime().getSnapshotRetentionMillis()));
+    }
+
+    void evictSessionCache(String importSessionId) {
+        if (importSessionId != null) {
+            sessions.remove(importSessionId);
+        }
+    }
+
+    public String resolveImportSessionId(String importSessionId, String dryRunJobId) {
+        String normalizedImportSessionId = normalize(importSessionId);
+        String normalizedDryRunJobId = normalize(dryRunJobId);
+        if (normalizedImportSessionId == null && normalizedDryRunJobId == null) {
+            throw new IllegalArgumentException("importSessionId or dryRunJobId is required");
+        }
+        if (normalizedImportSessionId != null && normalizedDryRunJobId == null) {
+            return getSession(normalizedImportSessionId).importSessionId();
+        }
+        WorkbookImportSupport.ImportSessionState dryRunSession = getSessionByDryRunJobId(normalizedDryRunJobId);
+        if (normalizedImportSessionId != null && !normalizedImportSessionId.equals(dryRunSession.importSessionId())) {
+            throw new IllegalArgumentException("dryRunJobId does not match importSessionId");
+        }
+        return dryRunSession.importSessionId();
+    }
+
+    private String normalize(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     public WorkbookImportDryRunResponseDto getSessionResponse(String importSessionId) {
         return getSession(importSessionId).response();
     }
 
-    public WorkbookImportSupport.JobState createJob(WorkbookImportSupport.ImportSessionState session,
-                                                    String operator,
-                                                    boolean atomic) {
+    public synchronized WorkbookImportSupport.JobState createJob(WorkbookImportSupport.ImportSessionState session,
+                                                                 String operator,
+                                                                 boolean atomic,
+                                                                 String executionMode) {
+        String activeJobId = findActiveImportJobId(session.importSessionId());
+        if (activeJobId != null) {
+            throw new IllegalStateException("workbook import job already running for importSessionId="
+                    + session.importSessionId() + ": jobId=" + activeJobId);
+        }
         String jobId = UUID.randomUUID().toString();
         WorkbookImportJobStatusDto status = WorkbookImportSupport.newJobStatus(
                 jobId,
@@ -67,7 +145,32 @@ public class WorkbookImportRuntimeService {
                 session.categories().size(),
                 session.attributes().size(),
                 session.enumOptions().size());
-        WorkbookImportSupport.JobState state = new WorkbookImportSupport.JobState(jobId, session.importSessionId(), operator, atomic, status);
+        WorkbookImportSupport.JobState state = new WorkbookImportSupport.JobState(
+                jobId,
+                WorkbookImportSupport.JOB_TYPE_IMPORT,
+                session.importSessionId(),
+                operator,
+                atomic,
+                executionMode,
+                status);
+        jobs.put(jobId, state);
+        emitProgress(state, "progress");
+        return state;
+    }
+
+    public WorkbookImportSupport.JobState createDryRunJob(String operator) {
+            String jobId = UUID.randomUUID().toString();
+            WorkbookImportJobStatusDto status = WorkbookImportSupport.newJobStatus(jobId, null, 1, 1, 1);
+            status.setJobType(WorkbookImportSupport.JOB_TYPE_DRY_RUN);
+            status.setCurrentStage(WorkbookImportSupport.STAGE_PARSING);
+            WorkbookImportSupport.JobState state = new WorkbookImportSupport.JobState(
+                jobId,
+                WorkbookImportSupport.JOB_TYPE_DRY_RUN,
+                null,
+                operator,
+                false,
+                null,
+                status);
         jobs.put(jobId, state);
         emitProgress(state, "progress");
         return state;
@@ -86,6 +189,26 @@ public class WorkbookImportRuntimeService {
         return snapshotStatus(job);
     }
 
+    public void saveDryRunResult(String jobId, WorkbookImportDryRunResponseDto result) {
+        WorkbookImportSupport.JobState job = getJob(jobId);
+        job.setDryRunResult(result);
+        if (result != null && result.getImportSessionId() != null && !result.getImportSessionId().isBlank()) {
+            job.setImportSessionId(result.getImportSessionId());
+            snapshotStore.attachDryRunJobId(result.getImportSessionId(), jobId);
+        }
+    }
+
+    public WorkbookImportDryRunResponseDto getDryRunResult(String jobId) {
+        WorkbookImportSupport.JobState job = jobs.get(jobId);
+        if (job != null) {
+            WorkbookImportDryRunResponseDto result = job.getDryRunResult();
+            if (result != null) {
+                return result;
+            }
+        }
+        return getSessionByDryRunJobId(jobId).response();
+    }
+
     public void mutateStatus(String jobId, Consumer<WorkbookImportJobStatusDto> mutator) {
         WorkbookImportSupport.JobState job = getJob(jobId);
         job.updateStatus(dto -> {
@@ -101,6 +224,8 @@ public class WorkbookImportRuntimeService {
             dto.setStatus(status);
             dto.setCurrentStage(stage);
             dto.setStagePercent(0);
+            dto.setCurrentEntityType(resolveCurrentEntityType(stage));
+            dto.setCurrentBusinessDomain(null);
         });
         WorkbookImportSupport.JobState job = getJob(jobId);
         emit(job, "stage-changed", Map.of(
@@ -200,6 +325,7 @@ public class WorkbookImportRuntimeService {
             OffsetDateTime now = OffsetDateTime.now();
             removeExpiredJobs(now);
             removeExpiredSessions(now);
+            snapshotStore.deleteExpiredSnapshots(now);
             removeOrphanedEmitters();
         } catch (RuntimeException ex) {
             log.error("Failed to cleanup workbook import runtime state", ex);
@@ -267,11 +393,18 @@ public class WorkbookImportRuntimeService {
     }
 
     private void removeExpiredSessions(OffsetDateTime now) {
-        long retentionMillis = properties.getRuntime().getSessionRetentionMillis();
         Set<String> activeSessionIds = new HashSet<>();
-        jobs.values().forEach(job -> activeSessionIds.add(job.getImportSessionId()));
+        jobs.values().stream()
+            .map(WorkbookImportSupport.JobState::getImportSessionId)
+            .filter(Objects::nonNull)
+            .filter(value -> !value.isBlank())
+            .forEach(activeSessionIds::add);
         sessions.entrySet().removeIf(entry -> !activeSessionIds.contains(entry.getKey())
-                && isOlderThan(entry.getValue().createdAt(), retentionMillis, now));
+                && isExpired(entry.getValue().expiresAt(), now));
+    }
+
+    private boolean isExpired(OffsetDateTime expiresAt, OffsetDateTime now) {
+        return expiresAt != null && expiresAt.isBefore(now);
     }
 
     private void removeOrphanedEmitters() {
@@ -292,6 +425,34 @@ public class WorkbookImportRuntimeService {
     private boolean isTerminalStatus(String status) {
         return WorkbookImportSupport.STATUS_COMPLETED.equalsIgnoreCase(status)
                 || WorkbookImportSupport.STATUS_FAILED.equalsIgnoreCase(status);
+    }
+
+    private WorkbookImportSupport.ImportSessionState rebuildSessionWithStagedPlan(WorkbookImportSupport.ImportSessionState current,
+                                                                                  WorkbookImportSupport.ExecutionPlanSnapshot stagedExecutionPlan) {
+        return new WorkbookImportSupport.ImportSessionState(
+                current.importSessionId(),
+                current.operator(),
+                current.options(),
+                current.response(),
+                current.categories(),
+                current.attributes(),
+                current.enumOptions(),
+                current.existingData(),
+                current.executionPlan(),
+                stagedExecutionPlan,
+                current.createdAt(),
+                current.expiresAt());
+    }
+
+    private String findActiveImportJobId(String importSessionId) {
+        return jobs.values().stream()
+                .filter(job -> WorkbookImportSupport.JOB_TYPE_IMPORT.equals(job.getJobType()))
+                .filter(job -> Objects.equals(importSessionId, job.getImportSessionId()))
+                .map(this::snapshotStatus)
+                .filter(status -> !isTerminalStatus(status.getStatus()))
+                .map(WorkbookImportJobStatusDto::getJobId)
+                .findFirst()
+                .orElse(null);
     }
 
     private boolean isOlderThan(OffsetDateTime timestamp, long retentionMillis, OffsetDateTime now) {
@@ -322,6 +483,8 @@ public class WorkbookImportRuntimeService {
         }
         int total = safeTotal(progress.getCategories()) + safeTotal(progress.getAttributes()) + safeTotal(progress.getEnumOptions());
         int processed = safeProcessed(progress.getCategories()) + safeProcessed(progress.getAttributes()) + safeProcessed(progress.getEnumOptions());
+        status.setTotalRows(total);
+        status.setProcessedRows(processed);
         if (total <= 0) {
             status.setOverallPercent(100);
             return;
@@ -349,13 +512,19 @@ public class WorkbookImportRuntimeService {
     private WorkbookImportJobStatusDto copyStatus(WorkbookImportJobStatusDto source) {
         WorkbookImportJobStatusDto target = new WorkbookImportJobStatusDto();
         target.setJobId(source.getJobId());
+        target.setJobType(source.getJobType());
         target.setImportSessionId(source.getImportSessionId());
         target.setStatus(source.getStatus());
         target.setCurrentStage(source.getCurrentStage());
+        target.setExecutionMode(source.getExecutionMode());
+        target.setTotalRows(source.getTotalRows());
+        target.setProcessedRows(source.getProcessedRows());
         target.setOverallPercent(source.getOverallPercent());
         target.setStagePercent(source.getStagePercent());
         target.setStartedAt(source.getStartedAt());
         target.setUpdatedAt(source.getUpdatedAt());
+        target.setCurrentEntityType(source.getCurrentEntityType());
+        target.setCurrentBusinessDomain(source.getCurrentBusinessDomain());
         target.setLatestLogCursor(source.getLatestLogCursor());
         target.setLatestLogs(source.getLatestLogs() == null ? List.of() : new ArrayList<>(source.getLatestLogs()));
         if (source.getProgress() != null) {
@@ -366,6 +535,18 @@ public class WorkbookImportRuntimeService {
             target.setProgress(progress);
         }
         return target;
+    }
+
+    private String resolveCurrentEntityType(String stage) {
+        return switch (stage) {
+            case WorkbookImportSupport.STAGE_VALIDATING_CATEGORIES,
+                 WorkbookImportSupport.STAGE_CATEGORIES -> "CATEGORY";
+            case WorkbookImportSupport.STAGE_VALIDATING_ATTRIBUTES,
+                 WorkbookImportSupport.STAGE_ATTRIBUTES -> "ATTRIBUTE";
+            case WorkbookImportSupport.STAGE_VALIDATING_ENUMS,
+                 WorkbookImportSupport.STAGE_ENUM_OPTIONS -> "ENUM_OPTION";
+            default -> null;
+        };
     }
 
     private WorkbookImportJobStatusDto.EntityProgressDto copyEntityProgress(WorkbookImportJobStatusDto.EntityProgressDto source) {

@@ -5,11 +5,9 @@ import lombok.Data;
 import java.time.OffsetDateTime;
 
 @Data
-public class WorkbookImportStartResponseDto {
+public class WorkbookImportDryRunStartResponseDto {
     private String jobId;
-    private String importSessionId;
     private String status;
-    private Boolean atomic;
-    private String executionMode;
+    private String currentStage;
     private OffsetDateTime createdAt;
 }

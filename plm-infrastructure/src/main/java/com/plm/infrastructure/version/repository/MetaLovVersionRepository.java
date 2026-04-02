@@ -16,6 +16,8 @@ public interface MetaLovVersionRepository extends JpaRepository<MetaLovVersion, 
     @Query("select v from MetaLovVersion v where v.lovDef = :def and v.isLatest = true")
     Optional<MetaLovVersion> findLatestByDef(@Param("def") MetaLovDef def);
 
+  List<MetaLovVersion> findByLovDefInAndIsLatestTrue(Collection<MetaLovDef> defs);
+
     @Modifying
     @Query("""
             update MetaLovVersion v
