@@ -3,9 +3,12 @@ package com.plm.attribute.version.service.workbook;
 import com.plm.attribute.version.service.MetaAttributeManageService;
 import com.plm.attribute.version.service.MetaAttributeQueryService;
 import com.plm.attribute.version.service.MetaCategoryCrudService;
+import com.plm.attribute.version.service.MetaCodeRuleService;
+import com.plm.common.version.domain.MetaCodeRule;
 import com.plm.common.api.dto.attribute.MetaAttributeDefDetailDto;
 import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
 import com.plm.common.api.dto.category.CreateCategoryRequestDto;
+import com.plm.common.api.dto.code.CodeRuleSaveRequestDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunOptionsDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunResponseDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportDryRunStartResponseDto;
@@ -16,6 +19,7 @@ import com.plm.common.api.dto.imports.workbook.WorkbookImportPostProcessResponse
 import com.plm.common.api.dto.imports.workbook.WorkbookImportStartRequestDto;
 import com.plm.common.api.dto.imports.workbook.WorkbookImportStartResponseDto;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
+import com.plm.infrastructure.version.repository.MetaCodeRuleRepository;
 import com.plm.infrastructure.version.repository.MetaLovDefRepository;
 import com.plm.infrastructure.version.repository.MetaLovVersionRepository;
 import org.apache.poi.ss.usermodel.Row;
@@ -63,6 +67,12 @@ class WorkbookImportServiceIT {
 
     @Autowired
     private MetaCategoryCrudService categoryCrudService;
+
+    @Autowired
+    private MetaCodeRuleService codeRuleService;
+
+    @Autowired
+    private MetaCodeRuleRepository codeRuleRepository;
 
     @Autowired
     private MetaAttributeManageService attributeManageService;
@@ -137,6 +147,118 @@ class WorkbookImportServiceIT {
                 "actual enum code=" + firstEnum.getResolvedFinalCode());
         Assertions.assertTrue(secondEnum.getResolvedFinalCode().startsWith("ENUM-" + attribute.getResolvedFinalCode() + "-"),
                 "actual enum code=" + secondEnum.getResolvedFinalCode());
+    }
+
+    @Test
+    void dryRun_shouldKeepDistinctAutoCodesForSiblingCategories() throws Exception {
+        String suffix = uniqueSuffix();
+        String rootCode = "ROOT-SIB-" + suffix;
+        String childOneCode = "CHILD-A-" + suffix;
+        String childTwoCode = "CHILD-B-" + suffix;
+        String childThreeCode = "CHILD-C-" + suffix;
+        MockMultipartFile workbook = createWorkbook(
+                "workbook-auto-category-siblings-" + suffix + ".xlsx",
+                List.<String[]>of(
+                        new String[]{"MATERIAL", rootCode, "/" + rootCode, "Sibling Root " + suffix},
+                        new String[]{"MATERIAL", childOneCode, "/" + rootCode + "/" + childOneCode, "Sibling A " + suffix},
+                        new String[]{"MATERIAL", childTwoCode, "/" + rootCode + "/" + childTwoCode, "Sibling B " + suffix},
+                        new String[]{"MATERIAL", childThreeCode, "/" + rootCode + "/" + childThreeCode, "Sibling C " + suffix}
+                ),
+                List.of(),
+                List.of());
+
+        WorkbookImportDryRunResponseDto response = dryRunService.dryRun(workbook, "it-user", autoOptions());
+
+        Assertions.assertEquals(4, response.getPreview().getCategories().size());
+
+        WorkbookImportDryRunResponseDto.CategoryPreviewItemDto root = response.getPreview().getCategories().get(0);
+        WorkbookImportDryRunResponseDto.CategoryPreviewItemDto firstChild = response.getPreview().getCategories().get(1);
+        WorkbookImportDryRunResponseDto.CategoryPreviewItemDto secondChild = response.getPreview().getCategories().get(2);
+        WorkbookImportDryRunResponseDto.CategoryPreviewItemDto thirdChild = response.getPreview().getCategories().get(3);
+
+        Assertions.assertEquals("SYSTEM_RULE_AUTO", firstChild.getCodeMode());
+        Assertions.assertEquals("SYSTEM_RULE_AUTO", secondChild.getCodeMode());
+        Assertions.assertEquals("SYSTEM_RULE_AUTO", thirdChild.getCodeMode());
+        Assertions.assertNotEquals(firstChild.getResolvedFinalCode(), secondChild.getResolvedFinalCode());
+        Assertions.assertNotEquals(firstChild.getResolvedFinalCode(), thirdChild.getResolvedFinalCode());
+        Assertions.assertNotEquals(secondChild.getResolvedFinalCode(), thirdChild.getResolvedFinalCode());
+        Assertions.assertEquals(root.getResolvedFinalPath() + "/" + firstChild.getResolvedFinalCode(), firstChild.getResolvedFinalPath());
+        Assertions.assertEquals(root.getResolvedFinalPath() + "/" + secondChild.getResolvedFinalCode(), secondChild.getResolvedFinalPath());
+        Assertions.assertEquals(root.getResolvedFinalPath() + "/" + thirdChild.getResolvedFinalCode(), thirdChild.getResolvedFinalPath());
+    }
+
+    @Test
+    void dryRun_shouldKeepDistinctAutoCodesForRootCategories() throws Exception {
+        String suffix = uniqueSuffix();
+        String firstRootCode = "ROOT-A-" + suffix;
+        String secondRootCode = "ROOT-B-" + suffix;
+        MockMultipartFile workbook = createWorkbook(
+                "workbook-auto-category-roots-" + suffix + ".xlsx",
+                List.<String[]>of(
+                        new String[]{"MATERIAL", firstRootCode, "/" + firstRootCode, "Root A " + suffix},
+                        new String[]{"MATERIAL", secondRootCode, "/" + secondRootCode, "Root B " + suffix}
+                ),
+                List.of(),
+                List.of());
+
+        WorkbookImportDryRunResponseDto response = dryRunService.dryRun(workbook, "it-user", autoOptions());
+
+        Assertions.assertEquals(2, response.getPreview().getCategories().size());
+
+        WorkbookImportDryRunResponseDto.CategoryPreviewItemDto firstRoot = response.getPreview().getCategories().get(0);
+        WorkbookImportDryRunResponseDto.CategoryPreviewItemDto secondRoot = response.getPreview().getCategories().get(1);
+
+        Assertions.assertEquals("SYSTEM_RULE_AUTO", firstRoot.getCodeMode());
+        Assertions.assertEquals("SYSTEM_RULE_AUTO", secondRoot.getCodeMode());
+        Assertions.assertNotEquals(firstRoot.getResolvedFinalCode(), secondRoot.getResolvedFinalCode());
+        Assertions.assertEquals("/" + firstRoot.getResolvedFinalCode(), firstRoot.getResolvedFinalPath());
+        Assertions.assertEquals("/" + secondRoot.getResolvedFinalCode(), secondRoot.getResolvedFinalPath());
+    }
+
+    @Test
+    void dryRun_shouldErrorWhenAutoCategoryCodePreviewFallsBack() throws Exception {
+        String prefix = "WB" + uniqueSuffix().substring(0, 4);
+        MetaCodeRule categoryRule = codeRuleRepository.findByCode("CATEGORY").orElseThrow();
+        categoryRule.setStatus("DRAFT");
+        categoryRule.setActive(Boolean.FALSE);
+        codeRuleRepository.save(categoryRule);
+
+        CodeRuleSaveRequestDto request = new CodeRuleSaveRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setRuleCode("CATEGORY");
+        request.setName("Category");
+        request.setTargetType("CATEGORY");
+        request.setScopeType("BUSINESS_DOMAIN");
+        request.setPattern(prefix);
+        request.setAllowManualOverride(Boolean.TRUE);
+        request.setRegexPattern("^[A-Z][A-Z0-9_-]{0,127}$");
+        request.setMaxLength(128);
+        request.setRuleJson(buildStructuredCategoryRuleJsonWithoutSequence(prefix));
+
+        codeRuleService.update("CATEGORY", request, "it-user");
+        codeRuleService.publish("CATEGORY", "it-user");
+
+        String suffix = uniqueSuffix();
+        MockMultipartFile workbook = createWorkbook(
+                "workbook-auto-category-preview-fail-" + suffix + ".xlsx",
+            List.<String[]>of(
+                new String[]{"MATERIAL", "CAT-A-" + suffix, "/CAT-A-" + suffix, "Category A " + suffix},
+                new String[]{"MATERIAL", "CAT-B-" + suffix, "/CAT-B-" + suffix, "Category B " + suffix}
+            ),
+                List.of(),
+                List.of());
+
+        WorkbookImportDryRunResponseDto response = dryRunService.dryRun(workbook, "it-user", autoOptions());
+
+        Assertions.assertFalse(Boolean.TRUE.equals(response.getSummary().getCanImport()));
+        Assertions.assertTrue(response.getSummary().getErrorCount() >= 1);
+        Assertions.assertEquals(2, response.getPreview().getCategories().size());
+        Assertions.assertTrue(response.getPreview().getCategories().stream().allMatch(item -> item.getResolvedFinalCode() == null));
+        WorkbookImportDryRunResponseDto.IssueDto issue = response.getIssues().stream()
+                .filter(item -> "CATEGORY_AUTO_CODE_PREVIEW_FAILED".equals(item.getErrorCode()))
+                .findFirst()
+                .orElseThrow();
+        Assertions.assertEquals("Category_Code", issue.getColumnName());
     }
 
         @Test
@@ -234,6 +356,38 @@ class WorkbookImportServiceIT {
         WorkbookImportDryRunResponseDto.AttributePreviewItemDto attributePreview = dryRun.getPreview().getAttributes().get(0);
         Assertions.assertTrue(actualAttributeKey.startsWith("ATTR-"), "actual attribute key=" + actualAttributeKey);
         Assertions.assertTrue(attributePreview.getResolvedFinalCode().startsWith("ATTR-"), "preview attribute key=" + attributePreview.getResolvedFinalCode());
+    }
+
+    @Test
+    void dryRun_shouldPreviewMoreThanTwentyAutoAttributeCodesInSameCategory() throws Exception {
+        String suffix = uniqueSuffix();
+        String categoryCode = "AUTO-CAT-" + suffix;
+        List<String[]> attributeRows = new java.util.ArrayList<>();
+        for (int index = 1; index <= 25; index++) {
+            String attributeKey = "ATTR-REF-" + suffix + "-" + String.format("%02d", index);
+            attributeRows.add(attributeRow(
+                    categoryCode,
+                    "Auto Category " + suffix,
+                    attributeKey,
+                    "Auto Attr " + index,
+                    "autoField" + index,
+                    "string"));
+        }
+
+        MockMultipartFile workbook = createWorkbook(
+                "workbook-auto-attribute-bulk-" + suffix + ".xlsx",
+                List.<String[]>of(new String[]{"MATERIAL", categoryCode, "/" + categoryCode, "Auto Category " + suffix}),
+                attributeRows,
+                List.of());
+
+        WorkbookImportDryRunResponseDto response = dryRunService.dryRun(workbook, "it-user", manualCategoryAutoAttributeOptions());
+
+        Assertions.assertEquals(25, response.getPreview().getAttributes().size());
+        Assertions.assertTrue(response.getPreview().getAttributes().stream().allMatch(item -> "SYSTEM_RULE_AUTO".equals(item.getCodeMode())));
+        Assertions.assertTrue(response.getPreview().getAttributes().stream().allMatch(item -> item.getResolvedFinalCode() != null && !item.getResolvedFinalCode().equals(item.getAttributeKey())));
+        Assertions.assertNotEquals(
+                response.getPreview().getAttributes().get(24).getAttributeKey(),
+                response.getPreview().getAttributes().get(24).getResolvedFinalCode());
     }
 
     @Test
@@ -618,6 +772,36 @@ class WorkbookImportServiceIT {
         options.getDuplicateOptions().setAttributeDuplicatePolicy("OVERWRITE_EXISTING");
         options.getDuplicateOptions().setEnumOptionDuplicatePolicy("OVERWRITE_EXISTING");
         return options;
+    }
+
+    private WorkbookImportDryRunOptionsDto manualCategoryAutoAttributeOptions() {
+        WorkbookImportDryRunOptionsDto options = new WorkbookImportDryRunOptionsDto();
+        options.getCodingOptions().setCategoryCodeMode("EXCEL_MANUAL");
+        options.getCodingOptions().setAttributeCodeMode("SYSTEM_RULE_AUTO");
+        options.getCodingOptions().setEnumOptionCodeMode("EXCEL_MANUAL");
+        options.getDuplicateOptions().setCategoryDuplicatePolicy("FAIL_ON_DUPLICATE");
+        options.getDuplicateOptions().setAttributeDuplicatePolicy("FAIL_ON_DUPLICATE");
+        options.getDuplicateOptions().setEnumOptionDuplicatePolicy("FAIL_ON_DUPLICATE");
+        return options;
+    }
+
+    private java.util.Map<String, Object> buildStructuredCategoryRuleJsonWithoutSequence(String prefix) {
+        java.util.LinkedHashMap<String, Object> subRule = new java.util.LinkedHashMap<>();
+        subRule.put("separator", "-");
+        subRule.put("segments", List.of(java.util.Map.of("type", "STRING", "value", prefix)));
+        subRule.put("childSegments", List.of(java.util.Map.of("type", "STRING", "value", "CHILD")));
+        subRule.put("allowedVariableKeys", List.of("BUSINESS_DOMAIN", "PARENT_CODE"));
+
+        java.util.LinkedHashMap<String, Object> root = new java.util.LinkedHashMap<>();
+        root.put("pattern", "STRUCTURED");
+        root.put("hierarchyMode", "APPEND_CHILD_SUFFIX");
+        root.put("subRules", java.util.Map.of("category", subRule));
+        root.put("validation", java.util.Map.of(
+                "maxLength", 128,
+                "regex", "^[A-Z][A-Z0-9_-]{0,127}$",
+                "allowManualOverride", true
+        ));
+        return root;
     }
 
     private void createCategory(String code, String name) {

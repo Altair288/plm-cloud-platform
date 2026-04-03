@@ -67,7 +67,7 @@ public class CodeRuleGenerator {
         Map<String, String> safeContext = copyContext(context);
         RuleMeta meta = loadRuleMeta(ruleCode);
         StructuredRule structuredRule = resolveStructuredRule(meta, safeContext);
-        int previewCount = Math.max(1, Math.min(count, 20));
+        int previewCount = Math.max(1, count);
         List<String> examples = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         String resolvedSequenceScope = null;

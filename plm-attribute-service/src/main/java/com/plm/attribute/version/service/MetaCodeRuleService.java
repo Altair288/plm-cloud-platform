@@ -211,7 +211,7 @@ public class MetaCodeRuleService {
                 ? Collections.emptyMap()
                 : new LinkedHashMap<>(request.getContext());
         String manualCode = request == null ? null : trimToNull(request.getManualCode());
-        int count = request == null || request.getCount() == null ? 3 : Math.max(1, Math.min(request.getCount(), 20));
+        int count = request == null || request.getCount() == null ? 3 : Math.max(1, request.getCount());
 
         String pattern = resolvePattern(rule, latest);
         List<String> examples;

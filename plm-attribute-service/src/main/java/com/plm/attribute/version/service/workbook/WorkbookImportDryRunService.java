@@ -48,6 +48,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class WorkbookImportDryRunService {
@@ -343,6 +344,38 @@ public class WorkbookImportDryRunService {
                 .filter(row -> row.parentPath == null || !byOwnPath.containsKey(composeCategoryPathKey(row.businessDomain, row.parentPath)))
                 .sorted(Comparator.comparingInt(row -> row.rowNumber))
                 .toList();
+        if (MODE_SYSTEM_RULE_AUTO.equals(options.getCodingOptions().getCategoryCodeMode())) {
+            Map<String, List<MutableCategoryRow>> autoRootsByBusinessDomain = roots.stream()
+                    .filter(root -> root.businessDomain != null && root.excelReferenceCode != null && root.resolvedFinalCode == null)
+                    .collect(Collectors.groupingBy(root -> root.businessDomain, LinkedHashMap::new, Collectors.toList()));
+            for (Map.Entry<String, List<MutableCategoryRow>> entry : autoRootsByBusinessDomain.entrySet()) {
+                List<MutableCategoryRow> autoRoots = entry.getValue();
+                if (autoRoots.isEmpty()) {
+                    continue;
+                }
+                CodeRulePreviewRequestDto request = new CodeRulePreviewRequestDto();
+                request.setCount(autoRoots.size());
+                LinkedHashMap<String, String> context = new LinkedHashMap<>();
+                context.put("BUSINESS_DOMAIN", entry.getKey());
+                request.setContext(context);
+                String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(entry.getKey());
+                CodeRulePreviewResponseDto preview = metaCodeRuleService.preview(ruleCode, request);
+                List<String> examples = requireAutoPreviewExamples(
+                        autoRoots,
+                        preview,
+                        row -> row.excelReferenceCode,
+                        "Category_Code",
+                        "CATEGORY_AUTO_CODE_PREVIEW_FAILED",
+                        "分类自动编码预览失败");
+                for (int index = 0; index < autoRoots.size(); index++) {
+                    MutableCategoryRow root = autoRoots.get(index);
+                    if (index < examples.size()) {
+                        root.resolvedFinalCode = examples.get(index);
+                        root.resolvedFinalPath = appendPath(null, root.resolvedFinalCode);
+                    }
+                }
+            }
+        }
         for (MutableCategoryRow root : roots) {
             assignCategorySubtree(root, null, null, options, childrenByParent, visited);
         }
@@ -360,6 +393,10 @@ public class WorkbookImportDryRunService {
         } else if (MODE_EXCEL_MANUAL.equals(options.getCodingOptions().getCategoryCodeMode())) {
             row.resolvedFinalCode = row.excelReferenceCode;
             row.resolvedFinalPath = appendPath(parentFinalPath, row.resolvedFinalCode);
+        } else if (row.hasErrors()) {
+            return;
+        } else if (row.resolvedFinalCode != null) {
+            row.resolvedFinalPath = appendPath(parentFinalPath, row.resolvedFinalCode);
         } else {
             CodeRulePreviewRequestDto request = new CodeRulePreviewRequestDto();
             request.setCount(1);
@@ -371,8 +408,17 @@ public class WorkbookImportDryRunService {
             request.setContext(context);
             String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(row.businessDomain);
             CodeRulePreviewResponseDto preview = metaCodeRuleService.preview(ruleCode, request);
-            row.resolvedFinalCode = firstExample(preview, row.excelReferenceCode);
-            row.resolvedFinalPath = appendPath(parentFinalPath, row.resolvedFinalCode);
+            List<String> examples = requireAutoPreviewExamples(
+                    List.of(row),
+                    preview,
+                    candidate -> candidate.excelReferenceCode,
+                    "Category_Code",
+                    "CATEGORY_AUTO_CODE_PREVIEW_FAILED",
+                    "分类自动编码预览失败");
+            if (!examples.isEmpty()) {
+                row.resolvedFinalCode = examples.get(0);
+                row.resolvedFinalPath = appendPath(parentFinalPath, row.resolvedFinalCode);
+            }
         }
 
         String selfKey = composeCategoryPathKey(row.businessDomain, row.categoryPath);
@@ -388,6 +434,14 @@ public class WorkbookImportDryRunService {
         if (MODE_SYSTEM_RULE_AUTO.equals(options.getCodingOptions().getCategoryCodeMode())) {
             List<MutableCategoryRow> autoChildren = children.stream().filter(child -> child.excelReferenceCode != null).sorted(Comparator.comparingInt(child -> child.rowNumber)).toList();
             if (!autoChildren.isEmpty()) {
+                if (row.resolvedFinalCode == null) {
+                    autoChildren.forEach(child -> child.error(
+                            "Category_Code",
+                            "CATEGORY_AUTO_CODE_PREVIEW_FAILED",
+                            "分类自动编码预览失败",
+                            child.excelReferenceCode,
+                            "父分类未生成系统编码，无法继续为子分类生成编码"));
+                } else {
                 CodeRulePreviewRequestDto request = new CodeRulePreviewRequestDto();
                 request.setCount(autoChildren.size());
                 LinkedHashMap<String, String> context = new LinkedHashMap<>();
@@ -396,11 +450,20 @@ public class WorkbookImportDryRunService {
                 request.setContext(context);
                 String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(row.businessDomain);
                 CodeRulePreviewResponseDto preview = metaCodeRuleService.preview(ruleCode, request);
-                List<String> examples = preview.getExamples() == null ? List.of() : preview.getExamples();
+                List<String> examples = requireAutoPreviewExamples(
+                        autoChildren,
+                        preview,
+                        child -> child.excelReferenceCode,
+                        "Category_Code",
+                        "CATEGORY_AUTO_CODE_PREVIEW_FAILED",
+                        "分类自动编码预览失败");
                 for (int index = 0; index < autoChildren.size(); index++) {
                     MutableCategoryRow child = autoChildren.get(index);
-                    child.resolvedFinalCode = index < examples.size() ? examples.get(index) : child.excelReferenceCode;
-                    child.resolvedFinalPath = appendPath(row.resolvedFinalPath, child.resolvedFinalCode);
+                    if (index < examples.size()) {
+                        child.resolvedFinalCode = examples.get(index);
+                        child.resolvedFinalPath = appendPath(row.resolvedFinalPath, child.resolvedFinalCode);
+                    }
+                }
                 }
             }
         }
@@ -540,9 +603,17 @@ public class WorkbookImportDryRunService {
             request.setContext(context);
             String ruleCode = metaCodeRuleSetService.resolveAttributeRuleCode(first.businessDomain);
             CodeRulePreviewResponseDto preview = metaCodeRuleService.preview(ruleCode, request);
-            List<String> examples = preview.getExamples() == null ? List.of() : preview.getExamples();
+            List<String> examples = requireAutoPreviewExamples(
+                    group,
+                    preview,
+                    row -> row.attributeReferenceCode,
+                    "Attribute_Key",
+                    "ATTRIBUTE_AUTO_CODE_PREVIEW_FAILED",
+                    "属性自动编码预览失败");
             for (int index = 0; index < group.size(); index++) {
-                group.get(index).resolvedFinalCode = index < examples.size() ? examples.get(index) : group.get(index).attributeReferenceCode;
+                if (index < examples.size()) {
+                    group.get(index).resolvedFinalCode = examples.get(index);
+                }
             }
         }
     }
@@ -663,6 +734,7 @@ public class WorkbookImportDryRunService {
         }
         for (List<MutableEnumOptionRow> group : grouped.values()) {
             MutableEnumOptionRow first = group.get(0);
+            List<MutableEnumOptionRow> orderedGroup = group.stream().sorted(Comparator.comparingInt(item -> item.rowNumber)).toList();
             CodeRulePreviewRequestDto request = new CodeRulePreviewRequestDto();
             request.setCount(group.size());
             LinkedHashMap<String, String> context = new LinkedHashMap<>();
@@ -672,12 +744,47 @@ public class WorkbookImportDryRunService {
             request.setContext(context);
             String ruleCode = metaCodeRuleSetService.resolveLovRuleCode(first.businessDomain);
             CodeRulePreviewResponseDto preview = metaCodeRuleService.preview(ruleCode, request);
-            List<String> examples = preview.getExamples() == null ? List.of() : preview.getExamples();
-            List<MutableEnumOptionRow> orderedGroup = group.stream().sorted(Comparator.comparingInt(item -> item.rowNumber)).toList();
+            List<String> examples = requireAutoPreviewExamples(
+                    orderedGroup,
+                    preview,
+                    row -> row.optionReferenceCode,
+                    "Option_Code",
+                    "ENUM_OPTION_AUTO_CODE_PREVIEW_FAILED",
+                    "枚举值自动编码预览失败");
             for (int index = 0; index < orderedGroup.size(); index++) {
-                orderedGroup.get(index).resolvedFinalCode = index < examples.size() ? examples.get(index) : orderedGroup.get(index).optionReferenceCode;
+                if (index < examples.size()) {
+                    orderedGroup.get(index).resolvedFinalCode = examples.get(index);
+                }
             }
         }
+    }
+
+    private <T extends BaseMutableRow> List<String> requireAutoPreviewExamples(List<T> rows,
+                                                                               CodeRulePreviewResponseDto preview,
+                                                                               java.util.function.Function<T, String> rawValueExtractor,
+                                                                               String columnName,
+                                                                               String errorCode,
+                                                                               String message) {
+        List<String> warnings = preview == null || preview.getWarnings() == null ? List.of() : preview.getWarnings();
+        List<String> examples = preview == null || preview.getExamples() == null ? List.of() : preview.getExamples();
+        if (!warnings.isEmpty()) {
+            String expectedRule = String.join(", ", warnings);
+            rows.forEach(row -> row.error(columnName, errorCode, message, rawValueExtractor.apply(row), expectedRule));
+            return List.of();
+        }
+        if (examples.size() < rows.size()) {
+            rows.forEach(row -> row.error(columnName, errorCode, message, rawValueExtractor.apply(row), "编码规则未返回足够的预览编码"));
+            return List.of();
+        }
+        for (int index = 0; index < rows.size(); index++) {
+            String example = trimToNull(examples.get(index));
+            if (example == null) {
+                T row = rows.get(index);
+                row.error(columnName, errorCode, message, rawValueExtractor.apply(row), "编码规则返回了空预览编码");
+                return List.of();
+            }
+        }
+        return examples;
     }
 
     private void resolveCategoryActions(List<MutableCategoryRow> rows,
@@ -1918,6 +2025,10 @@ public class WorkbookImportDryRunService {
             dto.setRawValue(rawValue);
             dto.setExpectedRule(expectedRule);
             return dto;
+        }
+
+        protected boolean hasErrors() {
+            return issues.stream().anyMatch(item -> "ERROR".equalsIgnoreCase(item.getLevel()));
         }
     }
 
