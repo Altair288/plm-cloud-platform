@@ -24,7 +24,7 @@
 1. 调用 POST /api/meta/imports/workbook/dry-run-jobs 创建异步 dry-run 任务。
 2. 拿到 dryRunJobId 后，立即连接 GET /api/meta/imports/workbook/dry-run-jobs/{jobId}/stream。
 3. 以 SSE progress 事件作为主进度来源，并用 GET /api/meta/imports/workbook/dry-run-jobs/{jobId} 做兜底轮询。
-4. dry-run 完成后，调用 GET /api/meta/imports/workbook/dry-run-jobs/{jobId}/result 获取完整预览结果。
+4. dry-run 完成后，调用 GET /api/meta/imports/workbook/dry-run-jobs/{jobId}/result 获取预检结果；前端页面默认应带分页参数按需拉取当前预览页。
 5. 若 summary.canImport = true，则调用 POST /api/meta/imports/workbook/import 或 /import-jobs 启动正式导入。
 6. 拿到 importJobId 后，立即连接 GET /api/meta/imports/workbook/jobs/{jobId}/stream。
 7. 导入过程中以 SSE progress 更新进度条，以 SSE log 和 GET /api/meta/imports/workbook/jobs/{jobId}/logs 展示日志。
@@ -67,7 +67,7 @@
 | POST | /api/meta/imports/workbook/dry-run | 同步 dry-run | 仅调试或小文件使用 |
 | POST | /api/meta/imports/workbook/dry-run-jobs | 异步 dry-run | 页面主入口 |
 | GET | /api/meta/imports/workbook/dry-run-jobs/{jobId} | dry-run 任务状态 | 轮询兜底 |
-| GET | /api/meta/imports/workbook/dry-run-jobs/{jobId}/result | dry-run 完整结果 | dry-run 完成后必调 |
+| GET | /api/meta/imports/workbook/dry-run-jobs/{jobId}/result | dry-run 结果，可选 preview 分页 | dry-run 完成后必调 |
 | GET | /api/meta/imports/workbook/dry-run-jobs/{jobId}/logs | dry-run 日志分页 | 断线补拉、日志面板 |
 | GET | /api/meta/imports/workbook/dry-run-jobs/{jobId}/stream | dry-run SSE | 页面主进度来源 |
 | GET | /api/meta/imports/workbook/sessions/{importSessionId} | 重新获取会话结果 | 刷新页面后恢复结果 |
@@ -147,7 +147,16 @@ POST /api/meta/imports/workbook/dry-run 会直接返回 WorkbookImportDryRunResp
 
 调用：GET /api/meta/imports/workbook/dry-run-jobs/{jobId}/result
 
+可选查询参数：
+- entityType: CATEGORY / ATTRIBUTE / ENUM_OPTION
+- page: 从 0 开始
+- size: 每页条数，默认 100，最大 500
+
 返回：WorkbookImportDryRunResponseDto
+
+兼容规则：
+- 不带 entityType 时，返回完整 preview。
+- 带 entityType 时，返回当前实体当前页的 preview 数据，并额外返回 previewEntityType 与 previewPage 分页元数据；未选中的 preview 数组返回空列表。
 
 顶层关键字段：
 

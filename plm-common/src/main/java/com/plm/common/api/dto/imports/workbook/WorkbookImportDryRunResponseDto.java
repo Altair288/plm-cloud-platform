@@ -15,6 +15,8 @@ public class WorkbookImportDryRunResponseDto {
     private PreviewDto preview;
     private List<IssueDto> issues;
     private OffsetDateTime createdAt;
+    private String previewEntityType;
+    private PreviewPageDto previewPage;
 
     @Data
     public static class TemplateDto {
@@ -53,6 +55,14 @@ public class WorkbookImportDryRunResponseDto {
         private List<CategoryPreviewItemDto> categories;
         private List<AttributePreviewItemDto> attributes;
         private List<EnumOptionPreviewItemDto> enumOptions;
+    }
+
+    @Data
+    public static class PreviewPageDto {
+        private Integer number;
+        private Integer size;
+        private Integer totalPages;
+        private Long totalElements;
     }
 
     @Data

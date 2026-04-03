@@ -28,6 +28,12 @@ import java.util.function.Consumer;
 @Service
 public class WorkbookImportRuntimeService {
 
+    private static final String PREVIEW_ENTITY_CATEGORY = "CATEGORY";
+    private static final String PREVIEW_ENTITY_ATTRIBUTE = "ATTRIBUTE";
+    private static final String PREVIEW_ENTITY_ENUM_OPTION = "ENUM_OPTION";
+    private static final int DEFAULT_PREVIEW_PAGE_SIZE = 100;
+    private static final int MAX_PREVIEW_PAGE_SIZE = 500;
+
     private static final Logger log = LoggerFactory.getLogger(WorkbookImportRuntimeService.class);
     private static final long DEFAULT_EMITTER_TIMEOUT_MILLIS = 1_800_000L;
 
@@ -129,6 +135,14 @@ public class WorkbookImportRuntimeService {
         return getSession(importSessionId).response();
     }
 
+    public WorkbookImportDryRunResponseDto getDryRunResult(String jobId,
+                                                           String entityType,
+                                                           Integer page,
+                                                           Integer size) {
+        WorkbookImportDryRunResponseDto response = getDryRunResult(jobId);
+        return paginateDryRunResponse(response, entityType, page, size);
+    }
+
     public synchronized WorkbookImportSupport.JobState createJob(WorkbookImportSupport.ImportSessionState session,
                                                                  String operator,
                                                                  boolean atomic,
@@ -207,6 +221,95 @@ public class WorkbookImportRuntimeService {
             }
         }
         return getSessionByDryRunJobId(jobId).response();
+    }
+
+    private WorkbookImportDryRunResponseDto paginateDryRunResponse(WorkbookImportDryRunResponseDto source,
+                                                                   String entityType,
+                                                                   Integer page,
+                                                                   Integer size) {
+        String normalizedEntityType = normalizePreviewEntityType(entityType);
+        if (normalizedEntityType == null) {
+            return source;
+        }
+
+        int normalizedPage = page == null ? 0 : Math.max(page, 0);
+        int normalizedSize = normalizePreviewPageSize(size);
+        int fromIndex;
+        int toIndex;
+        int total;
+
+        WorkbookImportDryRunResponseDto.PreviewDto preview = new WorkbookImportDryRunResponseDto.PreviewDto();
+        preview.setCategories(List.of());
+        preview.setAttributes(List.of());
+        preview.setEnumOptions(List.of());
+
+        switch (normalizedEntityType) {
+            case PREVIEW_ENTITY_CATEGORY -> {
+                List<WorkbookImportDryRunResponseDto.CategoryPreviewItemDto> categories = safeList(source.getPreview() == null ? null : source.getPreview().getCategories());
+                total = categories.size();
+                fromIndex = Math.min(normalizedPage * normalizedSize, total);
+                toIndex = Math.min(fromIndex + normalizedSize, total);
+                preview.setCategories(new ArrayList<>(categories.subList(fromIndex, toIndex)));
+            }
+            case PREVIEW_ENTITY_ATTRIBUTE -> {
+                List<WorkbookImportDryRunResponseDto.AttributePreviewItemDto> attributes = safeList(source.getPreview() == null ? null : source.getPreview().getAttributes());
+                total = attributes.size();
+                fromIndex = Math.min(normalizedPage * normalizedSize, total);
+                toIndex = Math.min(fromIndex + normalizedSize, total);
+                preview.setAttributes(new ArrayList<>(attributes.subList(fromIndex, toIndex)));
+            }
+            case PREVIEW_ENTITY_ENUM_OPTION -> {
+                List<WorkbookImportDryRunResponseDto.EnumOptionPreviewItemDto> enumOptions = safeList(source.getPreview() == null ? null : source.getPreview().getEnumOptions());
+                total = enumOptions.size();
+                fromIndex = Math.min(normalizedPage * normalizedSize, total);
+                toIndex = Math.min(fromIndex + normalizedSize, total);
+                preview.setEnumOptions(new ArrayList<>(enumOptions.subList(fromIndex, toIndex)));
+            }
+            default -> throw new IllegalArgumentException("unsupported preview entityType: " + entityType);
+        }
+
+        WorkbookImportDryRunResponseDto paged = new WorkbookImportDryRunResponseDto();
+        paged.setImportSessionId(source.getImportSessionId());
+        paged.setTemplate(source.getTemplate());
+        paged.setSummary(source.getSummary());
+        paged.setChangeSummary(source.getChangeSummary());
+        paged.setResolvedImportOptions(source.getResolvedImportOptions());
+        paged.setPreview(preview);
+        paged.setIssues(List.of());
+        paged.setCreatedAt(source.getCreatedAt());
+        paged.setPreviewEntityType(normalizedEntityType);
+
+        WorkbookImportDryRunResponseDto.PreviewPageDto previewPage = new WorkbookImportDryRunResponseDto.PreviewPageDto();
+        previewPage.setNumber(normalizedPage);
+        previewPage.setSize(normalizedSize);
+        previewPage.setTotalElements((long) total);
+        previewPage.setTotalPages(total == 0 ? 0 : (int) Math.ceil((double) total / normalizedSize));
+        paged.setPreviewPage(previewPage);
+        return paged;
+    }
+
+    private String normalizePreviewEntityType(String entityType) {
+        if (entityType == null || entityType.isBlank()) {
+            return null;
+        }
+        String normalized = entityType.trim().toUpperCase();
+        if (!PREVIEW_ENTITY_CATEGORY.equals(normalized)
+                && !PREVIEW_ENTITY_ATTRIBUTE.equals(normalized)
+                && !PREVIEW_ENTITY_ENUM_OPTION.equals(normalized)) {
+            throw new IllegalArgumentException("unsupported preview entityType: " + entityType);
+        }
+        return normalized;
+    }
+
+    private int normalizePreviewPageSize(Integer size) {
+        if (size == null) {
+            return DEFAULT_PREVIEW_PAGE_SIZE;
+        }
+        return Math.max(1, Math.min(size, MAX_PREVIEW_PAGE_SIZE));
+    }
+
+    private <T> List<T> safeList(List<T> items) {
+        return items == null ? List.of() : items;
     }
 
     public void mutateStatus(String jobId, Consumer<WorkbookImportJobStatusDto> mutator) {

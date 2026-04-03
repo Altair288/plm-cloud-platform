@@ -73,8 +73,14 @@ public class WorkbookImportController {
     }
 
     @GetMapping("/dry-run-jobs/{jobId}/result")
-    public WorkbookImportDryRunResponseDto getDryRunResult(@PathVariable("jobId") String jobId) {
-        return runtimeService.getDryRunResult(jobId);
+    public WorkbookImportDryRunResponseDto getDryRunResult(@PathVariable("jobId") String jobId,
+                                                           @RequestParam(value = "entityType", required = false) String entityType,
+                                                           @RequestParam(value = "page", required = false) Integer page,
+                                                           @RequestParam(value = "size", required = false) Integer size) {
+        if (entityType == null || entityType.isBlank()) {
+            return runtimeService.getDryRunResult(jobId);
+        }
+        return runtimeService.getDryRunResult(jobId, entityType, page, size);
     }
 
     @GetMapping("/dry-run-jobs/{jobId}/logs")

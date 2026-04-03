@@ -469,7 +469,7 @@ public class WorkbookImportDryRunService {
         }
 
         for (MutableCategoryRow child : children.stream().sorted(Comparator.comparingInt(candidate -> candidate.rowNumber)).toList()) {
-            if (child.resolvedFinalCode == null) {
+            if (MODE_EXCEL_MANUAL.equals(options.getCodingOptions().getCategoryCodeMode()) && child.resolvedFinalCode == null) {
                 child.resolvedFinalCode = child.excelReferenceCode;
                 child.resolvedFinalPath = appendPath(row.resolvedFinalPath, child.resolvedFinalCode);
             }
@@ -484,7 +484,7 @@ public class WorkbookImportDryRunService {
             if (row.businessDomain != null && row.excelReferenceCode != null) {
                 byReference.put(composeCategoryCodeKey(row.businessDomain, row.excelReferenceCode), row);
             }
-            if (row.businessDomain != null && row.resolvedFinalCode != null) {
+            if (row.businessDomain != null && row.resolvedFinalCode != null && !row.hasErrors()) {
                 byFinalCode.put(composeCategoryCodeKey(row.businessDomain, row.resolvedFinalCode), row);
             }
         }
@@ -625,7 +625,7 @@ public class WorkbookImportDryRunService {
             if (row.businessDomain != null && row.categoryReferenceCode != null && row.attributeReferenceCode != null) {
                 byReference.put(composeAttributeKey(row.businessDomain, row.categoryReferenceCode, row.attributeReferenceCode), row);
             }
-            if (row.businessDomain != null && row.resolvedCategoryCode != null && row.resolvedFinalCode != null) {
+            if (row.businessDomain != null && row.resolvedCategoryCode != null && row.resolvedFinalCode != null && !row.hasErrors()) {
                 byFinalCode.put(composeAttributeKey(row.businessDomain, row.resolvedCategoryCode, row.resolvedFinalCode), row);
             }
         }
@@ -783,6 +783,17 @@ public class WorkbookImportDryRunService {
                 row.error(columnName, errorCode, message, rawValueExtractor.apply(row), "编码规则返回了空预览编码");
                 return List.of();
             }
+        }
+        Map<String, List<T>> grouped = new LinkedHashMap<>();
+        for (int index = 0; index < rows.size(); index++) {
+            grouped.computeIfAbsent(trimToNull(examples.get(index)), ignored -> new ArrayList<>()).add(rows.get(index));
+        }
+        for (Map.Entry<String, List<T>> entry : grouped.entrySet()) {
+            if (entry.getKey() == null || entry.getValue().size() < 2) {
+                continue;
+            }
+            entry.getValue().forEach(row -> row.error(columnName, errorCode, message, rawValueExtractor.apply(row), "编码规则在同一批次内返回了重复预览编码: " + entry.getKey()));
+            return List.of();
         }
         return examples;
     }

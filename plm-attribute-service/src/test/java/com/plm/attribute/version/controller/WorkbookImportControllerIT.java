@@ -160,6 +160,21 @@ class WorkbookImportControllerIT {
                 .andReturn();
             WorkbookImportDryRunResponseDto dryRun = readValue(result, WorkbookImportDryRunResponseDto.class);
 
+            mockMvc.perform(get("/api/meta/imports/workbook/dry-run-jobs/{jobId}/result", start.getJobId())
+                    .param("entityType", "CATEGORY")
+                    .param("page", "0")
+                    .param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.importSessionId").value(dryRun.getImportSessionId()))
+                .andExpect(jsonPath("$.previewEntityType").value("CATEGORY"))
+                .andExpect(jsonPath("$.previewPage.number").value(0))
+                .andExpect(jsonPath("$.previewPage.size").value(1))
+                .andExpect(jsonPath("$.previewPage.totalElements").value(2))
+                .andExpect(jsonPath("$.preview.categories.length()").value(1))
+                .andExpect(jsonPath("$.preview.attributes.length()").value(0))
+                .andExpect(jsonPath("$.preview.enumOptions.length()").value(0))
+                .andExpect(jsonPath("$.issues.length()").value(0));
+
             mockMvc.perform(get("/api/meta/imports/workbook/sessions/{importSessionId}", dryRun.getImportSessionId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.importSessionId").value(dryRun.getImportSessionId()));
