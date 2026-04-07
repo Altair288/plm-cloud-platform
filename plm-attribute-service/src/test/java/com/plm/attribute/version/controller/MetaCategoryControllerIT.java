@@ -229,6 +229,47 @@ public class MetaCategoryControllerIT {
                 .andExpect(jsonPath("$.data.children[0].children[0].code").value(grandchild.getCode()));
     }
 
+        @Test
+        void createCategory_shouldAllowSameNameUnderDifferentParentsWithinSameBusinessDomain() throws Exception {
+                String suffix = uniqueSuffix();
+                MetaCategoryDetailDto parentA = createCategory("MATERIAL", "CAT-DUP-PARENT-A-" + suffix, "Parent A " + suffix, null);
+                MetaCategoryDetailDto parentB = createCategory("MATERIAL", "CAT-DUP-PARENT-B-" + suffix, "Parent B " + suffix, null);
+
+                CreateCategoryRequestDto firstRequest = new CreateCategoryRequestDto();
+                firstRequest.setBusinessDomain("MATERIAL");
+                firstRequest.setCode("CAT-DUP-CHILD-A-" + suffix);
+                firstRequest.setName("Shared Child " + suffix);
+                firstRequest.setParentId(parentA.getId());
+                firstRequest.setStatus("ACTIVE");
+                firstRequest.setDescription("first duplicate child");
+                firstRequest.setSort(1);
+
+                mockMvc.perform(post("/api/meta/categories")
+                                                .param("operator", "dup-user")
+                                                .contentType(MediaType.APPLICATION_JSON)
+                                                .content(objectMapper.writeValueAsBytes(firstRequest)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.latestVersion.name").value("Shared Child " + suffix))
+                                .andExpect(jsonPath("$.parentId").value(parentA.getId().toString()));
+
+                CreateCategoryRequestDto secondRequest = new CreateCategoryRequestDto();
+                secondRequest.setBusinessDomain("MATERIAL");
+                secondRequest.setCode("CAT-DUP-CHILD-B-" + suffix);
+                secondRequest.setName("Shared Child " + suffix);
+                secondRequest.setParentId(parentB.getId());
+                secondRequest.setStatus("ACTIVE");
+                secondRequest.setDescription("second duplicate child");
+                secondRequest.setSort(1);
+
+                mockMvc.perform(post("/api/meta/categories")
+                                                .param("operator", "dup-user")
+                                                .contentType(MediaType.APPLICATION_JSON)
+                                                .content(objectMapper.writeValueAsBytes(secondRequest)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.latestVersion.name").value("Shared Child " + suffix))
+                                .andExpect(jsonPath("$.parentId").value(parentB.getId().toString()));
+        }
+
     @Test
     void batchEndpoints_shouldSupportDeleteTransferAndTopology() throws Exception {
         String suffix = uniqueSuffix();

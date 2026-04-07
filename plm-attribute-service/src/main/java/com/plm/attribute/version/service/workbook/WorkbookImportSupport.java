@@ -106,7 +106,8 @@ public final class WorkbookImportSupport {
             public record ExecutionPlanSnapshot(
                 List<CategoryPlanItem> categories,
                 List<AttributePlanItem> attributes,
-                List<EnumPlanItem> enumOptions
+                List<EnumPlanItem> enumOptions,
+                Boolean reservedCodesLocked
             ) {
             }
 

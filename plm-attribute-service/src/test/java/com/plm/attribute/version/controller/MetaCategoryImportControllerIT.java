@@ -115,6 +115,36 @@ public class MetaCategoryImportControllerIT {
                 .andExpect(jsonPath("$[0].codeKey").value(childCode));
     }
 
+    @Test
+    void importUnspsc_shouldAllowSameCategoryNameUnderDifferentParents() throws Exception {
+        String suffix = uniqueSuffix();
+        String rootACode = "CAT-DUP-IMP-ROOT-A-" + suffix;
+        String rootBCode = "CAT-DUP-IMP-ROOT-B-" + suffix;
+        String childACode = "CAT-DUP-IMP-CHILD-A-" + suffix;
+        String childBCode = "CAT-DUP-IMP-CHILD-B-" + suffix;
+
+        List<UnspscImportItem> items = List.of(
+                unspscItem("root-a-" + suffix, null, rootACode, "Root A " + suffix),
+                unspscItem("child-a-" + suffix, "root-a-" + suffix, childACode, "Shared Import Child " + suffix),
+                unspscItem("root-b-" + suffix, null, rootBCode, "Root B " + suffix),
+                unspscItem("child-b-" + suffix, "root-b-" + suffix, childBCode, "Shared Import Child " + suffix)
+        );
+
+        mockMvc.perform(post("/api/meta/categories/import-unspsc")
+                        .param("createdBy", "dup-import-user")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsBytes(items)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.createdDefCount").value(4))
+                .andExpect(jsonPath("$.createdVersionCount").value(4))
+                .andExpect(jsonPath("$.errorCount").value(0));
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                categoryDefRepository.findByBusinessDomainAndCodeKey("MATERIAL", childACode).isPresent());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                categoryDefRepository.findByBusinessDomainAndCodeKey("MATERIAL", childBCode).isPresent());
+    }
+
     private UnspscImportItem unspscItem(String key, String parentKey, String code, String title) {
         UnspscImportItem item = new UnspscImportItem();
         item.setKey(key);

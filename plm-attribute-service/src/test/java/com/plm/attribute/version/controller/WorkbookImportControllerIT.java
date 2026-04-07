@@ -248,7 +248,7 @@ class WorkbookImportControllerIT {
         Assertions.assertTrue(hasLogCode(logPage.getItems(), "CATEGORY_IMPORTED"));
         Assertions.assertTrue(hasLogCode(logPage.getItems(), "ATTRIBUTE_IMPORTED"));
         Assertions.assertTrue(hasLogCode(logPage.getItems(), "ENUM_OPTION_IMPORTED"));
-        Assertions.assertTrue(hasLogCode(logPage.getItems(), "CATEGORY_CODE_SEQUENCE_RESERVED"));
+        Assertions.assertFalse(hasLogCode(logPage.getItems(), "CATEGORY_CODE_SEQUENCE_RESERVED"));
 
         mockMvc.perform(post("/api/meta/imports/workbook/jobs/{jobId}/post-process/closure-rebuild", start.getJobId())
                 .param("operator", "repair-user"))

@@ -177,6 +177,12 @@ public class WorkbookImportDryRunService {
             resolveEnumActions(enumRows, options, categoryByReference, attributeByReference, attributeByFinalCode, existingData);
             listener.onEnumOptionsResolved(enumRows.size());
 
+            WorkbookImportDryRunResponseDto.SummaryDto summary = buildSummary(categoryRows, attributeRows, enumRows);
+            boolean reservedCodesLocked = Boolean.TRUE.equals(summary.getCanImport());
+            if (reservedCodesLocked) {
+                reserveLockedAutoCodes(categoryRows, attributeRows, enumRows);
+            }
+
             listener.onPreviewBuilding();
             WorkbookImportDryRunResponseDto response = buildResponse(workbook, options, categoryRows, attributeRows, enumRows, now);
             String importSessionId = UUID.randomUUID().toString();
@@ -193,7 +199,7 @@ public class WorkbookImportDryRunService {
                     toAttributeRecords(attributeRows),
                     toEnumRecords(enumRows),
                     existingData,
-                    toExecutionPlan(categoryRows, attributeRows, enumRows, existingData),
+                    toExecutionPlan(categoryRows, attributeRows, enumRows, existingData, reservedCodesLocked),
                     null,
                     now,
                     expiresAt);
@@ -798,6 +804,222 @@ public class WorkbookImportDryRunService {
         return examples;
     }
 
+    private void reserveLockedAutoCodes(List<MutableCategoryRow> categories,
+                                        List<MutableAttributeRow> attributes,
+                                        List<MutableEnumOptionRow> enumOptions) {
+        reserveLockedCategoryCodes(categories);
+        synchronizeResolvedCategoryCodes(attributes, categories);
+        reserveLockedAttributeCodes(attributes);
+        synchronizeResolvedEnumReferences(enumOptions, categories, attributes);
+        reserveLockedEnumCodes(enumOptions);
+    }
+
+    private void reserveLockedCategoryCodes(List<MutableCategoryRow> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Map<String, List<MutableCategoryRow>> childrenByParent = new LinkedHashMap<>();
+        Map<String, MutableCategoryRow> byOwnPath = new LinkedHashMap<>();
+        for (MutableCategoryRow row : rows) {
+            if (row.businessDomain != null && row.categoryPath != null) {
+                byOwnPath.put(composeCategoryPathKey(row.businessDomain, row.categoryPath), row);
+            }
+            String parentKey = composeCategoryPathKey(row.businessDomain, row.parentPath);
+            childrenByParent.computeIfAbsent(parentKey, ignored -> new ArrayList<>()).add(row);
+        }
+
+        Set<String> visited = new HashSet<>();
+        List<MutableCategoryRow> roots = rows.stream()
+                .filter(row -> row.parentPath == null || !byOwnPath.containsKey(composeCategoryPathKey(row.businessDomain, row.parentPath)))
+                .sorted(Comparator.comparingInt(row -> row.rowNumber))
+                .toList();
+        Map<String, List<MutableCategoryRow>> rootsByBusinessDomain = roots.stream()
+                .filter(row -> row.businessDomain != null)
+                .collect(Collectors.groupingBy(row -> row.businessDomain, LinkedHashMap::new, Collectors.toList()));
+        for (Map.Entry<String, List<MutableCategoryRow>> entry : rootsByBusinessDomain.entrySet()) {
+            reserveLockedCategorySiblings(entry.getValue(), entry.getKey(), null, childrenByParent, visited);
+        }
+    }
+
+    private void reserveLockedCategorySiblings(List<MutableCategoryRow> siblings,
+                                               String businessDomain,
+                                               String parentFinalPath,
+                                               Map<String, List<MutableCategoryRow>> childrenByParent,
+                                               Set<String> visited) {
+        if (siblings == null || siblings.isEmpty()) {
+            return;
+        }
+        List<MutableCategoryRow> ordered = siblings.stream().sorted(Comparator.comparingInt(row -> row.rowNumber)).toList();
+        List<MutableCategoryRow> reservable = ordered.stream().filter(this::shouldReserveCategoryCode).toList();
+        if (!reservable.isEmpty()) {
+            LinkedHashMap<String, String> context = new LinkedHashMap<>();
+            context.put("BUSINESS_DOMAIN", businessDomain);
+            String parentFinalCode = pathLeaf(parentFinalPath);
+            if (parentFinalCode != null) {
+                context.put("PARENT_CODE", parentFinalCode);
+            }
+            String ruleCode = metaCodeRuleSetService.resolveCategoryRuleCode(businessDomain);
+            MetaCodeRuleService.ReservedCodeBatchResult reserved = metaCodeRuleService.reserveCodes(
+                    ruleCode,
+                    "CATEGORY",
+                    context,
+                    reservable.size(),
+                    "workbook-dry-run",
+                    false);
+            List<String> codes = reserved.codes();
+            for (int index = 0; index < reservable.size(); index++) {
+                reservable.get(index).resolvedFinalCode = index < codes.size() ? codes.get(index) : reservable.get(index).resolvedFinalCode;
+            }
+        }
+        for (MutableCategoryRow row : ordered) {
+            if (row.resolvedFinalCode != null) {
+                row.resolvedFinalPath = appendPath(parentFinalPath, row.resolvedFinalCode);
+            }
+            String selfKey = composeCategoryPathKey(row.businessDomain, row.categoryPath);
+            if (!visited.add(selfKey)) {
+                continue;
+            }
+            List<MutableCategoryRow> children = childrenByParent.getOrDefault(composeCategoryPathKey(row.businessDomain, row.categoryPath), List.of());
+            if (!children.isEmpty()) {
+                reserveLockedCategorySiblings(children, row.businessDomain, row.resolvedFinalPath, childrenByParent, visited);
+            }
+        }
+    }
+
+    private void synchronizeResolvedCategoryCodes(List<MutableAttributeRow> attributes,
+                                                  List<MutableCategoryRow> categories) {
+        Map<String, MutableCategoryRow> categoriesByReference = new LinkedHashMap<>();
+        for (MutableCategoryRow row : categories) {
+            if (row.businessDomain != null && row.excelReferenceCode != null) {
+                categoriesByReference.put(composeCategoryCodeKey(row.businessDomain, row.excelReferenceCode), row);
+            }
+        }
+        for (MutableAttributeRow row : attributes) {
+            if (row.businessDomain == null || row.categoryReferenceCode == null) {
+                continue;
+            }
+            MutableCategoryRow category = categoriesByReference.get(composeCategoryCodeKey(row.businessDomain, row.categoryReferenceCode));
+            if (category != null) {
+                row.resolvedCategoryCode = category.resolvedFinalCode;
+            }
+        }
+    }
+
+    private void reserveLockedAttributeCodes(List<MutableAttributeRow> rows) {
+        Map<String, List<MutableAttributeRow>> grouped = new LinkedHashMap<>();
+        for (MutableAttributeRow row : rows) {
+            if (!shouldReserveAttributeCode(row) || row.businessDomain == null || row.resolvedCategoryCode == null) {
+                continue;
+            }
+            grouped.computeIfAbsent(row.businessDomain + "::" + row.resolvedCategoryCode, ignored -> new ArrayList<>()).add(row);
+        }
+        for (List<MutableAttributeRow> group : grouped.values()) {
+            List<MutableAttributeRow> ordered = group.stream().sorted(Comparator.comparingInt(row -> row.rowNumber)).toList();
+            MutableAttributeRow first = ordered.get(0);
+            LinkedHashMap<String, String> context = new LinkedHashMap<>();
+            context.put("BUSINESS_DOMAIN", first.businessDomain);
+            context.put("CATEGORY_CODE", first.resolvedCategoryCode);
+            String ruleCode = metaCodeRuleSetService.resolveAttributeRuleCode(first.businessDomain);
+            MetaCodeRuleService.ReservedCodeBatchResult reserved = metaCodeRuleService.reserveCodes(
+                    ruleCode,
+                    "ATTRIBUTE",
+                    context,
+                    ordered.size(),
+                    "workbook-dry-run",
+                    false);
+            List<String> codes = reserved.codes();
+            for (int index = 0; index < ordered.size(); index++) {
+                ordered.get(index).resolvedFinalCode = index < codes.size() ? codes.get(index) : ordered.get(index).resolvedFinalCode;
+            }
+        }
+    }
+
+    private void synchronizeResolvedEnumReferences(List<MutableEnumOptionRow> enumOptions,
+                                                   List<MutableCategoryRow> categories,
+                                                   List<MutableAttributeRow> attributes) {
+        Map<String, MutableCategoryRow> categoriesByReference = new LinkedHashMap<>();
+        for (MutableCategoryRow row : categories) {
+            if (row.businessDomain != null && row.excelReferenceCode != null) {
+                categoriesByReference.put(composeCategoryCodeKey(row.businessDomain, row.excelReferenceCode), row);
+            }
+        }
+        Map<String, MutableAttributeRow> attributesByReference = new LinkedHashMap<>();
+        for (MutableAttributeRow row : attributes) {
+            if (row.businessDomain != null && row.categoryReferenceCode != null && row.attributeReferenceCode != null) {
+                attributesByReference.put(composeAttributeKey(row.businessDomain, row.categoryReferenceCode, row.attributeReferenceCode), row);
+            }
+        }
+        for (MutableEnumOptionRow row : enumOptions) {
+            if (row.businessDomain == null) {
+                continue;
+            }
+            MutableCategoryRow category = row.categoryReferenceCode == null
+                    ? null
+                    : categoriesByReference.get(composeCategoryCodeKey(row.businessDomain, row.categoryReferenceCode));
+            if (category != null) {
+                row.resolvedCategoryCode = category.resolvedFinalCode;
+            }
+            if (row.categoryReferenceCode != null && row.attributeReferenceCode != null) {
+                MutableAttributeRow attribute = attributesByReference.get(composeAttributeKey(row.businessDomain, row.categoryReferenceCode, row.attributeReferenceCode));
+                if (attribute != null) {
+                    row.resolvedAttributeCode = attribute.resolvedFinalCode;
+                }
+            }
+        }
+    }
+
+    private void reserveLockedEnumCodes(List<MutableEnumOptionRow> rows) {
+        Map<String, List<MutableEnumOptionRow>> grouped = new LinkedHashMap<>();
+        for (MutableEnumOptionRow row : rows) {
+            if (!shouldReserveEnumCode(row) || row.businessDomain == null || row.resolvedCategoryCode == null || row.resolvedAttributeCode == null) {
+                continue;
+            }
+            grouped.computeIfAbsent(row.businessDomain + "::" + row.resolvedCategoryCode + "::" + row.resolvedAttributeCode,
+                    ignored -> new ArrayList<>()).add(row);
+        }
+        for (List<MutableEnumOptionRow> group : grouped.values()) {
+            List<MutableEnumOptionRow> ordered = group.stream().sorted(Comparator.comparingInt(row -> row.rowNumber)).toList();
+            MutableEnumOptionRow first = ordered.get(0);
+            LinkedHashMap<String, String> context = new LinkedHashMap<>();
+            context.put("BUSINESS_DOMAIN", first.businessDomain);
+            context.put("CATEGORY_CODE", first.resolvedCategoryCode);
+            context.put("ATTRIBUTE_CODE", first.resolvedAttributeCode);
+            String ruleCode = metaCodeRuleSetService.resolveLovRuleCode(first.businessDomain);
+            MetaCodeRuleService.ReservedCodeBatchResult reserved = metaCodeRuleService.reserveCodes(
+                    ruleCode,
+                    "LOV_VALUE",
+                    context,
+                    ordered.size(),
+                    "workbook-dry-run",
+                    false);
+            List<String> codes = reserved.codes();
+            for (int index = 0; index < ordered.size(); index++) {
+                ordered.get(index).resolvedFinalCode = index < codes.size() ? codes.get(index) : ordered.get(index).resolvedFinalCode;
+            }
+        }
+    }
+
+    private boolean shouldReserveCategoryCode(MutableCategoryRow row) {
+        return row != null
+                && !row.hasErrors()
+                && ACTION_CREATE.equals(row.resolvedAction)
+                && MODE_SYSTEM_RULE_AUTO.equals(row.codeMode());
+    }
+
+    private boolean shouldReserveAttributeCode(MutableAttributeRow row) {
+        return row != null
+                && !row.hasErrors()
+                && ACTION_CREATE.equals(row.resolvedAction)
+                && MODE_SYSTEM_RULE_AUTO.equals(row.codeMode());
+    }
+
+    private boolean shouldReserveEnumCode(MutableEnumOptionRow row) {
+        return row != null
+                && !row.hasErrors()
+                && ACTION_CREATE.equals(row.resolvedAction)
+                && MODE_SYSTEM_RULE_AUTO.equals(row.codeMode());
+    }
+
     private void resolveCategoryActions(List<MutableCategoryRow> rows,
                                         WorkbookImportDryRunOptionsDto options,
                                         WorkbookImportSupport.ExistingDataSnapshot existingData) {
@@ -1084,11 +1306,13 @@ public class WorkbookImportDryRunService {
     private WorkbookImportSupport.ExecutionPlanSnapshot toExecutionPlan(List<MutableCategoryRow> categories,
                                                                         List<MutableAttributeRow> attributes,
                                                                         List<MutableEnumOptionRow> enumOptions,
-                                                                        WorkbookImportSupport.ExistingDataSnapshot existingData) {
+                                                                        WorkbookImportSupport.ExistingDataSnapshot existingData,
+                                                                        boolean reservedCodesLocked) {
         return new WorkbookImportSupport.ExecutionPlanSnapshot(
                 categories.stream().map(row -> toCategoryPlanItem(row, existingData)).toList(),
                 attributes.stream().map(row -> toAttributePlanItem(row, existingData)).toList(),
-                enumOptions.stream().map(row -> toEnumPlanItem(row, existingData)).toList());
+                enumOptions.stream().map(row -> toEnumPlanItem(row, existingData)).toList(),
+                reservedCodesLocked);
     }
 
     private WorkbookImportSupport.CategoryPlanItem toCategoryPlanItem(MutableCategoryRow row,

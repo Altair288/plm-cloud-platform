@@ -308,8 +308,6 @@ public class MetaCategoryCrudService {
         String businessDomain = normalizeBusinessDomain(req.getBusinessDomain());
         String status = mapApiStatusToDb(req.getStatus(), true);
 
-        ensureCategoryNameUnique(businessDomain, name, null);
-
         MetaCategoryDef parent = resolveCreateParent(req.getParentId(), businessDomain);
 
         MetaCategoryDef def = new MetaCategoryDef();
@@ -456,10 +454,6 @@ public class MetaCategoryCrudService {
 
         String nextName = patchMode ? coalesceTrim(req.getName(), latest.getDisplayName()) : requireName(req.getName());
         String nextDescription = patchMode ? coalesceTrim(req.getDescription(), readDescription(latest.getStructureJson())) : trimToNull(req.getDescription());
-
-        if (!Objects.equals(nextName, latest.getDisplayName())) {
-            ensureCategoryNameUnique(def.getBusinessDomain(), nextName, def.getId());
-        }
 
         boolean versionChanged = !Objects.equals(nextName, latest.getDisplayName())
                 || !Objects.equals(nextDescription, readDescription(latest.getStructureJson()));
@@ -1695,30 +1689,10 @@ public class MetaCategoryCrudService {
             throw new IllegalArgumentException("category name is required");
         }
         return switch (options.namePolicy) {
-            case "KEEP" -> {
-                ensureCategoryNameUnique(businessDomain, sourceDisplayName, null);
-                yield sourceDisplayName;
-            }
+            case "KEEP" -> sourceDisplayName;
             case "AUTO_SUFFIX" -> generateCopyDisplayName(businessDomain, sourceDisplayName);
             default -> throw new IllegalArgumentException("unsupported namePolicy: " + options.namePolicy);
         };
-    }
-
-    private void ensureCategoryNameUnique(String businessDomain, String displayName, UUID excludeCategoryId) {
-        String normalizedDisplayName = trimToNull(displayName);
-        if (normalizedDisplayName == null) {
-            throw new IllegalArgumentException("category name is required");
-        }
-        boolean exists = excludeCategoryId == null
-                ? versionRepository.existsLatestByBusinessDomainAndDisplayName(businessDomain, normalizedDisplayName)
-                : versionRepository.existsLatestByBusinessDomainAndDisplayNameAndCategoryDefIdNot(
-                        businessDomain,
-                        normalizedDisplayName,
-                        excludeCategoryId);
-        if (exists) {
-            throw new IllegalArgumentException(
-                    "category name already exists in businessDomain: businessDomain=" + businessDomain + ", name=" + normalizedDisplayName);
-        }
     }
 
     private MetaCategoryDef loadActiveCategory(UUID id, String notFoundCode) {

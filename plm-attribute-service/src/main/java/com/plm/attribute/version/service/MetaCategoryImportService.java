@@ -175,8 +175,6 @@ public class MetaCategoryImportService {
                 def.setFullPathName(parent == null ? title : parentFullName + "/" + title);
                 defRepository.save(def);
 
-                ensureCategoryNameUnique(title, null);
-
                 // 创建版本
                 MetaCategoryVersion ver = new MetaCategoryVersion();
                 ver.setCategoryDef(def);
@@ -408,8 +406,6 @@ public class MetaCategoryImportService {
                 def.setPath(path);
                 def.setDepth((short) (path.equals("/") ? 0 : path.split("/").length - 1));
 
-                ensureCategoryNameUnique(name, null);
-
                 // 创建版本 （并发重复插入: def_id+version_no 唯一, 使用 save 发生冲突风险较低且本批只创建初始版本）
                 MetaCategoryVersion ver = new MetaCategoryVersion();
                 ver.setCategoryDef(def);
@@ -484,23 +480,6 @@ public class MetaCategoryImportService {
                 .map(MetaCategoryVersion::getDisplayName)
                 .orElse(def.getParent().getCodeKey());
         return parentName + "/" + currentDisplayName;
-    }
-
-    private void ensureCategoryNameUnique(String displayName, UUID excludeCategoryId) {
-        String normalizedDisplayName = trim(displayName);
-        if (normalizedDisplayName == null) {
-            throw new IllegalArgumentException("category title is required");
-        }
-        boolean exists = excludeCategoryId == null
-                ? versionRepository.existsLatestByBusinessDomainAndDisplayName(IMPORT_BUSINESS_DOMAIN, normalizedDisplayName)
-                : versionRepository.existsLatestByBusinessDomainAndDisplayNameAndCategoryDefIdNot(
-                        IMPORT_BUSINESS_DOMAIN,
-                        normalizedDisplayName,
-                        excludeCategoryId);
-        if (exists) {
-            throw new IllegalArgumentException(
-                    "category name already exists in businessDomain: businessDomain=" + IMPORT_BUSINESS_DOMAIN + ", name=" + normalizedDisplayName);
-        }
     }
 
     private String getCellString(Cell cell) {

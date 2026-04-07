@@ -1027,9 +1027,8 @@ data: {"jobId":"fc9a8c10-e7e0-4f7f-a2ae-f3184e4081e8","status":"FAILED","message
 
 ### 13.2 自动编码模式说明
 
-- 当编码模式为 `SYSTEM_RULE_AUTO` 时，Excel 中的编码列只作为内部引用键。
-- dry-run 返回的 `resolvedFinalCode` 只是预览结果，不保证与正式导入时的真实保留码完全一致。
-- 正式导入阶段会再次按系统规则保留/生成编码，并记录对应日志事件，例如 `CATEGORY_CODE_SEQUENCE_RESERVED`。
+ 当 dry-run 成功且 `summary.canImport = true` 时，自动码会在后端立即预留并写入快照；后续正式导入会复用该快照中的锁定编码。
+ 在该快照过期或被正式导入消费前，其他用户不会再拿到同一段自动码；因此前端可以将 dry-run 返回的 `resolvedFinalCode` 视为本次导入会话内的最终编码。
 - 因此前端页面中应明确区分“Excel 引用编码”和“预览最终编码”，避免把 dry-run 的自动码当作最终落库主键缓存。
 
 ### 13.3 任务结果判断

@@ -216,12 +216,15 @@ public class WorkbookImportExecutionService {
     private void executePlan(WorkbookImportSupport.JobState job,
                              WorkbookImportSupport.ImportSessionState session,
                              boolean atomic) {
-        ExecutionPlan plan = buildPlan(session);
+        WorkbookImportSupport.ExecutionPlanSnapshot snapshot = requireExecutionPlan(session);
+        ExecutionPlan plan = buildPlan(snapshot);
 
         runtimeService.setStage(job.getJobId(), WorkbookImportSupport.STATUS_PREPARING, WorkbookImportSupport.STAGE_PREPARING);
-        reserveCategoryCodes(job, plan, session);
-        reserveAttributeCodes(job, plan, session);
-        reserveEnumCodes(job, plan, session);
+        if (shouldReserveCodes(snapshot)) {
+            reserveCategoryCodes(job, plan, session);
+            reserveAttributeCodes(job, plan, session);
+            reserveEnumCodes(job, plan, session);
+        }
 
         runtimeService.setStage(job.getJobId(), WorkbookImportSupport.STATUS_IMPORTING_CATEGORIES, WorkbookImportSupport.STAGE_CATEGORIES);
         importCategories(job, plan, atomic);
@@ -239,25 +242,32 @@ public class WorkbookImportExecutionService {
     private void executePlanByStageTransactions(WorkbookImportSupport.JobState job,
                                                 WorkbookImportSupport.ImportSessionState session,
                                                 boolean atomic) {
-        ExecutionPlan plan = buildPlan(session);
+        WorkbookImportSupport.ExecutionPlanSnapshot snapshot = requireExecutionPlan(session);
+        ExecutionPlan plan = buildPlan(snapshot);
 
         runtimeService.setStage(job.getJobId(), WorkbookImportSupport.STATUS_PREPARING, WorkbookImportSupport.STAGE_PREPARING);
         transactionTemplate.executeWithoutResult(status -> {
-            reserveCategoryCodes(job, plan, session);
+            if (shouldReserveCodes(snapshot)) {
+                reserveCategoryCodes(job, plan, session);
+            }
             runtimeService.setStage(job.getJobId(), WorkbookImportSupport.STATUS_IMPORTING_CATEGORIES, WorkbookImportSupport.STAGE_CATEGORIES);
             importCategories(job, plan, atomic);
         });
 
         runtimeService.setStage(job.getJobId(), WorkbookImportSupport.STATUS_PREPARING, WorkbookImportSupport.STAGE_PREPARING);
         transactionTemplate.executeWithoutResult(status -> {
-            reserveAttributeCodes(job, plan, session);
+            if (shouldReserveCodes(snapshot)) {
+                reserveAttributeCodes(job, plan, session);
+            }
             runtimeService.setStage(job.getJobId(), WorkbookImportSupport.STATUS_IMPORTING_ATTRIBUTES, WorkbookImportSupport.STAGE_ATTRIBUTES);
             importAttributes(job, plan, atomic);
         });
 
         runtimeService.setStage(job.getJobId(), WorkbookImportSupport.STATUS_PREPARING, WorkbookImportSupport.STAGE_PREPARING);
         transactionTemplate.executeWithoutResult(status -> {
-            reserveEnumCodes(job, plan, session);
+            if (shouldReserveCodes(snapshot)) {
+                reserveEnumCodes(job, plan, session);
+            }
             runtimeService.setStage(job.getJobId(), WorkbookImportSupport.STATUS_IMPORTING_ENUM_OPTIONS, WorkbookImportSupport.STAGE_ENUM_OPTIONS);
             importEnumOptions(job, plan, atomic);
         });
@@ -299,13 +309,12 @@ public class WorkbookImportExecutionService {
         });
     }
 
-    private ExecutionPlan buildPlan(WorkbookImportSupport.ImportSessionState session) {
+    private WorkbookImportSupport.ExecutionPlanSnapshot requireExecutionPlan(WorkbookImportSupport.ImportSessionState session) {
         WorkbookImportSupport.ExecutionPlanSnapshot snapshot = session.executionPlan();
         if (snapshot == null) {
             throw new IllegalArgumentException("workbook import execution plan not found: importSessionId=" + session.importSessionId());
         }
-
-        return buildPlan(snapshot);
+        return snapshot;
     }
 
     private ExecutionPlan buildPlan(WorkbookImportSupport.ExecutionPlanSnapshot snapshot) {
@@ -350,10 +359,13 @@ public class WorkbookImportExecutionService {
             return buildPlan(existingStagedPlan);
         }
 
-        ExecutionPlan plan = buildPlan(session);
-        reserveCategoryCodes(job, plan, session);
-        reserveAttributeCodes(job, plan, session);
-        reserveEnumCodes(job, plan, session);
+        WorkbookImportSupport.ExecutionPlanSnapshot snapshot = requireExecutionPlan(session);
+        ExecutionPlan plan = buildPlan(snapshot);
+        if (shouldReserveCodes(snapshot)) {
+            reserveCategoryCodes(job, plan, session);
+            reserveAttributeCodes(job, plan, session);
+            reserveEnumCodes(job, plan, session);
+        }
 
         WorkbookImportSupport.ExecutionPlanSnapshot stagedPlan = toExecutionPlanSnapshot(plan);
         runtimeService.saveStagedExecutionPlan(session.importSessionId(), stagedPlan);
@@ -542,8 +554,12 @@ public class WorkbookImportExecutionService {
                     !WRITE_MODE_ENUM_SKIP.equals(item.writeMode),
                     item.codeMode))
                 .toList();
-            return new WorkbookImportSupport.ExecutionPlanSnapshot(categories, attributes, enumOptions);
+            return new WorkbookImportSupport.ExecutionPlanSnapshot(categories, attributes, enumOptions, Boolean.TRUE);
             }
+
+    private boolean shouldReserveCodes(WorkbookImportSupport.ExecutionPlanSnapshot snapshot) {
+        return snapshot == null || !Boolean.TRUE.equals(snapshot.reservedCodesLocked());
+    }
 
     private void reserveCategoryCodes(WorkbookImportSupport.JobState job,
                                       ExecutionPlan plan,
@@ -578,6 +594,9 @@ public class WorkbookImportExecutionService {
             }
             if (!MODE_SYSTEM_RULE_AUTO.equals(item.codeMode)) {
                 item.finalCode = item.attributeCode;
+                continue;
+            }
+            if (!WRITE_MODE_ATTRIBUTE_CREATE.equals(item.writeMode)) {
                 continue;
             }
             grouped.computeIfAbsent(item.businessDomain + "::" + item.finalCategoryCode, ignored -> new ArrayList<>()).add(item);
@@ -652,6 +671,9 @@ public class WorkbookImportExecutionService {
                 item.finalCode = item.optionCode;
                 continue;
             }
+            if (!WRITE_MODE_ENUM_CREATE.equals(item.writeMode)) {
+                continue;
+            }
             grouped.computeIfAbsent(businessDomain + "::" + item.finalCategoryCode + "::" + item.finalAttributeCode,
                     ignored -> new ArrayList<>()).add(item);
         }
@@ -715,7 +737,7 @@ public class WorkbookImportExecutionService {
                 item.finalPath = appendPath(parentFinalPath, item.finalCode);
                 continue;
             }
-            if (MODE_SYSTEM_RULE_AUTO.equals(item.codeMode)) {
+            if (MODE_SYSTEM_RULE_AUTO.equals(item.codeMode) && WRITE_MODE_CATEGORY_CREATE.equals(item.writeMode)) {
                 autoItems.add(item);
             }
         }
