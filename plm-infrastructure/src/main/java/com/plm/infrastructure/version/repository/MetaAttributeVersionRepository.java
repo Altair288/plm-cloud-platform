@@ -21,6 +21,8 @@ public interface MetaAttributeVersionRepository extends JpaRepository<MetaAttrib
 
     List<MetaAttributeVersion> findByAttributeDefInAndIsLatestTrue(Collection<MetaAttributeDef> defs);
 
+    List<MetaAttributeVersion> findByAttributeDefCategoryDefIdInAndIsLatestTrue(Collection<UUID> categoryDefIds);
+
         @Modifying
         @Query("""
                         update MetaAttributeVersion v
