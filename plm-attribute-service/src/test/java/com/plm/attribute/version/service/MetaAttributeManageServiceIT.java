@@ -15,6 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -212,6 +213,52 @@ class MetaAttributeManageServiceIT {
         IllegalArgumentException exception = Assertions.assertThrows(IllegalArgumentException.class,
                 () -> attributeManageService.create("MATERIAL", categoryB, second, "it-user"));
         Assertions.assertTrue(exception.getMessage().contains("enum option code already exists in business domain"));
+    }
+
+    @Test
+    void updateAttribute_shouldClearStaleNumberFieldsWhenDataTypeChangesToBool() {
+        String categoryCode = "MAT-TYPE-SWITCH-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
+        createCategory(categoryCode, "Type Switch Category");
+
+        MetaAttributeUpsertRequestDto createRequest = new MetaAttributeUpsertRequestDto();
+        createRequest.setDisplayName("主轴功率");
+        createRequest.setAttributeField("spindlePower");
+        createRequest.setDataType("number");
+        createRequest.setUnit("kW");
+        createRequest.setDefaultValue("7.5");
+        createRequest.setMinValue(new BigDecimal("0"));
+        createRequest.setMaxValue(new BigDecimal("99.9"));
+        createRequest.setStep(new BigDecimal("0.1"));
+        createRequest.setPrecision(1);
+
+        MetaAttributeDefDetailDto created = attributeManageService.create(categoryCode, createRequest, "it-user");
+
+        MetaAttributeUpsertRequestDto updateRequest = new MetaAttributeUpsertRequestDto();
+        updateRequest.setDisplayName("主轴功率");
+        updateRequest.setAttributeField("spindlePower");
+        updateRequest.setDataType("bool");
+        updateRequest.setUnit("kW");
+        updateRequest.setDefaultValue("7.5");
+        updateRequest.setMinValue(new BigDecimal("0"));
+        updateRequest.setMaxValue(new BigDecimal("99.9"));
+        updateRequest.setStep(new BigDecimal("0.1"));
+        updateRequest.setPrecision(1);
+        updateRequest.setTrueLabel("是");
+        updateRequest.setFalseLabel("否");
+
+        MetaAttributeDefDetailDto updated = attributeManageService.update(categoryCode, created.getKey(), updateRequest, "it-user");
+
+        Assertions.assertNotNull(updated.getLatestVersion());
+        Assertions.assertEquals(2, updated.getLatestVersion().getVersionNo());
+        Assertions.assertEquals("bool", updated.getLatestVersion().getDataType());
+        Assertions.assertNull(updated.getLatestVersion().getUnit());
+        Assertions.assertNull(updated.getLatestVersion().getDefaultValue());
+        Assertions.assertNull(updated.getLatestVersion().getMinValue());
+        Assertions.assertNull(updated.getLatestVersion().getMaxValue());
+        Assertions.assertNull(updated.getLatestVersion().getStep());
+        Assertions.assertNull(updated.getLatestVersion().getPrecision());
+        Assertions.assertEquals("是", updated.getLatestVersion().getTrueLabel());
+        Assertions.assertEquals("否", updated.getLatestVersion().getFalseLabel());
     }
 
         @Test

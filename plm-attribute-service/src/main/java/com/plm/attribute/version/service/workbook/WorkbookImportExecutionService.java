@@ -10,6 +10,7 @@ import com.plm.attribute.version.service.MetaCategoryCrudService;
 import com.plm.attribute.version.service.MetaCategoryHierarchyService;
 import com.plm.attribute.version.service.MetaCodeRuleService;
 import com.plm.attribute.version.service.MetaCodeRuleSetService;
+import com.plm.attribute.version.service.AttributeStructureJsonSupport;
 import com.plm.common.api.dto.attribute.MetaAttributeDefDetailDto;
 import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
 import com.plm.common.api.dto.category.CreateCategoryRequestDto;
@@ -1379,59 +1380,27 @@ public class WorkbookImportExecutionService {
     }
 
     private String buildAttributeStructureJson(AttributeWorkItem item, String existingLovKey) {
-        ObjectNode node = objectMapper.createObjectNode();
-        node.put("displayName", item.attributeName);
-        node.put("dataType", item.dataType);
-        if (item.description != null && !item.description.isBlank()) {
-            node.put("description", item.description.trim());
-        }
-        if (item.attributeField != null && !item.attributeField.isBlank()) {
-            node.put("attributeField", item.attributeField.trim());
-        }
-        if (item.unit != null && !item.unit.isBlank()) {
-            node.put("unit", item.unit.trim());
-        }
-        if (item.defaultValue != null && !item.defaultValue.isBlank()) {
-            node.put("defaultValue", item.defaultValue.trim());
-        }
-        if (item.required != null) {
-            node.put("required", item.required);
-        }
-        if (item.unique != null) {
-            node.put("unique", item.unique);
-        }
-        if (item.hidden != null) {
-            node.put("hidden", item.hidden);
-        }
-        if (item.readOnly != null) {
-            node.put("readOnly", item.readOnly);
-        }
-        if (item.searchable != null) {
-            node.put("searchable", item.searchable);
-        }
-        if (item.minValue != null) {
-            node.put("minValue", item.minValue);
-        }
-        if (item.maxValue != null) {
-            node.put("maxValue", item.maxValue);
-        }
-        if (item.step != null) {
-            node.put("step", item.step);
-        }
-        if (item.precision != null) {
-            node.put("precision", item.precision);
-        }
-        if (item.trueLabel != null && !item.trueLabel.isBlank()) {
-            node.put("trueLabel", item.trueLabel.trim());
-        }
-        if (item.falseLabel != null && !item.falseLabel.isBlank()) {
-            node.put("falseLabel", item.falseLabel.trim());
-        }
         String lovKey = resolveLovKey(existingLovKey, item.finalCode);
-        if (isEnumLike(item.dataType) && lovKey != null) {
-            node.put("lovKey", lovKey);
-        }
-        return node.toString();
+        return AttributeStructureJsonSupport.toJson(objectMapper,
+                new AttributeStructureJsonSupport.AttributeStructureSpec(
+                        item.attributeName,
+                        item.dataType,
+                        item.description,
+                        item.attributeField,
+                        item.unit,
+                        item.defaultValue,
+                        item.required,
+                        item.unique,
+                        item.hidden,
+                        item.readOnly,
+                        item.searchable,
+                        item.minValue,
+                        item.maxValue,
+                        item.step,
+                        item.precision,
+                        item.trueLabel,
+                        item.falseLabel,
+                        lovKey));
     }
 
     private LinkedHashMap<String, MetaAttributeUpsertRequestDto.LovValueUpsertItem> parseExistingLovValues(MetaLovVersion latest) {

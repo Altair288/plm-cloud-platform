@@ -3,6 +3,7 @@ package com.plm.attribute.version.service.workbook;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.plm.attribute.version.service.AttributeStructureJsonSupport;
 import com.plm.attribute.version.service.MetaCodeRuleService;
 import com.plm.attribute.version.service.MetaCodeRuleSetService;
 import com.plm.common.api.dto.code.CodeRulePreviewRequestDto;
@@ -1945,68 +1946,27 @@ public class WorkbookImportDryRunService {
         if (attributeName == null || dataType == null) {
             return null;
         }
-        ObjectNode node = objectMapper.createObjectNode();
-        node.put("displayName", attributeName);
-        node.put("dataType", dataType);
-
-        String description = trimToNull(row.description);
-        if (description != null) {
-            node.put("description", description);
-        }
-        String attributeField = trimToNull(row.attributeField);
-        if (attributeField != null) {
-            node.put("attributeField", attributeField);
-        }
-        String unit = trimToNull(row.unit);
-        if (unit != null) {
-            node.put("unit", unit);
-        }
-        String defaultValue = trimToNull(row.defaultValue);
-        if (defaultValue != null) {
-            node.put("defaultValue", defaultValue);
-        }
-        if (row.required != null) {
-            node.put("required", row.required);
-        }
-        if (row.unique != null) {
-            node.put("unique", row.unique);
-        }
-        if (row.hidden != null) {
-            node.put("hidden", row.hidden);
-        }
-        if (row.readOnly != null) {
-            node.put("readOnly", row.readOnly);
-        }
-        if (row.searchable != null) {
-            node.put("searchable", row.searchable);
-        }
-        if (row.minValue != null) {
-            node.put("minValue", row.minValue);
-        }
-        if (row.maxValue != null) {
-            node.put("maxValue", row.maxValue);
-        }
-        if (row.step != null) {
-            node.put("step", row.step);
-        }
-        if (row.precision != null) {
-            node.put("precision", row.precision);
-        }
-
-        String trueLabel = trimToNull(row.trueLabel);
-        if (trueLabel != null) {
-            node.put("trueLabel", trueLabel);
-        }
-        String falseLabel = trimToNull(row.falseLabel);
-        if (falseLabel != null) {
-            node.put("falseLabel", falseLabel);
-        }
-
         String lovKey = resolveDryRunLovBindingKey(existingAttribute, row.resolvedFinalCode, row.dataType);
-        if (trimToNull(lovKey) != null) {
-            node.put("lovKey", lovKey.trim());
-        }
-        return AttributeLovImportUtils.jsonHash(node.toString());
+        return AttributeStructureJsonSupport.toHash(objectMapper,
+                new AttributeStructureJsonSupport.AttributeStructureSpec(
+                        attributeName,
+                        dataType,
+                        row.description,
+                        row.attributeField,
+                        row.unit,
+                        row.defaultValue,
+                        row.required,
+                        row.unique,
+                        row.hidden,
+                        row.readOnly,
+                        row.searchable,
+                        row.minValue,
+                        row.maxValue,
+                        row.step,
+                        row.precision,
+                        row.trueLabel,
+                        row.falseLabel,
+                        lovKey));
     }
 
     private String resolveDryRunLovBindingKey(WorkbookImportSupport.ExistingAttributeRef existingAttribute,

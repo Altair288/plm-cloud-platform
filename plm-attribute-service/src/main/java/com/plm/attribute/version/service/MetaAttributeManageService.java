@@ -352,55 +352,26 @@ public class MetaAttributeManageService {
     }
 
     private String buildStructureJson(MetaAttributeUpsertRequestDto req, String lovKey) {
-        ObjectNode node = objectMapper.createObjectNode();
-        // 必填字段由上层校验保证非空
-        node.put("displayName", req.getDisplayName().trim());
-        node.put("dataType", req.getDataType().trim());
-
-        String description = trimToNull(req.getDescription());
-        if (description != null)
-            node.put("description", description);
-        String attributeField = trimToNull(req.getAttributeField());
-        if (attributeField != null)
-            node.put("attributeField", attributeField);
-        String unit = trimToNull(req.getUnit());
-        if (unit != null)
-            node.put("unit", unit);
-        String defaultValue = trimToNull(req.getDefaultValue());
-        if (defaultValue != null)
-            node.put("defaultValue", defaultValue);
-
-        if (req.getRequired() != null)
-            node.put("required", req.getRequired());
-        if (req.getUnique() != null)
-            node.put("unique", req.getUnique());
-        if (req.getHidden() != null)
-            node.put("hidden", req.getHidden());
-        if (req.getReadOnly() != null)
-            node.put("readOnly", req.getReadOnly());
-        if (req.getSearchable() != null)
-            node.put("searchable", req.getSearchable());
-
-        if (req.getMinValue() != null)
-            node.put("minValue", req.getMinValue());
-        if (req.getMaxValue() != null)
-            node.put("maxValue", req.getMaxValue());
-        if (req.getStep() != null)
-            node.put("step", req.getStep());
-        if (req.getPrecision() != null)
-            node.put("precision", req.getPrecision());
-
-        String trueLabel = trimToNull(req.getTrueLabel());
-        if (trueLabel != null)
-            node.put("trueLabel", trueLabel);
-        String falseLabel = trimToNull(req.getFalseLabel());
-        if (falseLabel != null)
-            node.put("falseLabel", falseLabel);
-
-        if (!isBlank(lovKey))
-            node.put("lovKey", lovKey.trim());
-
-        return node.toString();
+        return AttributeStructureJsonSupport.toJson(objectMapper,
+                new AttributeStructureJsonSupport.AttributeStructureSpec(
+                        req.getDisplayName(),
+                        req.getDataType(),
+                        req.getDescription(),
+                        req.getAttributeField(),
+                        req.getUnit(),
+                        req.getDefaultValue(),
+                        req.getRequired(),
+                        req.getUnique(),
+                        req.getHidden(),
+                        req.getReadOnly(),
+                        req.getSearchable(),
+                        req.getMinValue(),
+                        req.getMaxValue(),
+                        req.getStep(),
+                        req.getPrecision(),
+                        req.getTrueLabel(),
+                        req.getFalseLabel(),
+                        lovKey));
     }
 
     private String resolveLovBindingKeyForCreate(MetaAttributeUpsertRequestDto req,
@@ -437,15 +408,7 @@ public class MetaAttributeManageService {
     }
 
     private boolean isEnumLike(String dataType) {
-        if (dataType == null) {
-            return false;
-        }
-        String normalized = dataType.trim();
-        if (normalized.isEmpty()) {
-            return false;
-        }
-        String lower = normalized.toLowerCase(Locale.ROOT);
-        return "enum".equals(lower) || "multi-enum".equals(lower) || "multi_enum".equals(lower);
+        return AttributeStructureJsonSupport.isEnumLike(dataType);
     }
 
     private int normalizePreviewCount(Integer count) {
