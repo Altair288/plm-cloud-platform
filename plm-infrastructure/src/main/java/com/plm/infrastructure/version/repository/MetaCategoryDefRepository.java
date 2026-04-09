@@ -18,6 +18,16 @@ public interface MetaCategoryDefRepository extends JpaRepository<MetaCategoryDef
     Optional<MetaCategoryDef> findByBusinessDomainAndCodeKey(String businessDomain, String codeKey);
     boolean existsByBusinessDomainAndCodeKey(String businessDomain, String codeKey);
 
+        @Query("""
+            select count(d)
+            from MetaCategoryDef d
+            where d.businessDomain = :businessDomain
+              and d.id in :ids
+              and (d.status is null or lower(d.status) <> 'deleted')
+            """)
+        long countActiveByBusinessDomainAndIdIn(@Param("businessDomain") String businessDomain,
+                            @Param("ids") Collection<UUID> ids);
+
     @Query("select d from MetaCategoryDef d where d.businessDomain = :businessDomain and d.codeKey in :codeKeys")
     List<MetaCategoryDef> findByBusinessDomainAndCodeKeyIn(
             @Param("businessDomain") String businessDomain,

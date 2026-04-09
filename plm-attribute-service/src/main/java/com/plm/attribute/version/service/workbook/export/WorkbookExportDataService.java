@@ -13,6 +13,7 @@ import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;
 import com.plm.common.version.domain.MetaLovDef;
 import com.plm.common.version.domain.MetaLovVersion;
+import com.plm.infrastructure.version.repository.CategoryHierarchyRepository;
 import com.plm.infrastructure.version.repository.MetaAttributeDefRepository;
 import com.plm.infrastructure.version.repository.MetaAttributeVersionRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
@@ -42,6 +43,7 @@ import java.util.UUID;
 public class WorkbookExportDataService {
 
     private final MetaCategoryGenericQueryService categoryGenericQueryService;
+    private final CategoryHierarchyRepository categoryHierarchyRepository;
     private final MetaCategoryDefRepository categoryDefRepository;
     private final MetaCategoryVersionRepository categoryVersionRepository;
     private final MetaAttributeDefRepository attributeDefRepository;
@@ -51,6 +53,7 @@ public class WorkbookExportDataService {
     private final ObjectMapper objectMapper;
 
     public WorkbookExportDataService(MetaCategoryGenericQueryService categoryGenericQueryService,
+                                     CategoryHierarchyRepository categoryHierarchyRepository,
                                      MetaCategoryDefRepository categoryDefRepository,
                                      MetaCategoryVersionRepository categoryVersionRepository,
                                      MetaAttributeDefRepository attributeDefRepository,
@@ -59,6 +62,7 @@ public class WorkbookExportDataService {
                                      MetaLovVersionRepository lovVersionRepository,
                                      ObjectMapper objectMapper) {
         this.categoryGenericQueryService = Objects.requireNonNull(categoryGenericQueryService, "categoryGenericQueryService");
+                        this.categoryHierarchyRepository = Objects.requireNonNull(categoryHierarchyRepository, "categoryHierarchyRepository");
         this.categoryDefRepository = Objects.requireNonNull(categoryDefRepository, "categoryDefRepository");
         this.categoryVersionRepository = Objects.requireNonNull(categoryVersionRepository, "categoryVersionRepository");
         this.attributeDefRepository = Objects.requireNonNull(attributeDefRepository, "attributeDefRepository");
@@ -80,29 +84,20 @@ public class WorkbookExportDataService {
                 resolved.add(categoryId);
                 continue;
             }
-            MetaCategorySubtreeRequestDto subtreeRequest = new MetaCategorySubtreeRequestDto();
-            subtreeRequest.setParentId(categoryId);
-            subtreeRequest.setIncludeRoot(true);
-            subtreeRequest.setMaxDepth(-1);
-            subtreeRequest.setStatus("ALL");
-            subtreeRequest.setMode("FLAT");
-            subtreeRequest.setNodeLimit(10000);
-            MetaCategorySubtreeResponseDto subtree = categoryGenericQueryService.subtree(subtreeRequest);
-            if (Boolean.TRUE.equals(subtree.getTruncated())) {
-                throw new IllegalArgumentException("workbook export scope truncated by nodeLimit for categoryId=" + categoryId);
-            }
-            if (subtree.getData() instanceof List<?> rows) {
-                for (Object row : rows) {
-                    if (row instanceof MetaCategorySubtreeFlatNodeDto node && node.getId() != null) {
-                        resolved.add(node.getId());
-                    }
-                }
-            }
+            resolved.addAll(categoryHierarchyRepository.findDescendantIdsIncludingSelf(categoryId));
         }
         if (resolved.isEmpty()) {
             throw new IllegalArgumentException("no categories resolved for export scope");
         }
         return new ArrayList<>(resolved);
+    }
+
+    public ExportEstimate estimateRows(String businessDomain,
+                                       Collection<UUID> categoryIds) {
+        long categoryRows = categoryIds.isEmpty() ? 0L : categoryDefRepository.countActiveByBusinessDomainAndIdIn(businessDomain, categoryIds);
+        long attributeRows = categoryIds.isEmpty() ? 0L : attributeDefRepository.countActiveByBusinessDomainAndCategoryDefIdIn(businessDomain, categoryIds);
+        long enumOptionRows = categoryIds.isEmpty() ? 0L : lovVersionRepository.countActiveLatestOptionRowsByBusinessDomainAndCategoryDefIds(businessDomain, categoryIds);
+        return new ExportEstimate(toIntExact(categoryRows, "categoryRows"), toIntExact(attributeRows, "attributeRows"), toIntExact(enumOptionRows, "enumOptionRows"));
     }
 
     public WorkbookExportSupport.ExportDataBundle loadData(String businessDomain,
@@ -480,6 +475,17 @@ public class WorkbookExportDataService {
 
     private String defaultString(String value) {
         return value == null ? "" : value;
+    }
+
+    private int toIntExact(long value,
+                           String fieldName) {
+        if (value > Integer.MAX_VALUE) {
+            throw new IllegalStateException("workbook export estimate overflow: field=" + fieldName + ", value=" + value);
+        }
+        return (int) value;
+    }
+
+    public record ExportEstimate(int categoryRows, int attributeRows, int enumOptionRows) {
     }
 
     private record ParsedLovValue(String code, String name, String label, Integer order, Boolean disabled) {

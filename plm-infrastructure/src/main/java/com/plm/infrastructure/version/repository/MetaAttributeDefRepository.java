@@ -50,6 +50,16 @@ public interface MetaAttributeDefRepository extends JpaRepository<MetaAttributeD
     Optional<MetaAttributeDef> findActiveByCategoryDefAndKey(@Param("categoryDef") MetaCategoryDef categoryDef,
                                                               @Param("key") String key);
 
+                @Query("""
+                                                select count(d)
+                                                from MetaAttributeDef d
+                                                where d.businessDomain = :businessDomain
+                                                        and d.categoryDef.id in :categoryDefIds
+                                                        and (d.status is null or lower(d.status) <> 'deleted')
+                                                """)
+                long countActiveByBusinessDomainAndCategoryDefIdIn(@Param("businessDomain") String businessDomain,
+                                                                                                                                                                                                                         @Param("categoryDefIds") Collection<UUID> categoryDefIds);
+
     List<MetaAttributeDef> findByCategoryDefAndKeyIn(MetaCategoryDef categoryDef, Collection<String> keys);
     List<MetaAttributeDef> findByCategoryDefIdIn(Collection<UUID> categoryDefIds);
 

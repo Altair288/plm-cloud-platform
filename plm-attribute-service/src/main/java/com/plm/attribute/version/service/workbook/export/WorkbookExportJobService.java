@@ -62,16 +62,16 @@ public class WorkbookExportJobService {
     public WorkbookExportPlanResponseDto plan(WorkbookExportStartRequestDto request) {
         WorkbookExportStartRequestDto normalized = schemaService.normalizeRequest(request);
         List<UUID> scopeCategoryIds = dataService.resolveScopeCategoryIds(normalized);
-        WorkbookExportSupport.ExportDataBundle dataBundle = dataService.loadData(normalized.getBusinessDomain(), scopeCategoryIds);
+        WorkbookExportDataService.ExportEstimate estimateResult = dataService.estimateRows(normalized.getBusinessDomain(), scopeCategoryIds);
 
         WorkbookExportPlanResponseDto response = new WorkbookExportPlanResponseDto();
         response.setNormalizedRequest(normalized);
         response.setWarnings(List.of());
 
         WorkbookExportPlanResponseDto.EstimateDto estimate = new WorkbookExportPlanResponseDto.EstimateDto();
-        estimate.setCategoryRows(dataBundle.categories().size());
-        estimate.setAttributeRows(dataBundle.attributes().size());
-        estimate.setEnumOptionRows(dataBundle.enumOptions().size());
+        estimate.setCategoryRows(estimateResult.categoryRows());
+        estimate.setAttributeRows(estimateResult.attributeRows());
+        estimate.setEnumOptionRows(estimateResult.enumOptionRows());
         response.setEstimate(estimate);
         return response;
     }

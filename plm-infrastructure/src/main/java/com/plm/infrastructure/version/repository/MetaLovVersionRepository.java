@@ -18,6 +18,23 @@ public interface MetaLovVersionRepository extends JpaRepository<MetaLovVersion, 
 
   List<MetaLovVersion> findByLovDefInAndIsLatestTrue(Collection<MetaLovDef> defs);
 
+    @Query(value = """
+            select coalesce(sum(jsonb_array_length(coalesce(v.value_json -> 'values', '[]'::jsonb))), 0)
+            from plm_meta.meta_lov_version v
+            join plm_meta.meta_lov_def d on d.id = v.lov_def_id
+            join plm_meta.meta_attribute_def a on a.id = d.attribute_def_id
+            join plm_meta.meta_category_def c on c.id = a.category_def_id
+            where v.is_latest = true
+              and (v.status is null or lower(v.status) <> 'deleted')
+              and (d.status is null or lower(d.status) <> 'deleted')
+              and (a.status is null or lower(a.status) <> 'deleted')
+              and (c.status is null or lower(c.status) <> 'deleted')
+              and c.business_domain = :businessDomain
+              and c.id in (:categoryDefIds)
+            """, nativeQuery = true)
+    long countActiveLatestOptionRowsByBusinessDomainAndCategoryDefIds(@Param("businessDomain") String businessDomain,
+                                                                      @Param("categoryDefIds") Collection<UUID> categoryDefIds);
+
     @Modifying
     @Query("""
             update MetaLovVersion v
