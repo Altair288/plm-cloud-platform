@@ -67,3 +67,18 @@
 - AuthFlowControllerIT 已补充对验证码成功消费结果的断言，确认注册成功后验证码状态为 USED，且 consumed_by_user_id 正确回填为新用户 ID。
 - 当前 VS Code 内置测试结果：AuthFlowControllerIT 为 12 passed / 0 failed。
 - 已同步更新 user-workspace-rbac-database-design-draft.md、user-workspace-auth-basic-flow-design-draft.md 和 system-user-api-document/auth-service-frontend-integration.md，使实现、数据库设计和前端联调文档保持一致。
+
+## 2026-04-13 gateway 本地多服务访问配置草案与实现
+
+- 已确定本地开发端口规划：plm-gateway 使用 8080，plm-auth-service 使用 8081，plm-attribute-service 使用 8082。
+- 已确认 auth-service 的对外接口统一前缀为 /auth/**，attribute-service 的对外接口统一前缀为 /api/meta/**。
+- 已在 plm-gateway 下新增 1. gateway-document/gateway-auth-attribute-routing-design-draft.md，用于记录本地开发阶段的 gateway 路由设计草案。
+- 已在 plm-gateway 下新增 1. gateway-document/Implementing-procedural-memory.md，用于记录 gateway 自身实现过程记忆。
+- 当前 gateway 路由策略为保留原始路径转发：`/auth/** -> http://localhost:8081`，`/api/meta/** -> http://localhost:8082`。
+- 当前阶段不引入 StripPrefix、服务发现、统一鉴权过滤器和限流，先完成本地前后端联调闭环。
+- 父 pom 已引入 spring-cloud-dependencies 2025.0.0 BOM，gateway 已切换为不显式指定 spring-cloud-starter-gateway-server-webflux 版本的依赖写法。
+- gateway 已补全本地联调用的全局 CORS 配置，允许 localhost 与 127.0.0.1 不同端口访问 8080 网关。
+- gateway 已新增终端访问日志 GlobalFilter，用于直接观察接口调用路径、命中 routeId、状态码和耗时。
+- Spring Cloud Gateway 2025.0.x 下 dev 配置 key 已迁移到 `spring.cloud.gateway.server.webflux.*`，避免运行期 properties migration 警告。
+- gateway 已新增最小 JSON 异常处理：未命中路由返回 `GATEWAY_ROUTE_NOT_FOUND`，下游不可达返回 `GATEWAY_DOWNSTREAM_UNAVAILABLE`，下游已返回的业务错误继续原样透传。
+- auth 前端对接文档与 attribute API 文档已补充“前端统一通过 gateway 8080 访问”的 base URL 约定。

@@ -11,6 +11,12 @@
 > - 分类编码、分类名称、属性编码、枚举值编码均按 `businessDomain` 维度唯一。
 > - 属性名称、枚举值名称允许在不同分类下重复，但编码不允许在同一 `businessDomain` 下重复。
 
+本地前端联调约定：
+
+- 前端统一通过 gateway 访问，base URL 使用 `http://localhost:8080`
+- attribute-service 对外路径保持 `'/api/meta/**'`
+- 不再建议前端直接请求 `http://localhost:8082`
+
 ---
 
 ## 功能列表（是否实现）
@@ -43,6 +49,12 @@
 ```
 
 未知异常返回 500：`code = INTERNAL_ERROR`。
+
+如果请求是经 gateway 进入：
+
+- attribute-service 自己返回的业务错误体会原样透传
+- gateway 未命中路由时返回 404 + `GATEWAY_ROUTE_NOT_FOUND`
+- gateway 命中 attribute 路由但下游不可达时返回 502 + `GATEWAY_DOWNSTREAM_UNAVAILABLE`
 
 ---
 

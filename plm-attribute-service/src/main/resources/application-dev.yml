@@ -1,3 +1,6 @@
+server:
+  port: 8082
+
 # Dev profile database configuration for Flyway migrations
 # 使用环境变量可覆盖下方值 (SPRING_DATASOURCE_URL 等)
 

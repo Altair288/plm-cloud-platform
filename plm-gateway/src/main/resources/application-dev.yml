@@ -1,0 +1,48 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: plm-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          globalcors:
+            add-to-simple-url-handler-mapping: true
+            cors-configurations:
+              '[/**]':
+                allowedOriginPatterns:
+                  - "http://localhost:*"
+                  - "https://localhost:*"
+                  - "http://127.0.0.1:*"
+                  - "https://127.0.0.1:*"
+                allowedMethods:
+                  - GET
+                  - POST
+                  - PUT
+                  - DELETE
+                  - PATCH
+                  - OPTIONS
+                allowedHeaders:
+                  - "*"
+                exposedHeaders:
+                  - "Content-Disposition"
+                allowCredentials: true
+                maxAge: 3600
+          routes:
+            - id: auth-service
+              uri: http://localhost:8081
+              predicates:
+                - Path=/auth/**
+            - id: attribute-service
+              uri: http://localhost:8082
+              predicates:
+                - Path=/api/meta/**
+
+logging:
+  level:
+    root: info
+    '[com.plm.gateway.filter.GatewayAccessLogFilter]': INFO
+    '[org.springframework.cloud.gateway]': INFO
+    '[reactor.netty.http.client]': WARN

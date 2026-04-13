@@ -1,3 +1,6 @@
+server:
+  port: 8081
+
 plm:
   datasource:
     url: jdbc:postgresql://localhost:5432/plm

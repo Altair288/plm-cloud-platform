@@ -4,6 +4,12 @@
 
 本文档面向前端联调用途，覆盖当前 auth-service 已实现并通过集成测试验证的注册邮箱验证码发送、账号注册、密码登录、workspace 创建、workspace 切换、当前会话读取与退出能力。
 
+本地联调时，前端统一通过 gateway 访问 auth 接口：
+
+- base URL：`http://localhost:8080`
+- auth 路径前缀：`/auth/**`
+- 不再建议前端直接请求 `http://localhost:8081`
+
 当前接口语义有 4 个前置约束，前端必须按此理解：
 
 1. 注册前必须先发送并校验邮箱验证码。
@@ -84,6 +90,12 @@
 1. code 作为分支判断主依据。
 2. message 用于兜底提示。
 3. status 用于统一登录失效、权限失败、冲突态跳转。
+
+通过 gateway 调用时，auth-service 返回的 4xx/5xx 业务错误会原样透传；只有 gateway 自己生成的错误会额外出现以下 code：
+
+- `GATEWAY_ROUTE_NOT_FOUND`：前端请求了未被 gateway 配置的路径，通常对应 404
+- `GATEWAY_DOWNSTREAM_UNAVAILABLE`：gateway 已命中路由，但下游 auth-service 未启动或不可达，通常对应 502
+- `GATEWAY_INTERNAL_ERROR`：gateway 自身内部异常，通常对应 500
 
 ## 4. 核心流程
 
