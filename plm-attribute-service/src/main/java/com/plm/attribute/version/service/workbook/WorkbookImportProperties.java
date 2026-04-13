@@ -1,5 +1,10 @@
 package com.plm.attribute.version.service.workbook;
 
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+@Component
+@ConfigurationProperties(prefix = "plm.workbook-import")
 public class WorkbookImportProperties {
 
     private Async async = new Async();

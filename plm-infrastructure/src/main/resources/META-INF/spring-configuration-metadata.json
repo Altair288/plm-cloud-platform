@@ -1,0 +1,30 @@
+{
+  "groups": [
+    {
+      "name": "plm",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "plm.datasource",
+      "type": "org.springframework.boot.autoconfigure.jdbc.DataSourceProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "plm.datasource.url",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.username",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.password",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.driver-class-name",
+      "type": "java.lang.String"
+    }
+  ]
+}

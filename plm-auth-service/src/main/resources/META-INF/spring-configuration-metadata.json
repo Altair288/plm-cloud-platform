@@ -1,0 +1,74 @@
+{
+  "groups": [
+    {
+      "name": "plm",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "plm.datasource",
+      "type": "org.springframework.boot.autoconfigure.jdbc.DataSourceProperties"
+    },
+    {
+      "name": "plm.auth",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "plm.auth.email",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "plm.auth.email.verification",
+      "type": "com.plm.auth.config.AuthEmailVerificationProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "plm.datasource.url",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.username",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.password",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.driver-class-name",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.email.verification.enabled",
+      "type": "java.lang.Boolean"
+    },
+    {
+      "name": "plm.auth.email.verification.api-url",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.email.verification.api-key",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.email.verification.from-email",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.email.verification.from-name",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.email.verification.subject",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.email.verification.expire-in-seconds",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "plm.auth.email.verification.resend-cooldown-seconds",
+      "type": "java.lang.Long"
+    }
+  ]
+}

@@ -2,6 +2,7 @@ package com.plm.infrastructure.migration;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 /**
  * 独立启动类：仅用于本地/CI 验证双库（plm_meta, plm）迁移是否成功。
@@ -10,6 +11,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *   mvn -pl plm-infrastructure spring-boot:run -Dspring-boot.run.profiles=dev
  */
 @SpringBootApplication(scanBasePackages = {"com.plm.infrastructure"})
+@ConfigurationPropertiesScan(basePackages = {"com.plm.infrastructure"})
 public class PlmMigrationApplication {
     public static void main(String[] args) {
         SpringApplication.run(PlmMigrationApplication.class, args);

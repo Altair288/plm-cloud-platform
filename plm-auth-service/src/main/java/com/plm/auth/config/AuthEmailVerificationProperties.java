@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 public class AuthEmailVerificationProperties {
     private boolean enabled = true;
     private String apiUrl = "https://api.resend.com/emails";
-    private String apiKey = "re_j4U4Uho7_6UUe52UvpqQpD2rAm71g4tmV";
+    private String apiKey ;
     private String fromEmail;
     private String fromName = "PLM Cloud";
     private String subject = "PLM Cloud Email Verification Code";

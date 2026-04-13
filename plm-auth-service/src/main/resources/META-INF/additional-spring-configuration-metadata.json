@@ -1,0 +1,36 @@
+{
+  "groups": [
+    {
+      "name": "plm.datasource",
+      "type": "org.springframework.boot.autoconfigure.jdbc.DataSourceProperties",
+      "sourceType": "com.plm.infrastructure.config.FlywayConfig"
+    },
+    {
+      "name": "plm.auth.email.verification",
+      "type": "com.plm.auth.config.AuthEmailVerificationProperties",
+      "sourceType": "com.plm.auth.config.AuthEmailVerificationProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "plm.datasource.url",
+      "type": "java.lang.String",
+      "description": "PostgreSQL datasource URL used by the shared Flyway and JPA datasource."
+    },
+    {
+      "name": "plm.datasource.username",
+      "type": "java.lang.String",
+      "description": "Username for the shared datasource."
+    },
+    {
+      "name": "plm.datasource.password",
+      "type": "java.lang.String",
+      "description": "Password for the shared datasource."
+    },
+    {
+      "name": "plm.datasource.driver-class-name",
+      "type": "java.lang.String",
+      "description": "JDBC driver class name for the shared datasource."
+    }
+  ]
+}

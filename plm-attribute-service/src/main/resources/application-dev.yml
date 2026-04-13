@@ -10,8 +10,6 @@ plm:
     username: admin
     password: p@ssw0rd@2025
     driver-class-name: org.postgresql.Driver
-  flyway:
-    enabled: true
   workbook-import:
     async:
       thread-name-prefix: workbook-import-
@@ -31,7 +29,7 @@ spring:
     show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        '[format_sql]': true
         '[jdbc.batch_size]': 500
         '[order_inserts]': true
         '[order_updates]': true
@@ -39,8 +37,8 @@ spring:
 
 logging:
   level:
-    org.hibernate.SQL: WARN
-    org.hibernate.type.descriptor.sql: WARN
+    '[org.hibernate.SQL]': WARN
+    '[org.hibernate.type.descriptor.sql]': WARN
     root: info
     '[com.plm.attribute.version.service.MetaAttributeImportService]': DEBUG
 

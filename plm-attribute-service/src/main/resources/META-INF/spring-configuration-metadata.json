@@ -1,0 +1,78 @@
+{
+  "groups": [
+    {
+      "name": "plm",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "plm.datasource",
+      "type": "org.springframework.boot.autoconfigure.jdbc.DataSourceProperties"
+    },
+    {
+      "name": "plm.workbook-import",
+      "type": "com.plm.attribute.version.service.workbook.WorkbookImportProperties"
+    },
+    {
+      "name": "plm.workbook-import.async",
+      "type": "com.plm.attribute.version.service.workbook.WorkbookImportProperties$Async"
+    },
+    {
+      "name": "plm.workbook-import.runtime",
+      "type": "com.plm.attribute.version.service.workbook.WorkbookImportProperties$Runtime"
+    }
+  ],
+  "properties": [
+    {
+      "name": "plm.datasource.url",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.username",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.password",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.datasource.driver-class-name",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.workbook-import.async.thread-name-prefix",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.workbook-import.async.core-pool-size",
+      "type": "java.lang.Integer"
+    },
+    {
+      "name": "plm.workbook-import.async.max-pool-size",
+      "type": "java.lang.Integer"
+    },
+    {
+      "name": "plm.workbook-import.async.queue-capacity",
+      "type": "java.lang.Integer"
+    },
+    {
+      "name": "plm.workbook-import.runtime.cleanup-interval-millis",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "plm.workbook-import.runtime.emitter-timeout-millis",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "plm.workbook-import.runtime.session-retention-millis",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "plm.workbook-import.runtime.snapshot-retention-millis",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "plm.workbook-import.runtime.terminal-job-retention-millis",
+      "type": "java.lang.Long"
+    }
+  ]
+}
