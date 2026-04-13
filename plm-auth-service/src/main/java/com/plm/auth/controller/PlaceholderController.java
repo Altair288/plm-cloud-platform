@@ -6,5 +6,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class PlaceholderController {
     @GetMapping("/auth/ping")
-    public String ping() {return "auth ok";}
+    public String ping() {
+        return "auth ok";
+    }
 }

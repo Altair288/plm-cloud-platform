@@ -1,0 +1,135 @@
+package com.plm.auth.service;
+
+import com.plm.auth.exception.AuthBusinessException;
+import com.plm.auth.support.AuthDomainConstants;
+import com.plm.auth.support.AuthStpKit;
+import com.plm.auth.util.AuthNormalizer;
+import com.plm.common.api.dto.auth.AuthPasswordLoginRequestDto;
+import com.plm.common.api.dto.auth.AuthPasswordLoginResponseDto;
+import com.plm.common.domain.auth.LoginAudit;
+import com.plm.common.domain.auth.UserAccount;
+import com.plm.common.domain.auth.UserCredential;
+import com.plm.infrastructure.repository.auth.LoginAuditRepository;
+import com.plm.infrastructure.repository.auth.UserAccountRepository;
+import com.plm.infrastructure.repository.auth.UserCredentialRepository;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.OffsetDateTime;
+
+@Service
+public class AuthLoginService {
+    private final UserAccountRepository userAccountRepository;
+    private final UserCredentialRepository userCredentialRepository;
+    private final LoginAuditRepository loginAuditRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final AuthQueryService authQueryService;
+
+    public AuthLoginService(UserAccountRepository userAccountRepository,
+                            UserCredentialRepository userCredentialRepository,
+                            LoginAuditRepository loginAuditRepository,
+                            PasswordEncoder passwordEncoder,
+                            AuthQueryService authQueryService) {
+        this.userAccountRepository = userAccountRepository;
+        this.userCredentialRepository = userCredentialRepository;
+        this.loginAuditRepository = loginAuditRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.authQueryService = authQueryService;
+    }
+
+    @Transactional
+    public AuthPasswordLoginResponseDto login(AuthPasswordLoginRequestDto request, HttpServletRequest servletRequest) {
+        String identifier = AuthNormalizer.normalizeIdentifier(request.getIdentifier());
+        String password = request.getPassword();
+        if (identifier == null) {
+            throw new IllegalArgumentException("identifier is required");
+        }
+        if (password == null || password.isBlank()) {
+            throw new IllegalArgumentException("password is required");
+        }
+
+        UserAccount user = userAccountRepository.findByIdentifier(identifier).orElse(null);
+        if (user == null) {
+            recordLoginAudit(null, AuthDomainConstants.LOGIN_RESULT_FAILED, servletRequest, "INVALID_CREDENTIALS");
+            throw new AuthBusinessException("AUTH_INVALID_CREDENTIALS", HttpStatus.UNAUTHORIZED, "用户名或密码错误");
+        }
+        if (!AuthDomainConstants.USER_STATUS_ACTIVE.equalsIgnoreCase(user.getStatus())) {
+            recordLoginAudit(user, AuthDomainConstants.LOGIN_RESULT_FAILED, servletRequest, "ACCOUNT_NOT_ACTIVE");
+            throw new AuthBusinessException("ACCOUNT_NOT_ACTIVE", HttpStatus.FORBIDDEN, "account is not active");
+        }
+
+        UserCredential credential = userCredentialRepository.findByUserIdAndCredentialType(user.getId(), AuthDomainConstants.CREDENTIAL_TYPE_PASSWORD)
+                .orElse(null);
+        if (credential == null || !AuthDomainConstants.USER_STATUS_ACTIVE.equalsIgnoreCase(credential.getStatus())) {
+            recordLoginAudit(user, AuthDomainConstants.LOGIN_RESULT_FAILED, servletRequest, "CREDENTIAL_NOT_ACTIVE");
+            throw new AuthBusinessException("AUTH_INVALID_CREDENTIALS", HttpStatus.UNAUTHORIZED, "用户名或密码错误");
+        }
+        if (!passwordEncoder.matches(password, credential.getSecretHash())) {
+            recordLoginAudit(user, AuthDomainConstants.LOGIN_RESULT_FAILED, servletRequest, "INVALID_CREDENTIALS");
+            throw new AuthBusinessException("AUTH_INVALID_CREDENTIALS", HttpStatus.UNAUTHORIZED, "用户名或密码错误");
+        }
+
+        AuthStpKit.PLATFORM.login(user.getId());
+        AuthStpKit.clearCurrentWorkspaceMemberId();
+        if (AuthStpKit.WORKSPACE.isLogin()) {
+            AuthStpKit.WORKSPACE.logout();
+        }
+
+        user.setLastLoginAt(OffsetDateTime.now());
+        user.setUpdatedBy(user.getId().toString());
+        userAccountRepository.save(user);
+        credential.setLastVerifiedAt(OffsetDateTime.now());
+        credential.setUpdatedBy(user.getId().toString());
+        userCredentialRepository.save(credential);
+        recordLoginAudit(user, AuthDomainConstants.LOGIN_RESULT_SUCCESS, servletRequest, null);
+
+        AuthPasswordLoginResponseDto response = new AuthPasswordLoginResponseDto();
+        response.setPlatformToken(AuthStpKit.PLATFORM.getTokenValue());
+        response.setPlatformTokenName(AuthStpKit.PLATFORM.getTokenName());
+        response.setUser(authQueryService.toUserSummary(user));
+        response.setWorkspaceOptions(authQueryService.listWorkspaceOptions(user.getId()));
+        response.setDefaultWorkspace(authQueryService.getDefaultWorkspace(user.getId()));
+        response.setCurrentWorkspace(authQueryService.getCurrentWorkspaceContext(user.getId()));
+        return response;
+    }
+
+    public void logout() {
+        if (AuthStpKit.PLATFORM.isLogin()) {
+            AuthStpKit.clearCurrentWorkspaceMemberId();
+        }
+        if (AuthStpKit.WORKSPACE.isLogin()) {
+            AuthStpKit.WORKSPACE.logout();
+        }
+        if (AuthStpKit.PLATFORM.isLogin()) {
+            AuthStpKit.PLATFORM.logout();
+        }
+    }
+
+    private void recordLoginAudit(UserAccount user, String result, HttpServletRequest servletRequest, String failureReason) {
+        LoginAudit audit = new LoginAudit();
+        if (user != null) {
+            audit.setUserId(user.getId());
+        }
+        audit.setLoginType(AuthDomainConstants.LOGIN_TYPE_PLATFORM);
+        audit.setLoginResult(result);
+        audit.setLoginIp(resolveClientIp(servletRequest));
+        audit.setUserAgent(servletRequest == null ? null : servletRequest.getHeader("User-Agent"));
+        audit.setFailureReason(failureReason);
+        loginAuditRepository.save(audit);
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        if (request == null) {
+            return null;
+        }
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            int commaIndex = forwarded.indexOf(',');
+            return commaIndex >= 0 ? forwarded.substring(0, commaIndex).trim() : forwarded.trim();
+        }
+        return request.getRemoteAddr();
+    }
+}

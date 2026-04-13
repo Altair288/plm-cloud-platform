@@ -1,0 +1,32 @@
+plm:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/plm
+    username: admin
+    password: p@ssw0rd@2025
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+  auth:
+    email:
+      verification:
+        enabled: true
+        api-url: https://api.resend.com/emails
+        api-key: ${PLM_AUTH_RESEND_API_KEY:}
+        from-email: ${PLM_AUTH_RESEND_FROM_EMAIL:}
+        from-name: PLM Cloud
+        subject: PLM Cloud Email Verification Code
+        expire-in-seconds: 600
+        resend-cooldown-seconds: 60
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    root: info

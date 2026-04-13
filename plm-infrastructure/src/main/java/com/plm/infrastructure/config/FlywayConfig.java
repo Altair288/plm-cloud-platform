@@ -14,9 +14,10 @@ import jakarta.persistence.EntityManagerFactory;
 import org.springframework.context.annotation.Primary;
 
 /**
- * 单数据源 + 双 Flyway 配置。
- * 现在将原 plm_meta 与 plm 合并到一个数据库（同一个 URL）。
- * 仍然按照不同 schema (plm_meta, plm) 与不同迁移路径拆分逻辑。
+ * 单数据源 + 多 schema Flyway 配置。
+ * 当前所有 schema 仍落在同一个 PostgreSQL 数据库中。
+ * 迁移链已覆盖 plm_meta、旧 plm、plm_platform 与 plm_runtime。
+ * 其中 plm 作为历史 runtime 基线暂时保留，新实现逐步向 plm_platform / plm_runtime 收敛。
  *
  * application.yml 属性结构示例：
  * plm:
@@ -65,7 +66,7 @@ public class FlywayConfig {
 	public Flyway flyway(@Qualifier("mainDataSource") DataSource ds) {
 		Flyway flyway = Flyway.configure()
 			.dataSource(ds)
-			.schemas("plm_meta", "plm")
+			.schemas("plm_meta", "plm", "plm_platform", "plm_runtime")
 			.locations("classpath:db/migration")
 			.placeholderReplacement(false)
 			.baselineOnMigrate(false)

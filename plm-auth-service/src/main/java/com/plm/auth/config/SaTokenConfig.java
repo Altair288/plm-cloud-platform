@@ -8,7 +8,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.HandlerInterceptor;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import cn.dev33.satoken.stp.StpUtil;
+
+import com.plm.auth.support.AuthStpKit;
 
 @Configuration
 public class SaTokenConfig implements WebMvcConfigurer {
@@ -35,8 +36,8 @@ public class SaTokenConfig implements WebMvcConfigurer {
     static class AuthLoginInterceptor implements HandlerInterceptor {
         @Override
         public boolean preHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull Object handler) {
-            if (!StpUtil.isLogin()) {
-                StpUtil.checkLogin();
+            if (!AuthStpKit.PLATFORM.isLogin()) {
+                AuthStpKit.PLATFORM.checkLogin();
             }
             return true;
         }
