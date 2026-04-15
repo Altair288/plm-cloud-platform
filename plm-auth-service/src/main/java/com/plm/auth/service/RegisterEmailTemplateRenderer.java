@@ -47,6 +47,42 @@ public class RegisterEmailTemplateRenderer {
         return "Your PLM Cloud verification code is " + verificationCode + ". It will expire in " + minutes + " minutes.";
     }
 
+    public String renderTestEmail(String email, OffsetDateTime sentAt) {
+        String safeEmail = escapeHtml(email);
+        String safeSentAt = escapeHtml(sentAt.toString());
+        return """
+                <!DOCTYPE html>
+                <html lang=\"en\">
+                <head>
+                  <meta charset=\"UTF-8\" />
+                  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+                  <title>PLM Cloud Test Email</title>
+                </head>
+                <body style=\"margin:0;padding:0;background:#f3f5f8;font-family:Segoe UI,Arial,sans-serif;color:#1f2937;\">
+                  <div style=\"padding:32px 16px;\">
+                    <div style=\"max-width:560px;margin:0 auto;\">
+                      <div style=\"background:#ffffff;border:1px solid #dbe3ea;border-radius:24px;box-shadow:0 18px 48px rgba(15,23,42,0.08);overflow:hidden;\">
+                        <div style=\"padding:28px 28px 18px;text-align:center;border-bottom:1px solid #eef2f7;\">
+                          <div style=\"width:56px;height:56px;margin:0 auto 18px;border-radius:18px;background:linear-gradient(135deg,#0f172a,#2563eb);color:#ffffff;font-size:28px;line-height:56px;font-weight:700;\">P</div>
+                          <div style=\"font-size:30px;line-height:1.15;font-weight:700;color:#111827;\">Email Delivery Test</div>
+                          <div style=\"margin-top:12px;font-size:15px;line-height:1.7;color:#475569;\">This is a test email from PLM Cloud. The target mailbox <strong>%s</strong> has received the request successfully.</div>
+                        </div>
+                        <div style=\"padding:28px;\">
+                          <div style=\"font-size:14px;line-height:1.8;color:#475569;text-align:center;\">Sent at: <strong>%s</strong></div>
+                          <div style=\"margin-top:24px;padding-top:20px;border-top:1px solid #eef2f7;font-size:13px;line-height:1.8;color:#64748b;text-align:center;\">If you triggered this email yourself, the mail delivery path is working. If not, you can ignore this message.</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </body>
+                </html>
+                """.formatted(safeEmail, safeSentAt);
+    }
+
+    public String renderTestEmailText(String email, OffsetDateTime sentAt) {
+        return "PLM Cloud test email delivered to " + email + " at " + sentAt + ".";
+    }
+
     private String escapeHtml(String value) {
         return value
                 .replace("&", "&amp;")

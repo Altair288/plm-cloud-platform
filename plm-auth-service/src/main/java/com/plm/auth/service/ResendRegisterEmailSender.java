@@ -37,22 +37,62 @@ public class ResendRegisterEmailSender implements RegisterEmailSender {
 
     @Override
     public void sendRegisterVerificationEmail(String email, String verificationCode, OffsetDateTime expiresAt) {
+        sendEmail(
+                email,
+                properties.getSubject(),
+                templateRenderer.render(email, verificationCode, expiresAt),
+                templateRenderer.renderText(verificationCode, expiresAt),
+                "EMAIL_VERIFICATION_DISABLED",
+                "EMAIL_VERIFICATION_NOT_CONFIGURED",
+                "EMAIL_VERIFICATION_SEND_FAILED",
+                "email verification is disabled",
+                "resend email sender is not configured",
+                "failed to send verification email"
+        );
+    }
+
+    @Override
+    public void sendTestEmail(String email, OffsetDateTime sentAt) {
+        sendEmail(
+                email,
+                "PLM Cloud Email Delivery Test",
+                templateRenderer.renderTestEmail(email, sentAt),
+                templateRenderer.renderTestEmailText(email, sentAt),
+                "EMAIL_TEST_SEND_DISABLED",
+                "EMAIL_TEST_SEND_NOT_CONFIGURED",
+                "EMAIL_TEST_SEND_FAILED",
+                "email test sending is disabled",
+                "resend email sender is not configured",
+                "failed to send test email"
+        );
+    }
+
+    private void sendEmail(String email,
+                           String subject,
+                           String html,
+                           String text,
+                           String disabledCode,
+                           String notConfiguredCode,
+                           String sendFailedCode,
+                           String disabledMessage,
+                           String notConfiguredMessage,
+                           String sendFailedMessage) {
         if (!properties.isEnabled()) {
-            throw new AuthBusinessException("EMAIL_VERIFICATION_DISABLED", HttpStatus.SERVICE_UNAVAILABLE, "email verification is disabled");
+            throw new AuthBusinessException(disabledCode, HttpStatus.SERVICE_UNAVAILABLE, disabledMessage);
         }
 
         String apiKey = AuthNormalizer.trimToNull(properties.getApiKey());
         String fromEmail = AuthNormalizer.trimToNull(properties.getFromEmail());
         if (apiKey == null || fromEmail == null) {
-            throw new AuthBusinessException("EMAIL_VERIFICATION_NOT_CONFIGURED", HttpStatus.SERVICE_UNAVAILABLE, "resend email sender is not configured");
+            throw new AuthBusinessException(notConfiguredCode, HttpStatus.SERVICE_UNAVAILABLE, notConfiguredMessage);
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("from", formatFrom(properties.getFromName(), fromEmail));
         payload.put("to", List.of(email));
-        payload.put("subject", properties.getSubject());
-        payload.put("html", templateRenderer.render(email, verificationCode, expiresAt));
-        payload.put("text", templateRenderer.renderText(verificationCode, expiresAt));
+        payload.put("subject", subject);
+        payload.put("html", html);
+        payload.put("text", text);
 
         HttpRequest request = HttpRequest.newBuilder(URI.create(properties.getApiUrl()))
                 .header("Authorization", "Bearer " + apiKey)
@@ -63,13 +103,13 @@ public class ResendRegisterEmailSender implements RegisterEmailSender {
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new AuthBusinessException("EMAIL_VERIFICATION_SEND_FAILED", HttpStatus.BAD_GATEWAY, "failed to send verification email");
+                throw new AuthBusinessException(sendFailedCode, HttpStatus.BAD_GATEWAY, sendFailedMessage);
             }
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            throw new AuthBusinessException("EMAIL_VERIFICATION_SEND_FAILED", HttpStatus.BAD_GATEWAY, "failed to send verification email");
+            throw new AuthBusinessException(sendFailedCode, HttpStatus.BAD_GATEWAY, sendFailedMessage);
         } catch (IOException ex) {
-            throw new AuthBusinessException("EMAIL_VERIFICATION_SEND_FAILED", HttpStatus.BAD_GATEWAY, "failed to send verification email");
+            throw new AuthBusinessException(sendFailedCode, HttpStatus.BAD_GATEWAY, sendFailedMessage);
         }
     }
 

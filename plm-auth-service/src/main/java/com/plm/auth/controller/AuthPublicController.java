@@ -1,6 +1,7 @@
 package com.plm.auth.controller;
 
 import com.plm.auth.service.AuthLoginService;
+import com.plm.auth.service.AuthEmailTestService;
 import com.plm.auth.service.AuthRegistrationService;
 import com.plm.auth.service.RegisterEmailVerificationService;
 import com.plm.common.api.dto.auth.AuthPasswordLoginRequestDto;
@@ -9,6 +10,8 @@ import com.plm.common.api.dto.auth.AuthRegisterRequestDto;
 import com.plm.common.api.dto.auth.AuthRegisterResponseDto;
 import com.plm.common.api.dto.auth.AuthSendRegisterEmailCodeRequestDto;
 import com.plm.common.api.dto.auth.AuthSendRegisterEmailCodeResponseDto;
+import com.plm.common.api.dto.auth.AuthSendTestEmailRequestDto;
+import com.plm.common.api.dto.auth.AuthSendTestEmailResponseDto;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,13 +23,16 @@ public class AuthPublicController {
     private final AuthRegistrationService authRegistrationService;
     private final AuthLoginService authLoginService;
     private final RegisterEmailVerificationService registerEmailVerificationService;
+    private final AuthEmailTestService authEmailTestService;
 
     public AuthPublicController(AuthRegistrationService authRegistrationService,
                                 AuthLoginService authLoginService,
-                                RegisterEmailVerificationService registerEmailVerificationService) {
+                                RegisterEmailVerificationService registerEmailVerificationService,
+                                AuthEmailTestService authEmailTestService) {
         this.authRegistrationService = authRegistrationService;
         this.authLoginService = authLoginService;
         this.registerEmailVerificationService = registerEmailVerificationService;
+        this.authEmailTestService = authEmailTestService;
     }
 
     @PostMapping("/auth/public/register/email-code")
@@ -34,6 +40,13 @@ public class AuthPublicController {
             @RequestBody AuthSendRegisterEmailCodeRequestDto request
     ) {
         return ResponseEntity.ok(registerEmailVerificationService.sendCode(request));
+    }
+
+    @PostMapping("/auth/public/test/email-send")
+    public ResponseEntity<AuthSendTestEmailResponseDto> sendTestEmail(
+            @RequestBody AuthSendTestEmailRequestDto request
+    ) {
+        return ResponseEntity.ok(authEmailTestService.sendTestEmail(request));
     }
 
     @PostMapping("/auth/public/register")
