@@ -13,7 +13,7 @@ plm:
         enabled: true
         api-url: https://api.resend.com/emails
         api-key: ${PLM_AUTH_RESEND_API_KEY:}
-        from-email: ${PLM_AUTH_RESEND_FROM_EMAIL:}
+        from-email: ${PLM_AUTH_RESEND_FROM_EMAIL:no-reply@altair288.eu.org}
         from-name: PLM Cloud
         subject: PLM Cloud Email Verification Code
         expire-in-seconds: 600
