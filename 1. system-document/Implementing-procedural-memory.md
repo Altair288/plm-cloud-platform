@@ -90,3 +90,22 @@
 - `workspace_count` 表示用户当前活跃 workspace 数，供前端处理“用户后来删光所有 workspace”的空态分支，避免停留在空白页。
 - 登录与 `/auth/me` 查询链路已接入 `UserWorkspaceStateService`，会基于 `workspace_member` 活跃记录做一次自愈同步，降低未来删除或迁移逻辑导致字段漂移的风险。
 - `AuthUserSummaryDto` 与前端 `auth.ts` 类型已同步增加 `isFirstLogin`、`workspaceCount` 字段。
+
+## 2026-04-16 workspace 类型 / 语言 / 时区目录化
+
+- 已通过 `V37__auth_workspace_type_locale_timezone_catalogs.sql` 新增 `plm_platform.workspace_type`、`workspace_locale`、`workspace_timezone` 三张目录表，并为 `workspace.workspace_type`、`default_locale`、`default_timezone` 增加外键约束。
+- workspace 类型首批固定为 `TEAM`、`PERSONAL`、`LEARNING`；语言首批为 `zh-CN`、`en-US`；时区首批为 `Asia/Shanghai`、`UTC`、`America/Los_Angeles`。
+- 历史 `workspace.workspace_type = DEFAULT` 已在迁移中统一映射到 `TEAM`，随后再补外键，避免旧数据挡住上线。
+- auth-service 新增公开引导接口 `GET /auth/public/workspace-bootstrap-options`，前端 workspace 创建页必须通过该接口读取可选类型、语言和时区，不再本地硬编码。
+- `AuthWorkspaceOptionDto` 与 `AuthWorkspaceSessionResponseDto` 已补充 `workspaceType`、`defaultLocale`、`defaultTimezone`，登录后的 `workspaceOptions`、`defaultWorkspace`、`currentWorkspace` 现在都会返回这三项信息。
+- `WorkspaceCommandService` 已切换为通过 `WorkspaceDictionaryService` 解析和校验目录 code，非法 `workspaceType` / locale / timezone 会直接拒绝。
+- 前端 `WorkspaceCreationOnboarding` 已改为基于 bootstrap 接口动态渲染 workspace type 卡片、语言和时区选项，`login/page.tsx` 也已改用 `isFirstLogin` / `workspaceCount` 做创建页跳转判定。
+
+## 2026-04-16 workspace_code 改为系统生成
+
+- `POST /auth/workspaces` 已改为不再接受前端传入 `workspaceCode`，如果请求体携带该字段，后端会返回 `INVALID_ARGUMENT`。
+- 新增 `WorkspaceCodeGenerationService`，当前默认规则为 `ws_{ownerUserId8}_{workspaceNameSlug}_{workspaceId8}`，其中 owner 和 workspace 都取 UUID 去连字符后的前 8 位。
+- 为避免用户名改名带来的稳定性风险，workspace_code 生成规则已彻底移除对 username 的依赖。
+- `workspaceName` 会先做 slug 归一化；如果归一化后为空，则回退到 `workspaceType` 的小写值，保证纯中文等场景仍能生成可用 code。
+- `workspaceCode` 继续作为响应字段返回，用于日志、路由、审计和系统内部稳定标识，但不再作为前端输入项。
+- AuthFlowControllerIT 已补充对系统生成 code、同名 workspace 生成不同 code、手工传入 workspaceCode 被拒绝等场景的覆盖。

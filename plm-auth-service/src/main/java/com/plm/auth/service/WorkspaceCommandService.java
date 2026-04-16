@@ -43,6 +43,8 @@ public class WorkspaceCommandService {
     private final WorkspaceRolePermissionRepository workspaceRolePermissionRepository;
     private final WorkspaceSessionService workspaceSessionService;
     private final UserWorkspaceStateService userWorkspaceStateService;
+    private final WorkspaceDictionaryService workspaceDictionaryService;
+    private final WorkspaceCodeGenerationService workspaceCodeGenerationService;
 
     public WorkspaceCommandService(UserAccountRepository userAccountRepository,
                                    WorkspaceRepository workspaceRepository,
@@ -52,7 +54,9 @@ public class WorkspaceCommandService {
                                    PermissionRepository permissionRepository,
                                    WorkspaceRolePermissionRepository workspaceRolePermissionRepository,
                                    WorkspaceSessionService workspaceSessionService,
-                                   UserWorkspaceStateService userWorkspaceStateService) {
+                                   UserWorkspaceStateService userWorkspaceStateService,
+                                   WorkspaceDictionaryService workspaceDictionaryService,
+                                   WorkspaceCodeGenerationService workspaceCodeGenerationService) {
         this.userAccountRepository = userAccountRepository;
         this.workspaceRepository = workspaceRepository;
         this.workspaceMemberRepository = workspaceMemberRepository;
@@ -62,6 +66,8 @@ public class WorkspaceCommandService {
         this.workspaceRolePermissionRepository = workspaceRolePermissionRepository;
         this.workspaceSessionService = workspaceSessionService;
         this.userWorkspaceStateService = userWorkspaceStateService;
+        this.workspaceDictionaryService = workspaceDictionaryService;
+        this.workspaceCodeGenerationService = workspaceCodeGenerationService;
     }
 
     @Transactional
@@ -73,23 +79,27 @@ public class WorkspaceCommandService {
         }
 
         String workspaceName = AuthNormalizer.trimToNull(request.getWorkspaceName());
-        String workspaceCode = AuthNormalizer.normalizeWorkspaceCode(request.getWorkspaceCode());
         if (workspaceName == null || workspaceName.length() > 128) {
             throw new IllegalArgumentException("workspaceName is required and must be <= 128 chars");
         }
-        if (workspaceRepository.existsByWorkspaceCode(workspaceCode)) {
-            throw new AuthBusinessException("WORKSPACE_CODE_ALREADY_EXISTS", HttpStatus.CONFLICT, "workspaceCode already exists");
+        if (AuthNormalizer.trimToNull(request.getWorkspaceCode()) != null) {
+            throw new IllegalArgumentException("workspaceCode is system-generated and must not be provided");
         }
 
+        String workspaceType = workspaceDictionaryService.resolveWorkspaceTypeCode(request.getWorkspaceType());
+        String defaultLocale = workspaceDictionaryService.resolveWorkspaceLocaleCode(request.getDefaultLocale());
+        String defaultTimezone = workspaceDictionaryService.resolveWorkspaceTimezoneCode(request.getDefaultTimezone());
+
         Workspace workspace = new Workspace();
-        workspace.setWorkspaceCode(workspaceCode);
+        workspace.setId(UUID.randomUUID());
+        workspace.setWorkspaceCode(workspaceCodeGenerationService.generateWorkspaceCode(userId, workspace.getId(), workspaceName, workspaceType));
         workspace.setWorkspaceName(workspaceName);
         workspace.setOwnerUserId(userId);
         workspace.setWorkspaceStatus(AuthDomainConstants.WORKSPACE_STATUS_ACTIVE);
-        workspace.setWorkspaceType(defaultValue(request.getWorkspaceType(), "DEFAULT"));
+        workspace.setWorkspaceType(workspaceType);
         workspace.setLifecycleStage("ACTIVE");
-        workspace.setDefaultLocale(defaultValue(request.getDefaultLocale(), "zh-CN"));
-        workspace.setDefaultTimezone(defaultValue(request.getDefaultTimezone(), "Asia/Shanghai"));
+        workspace.setDefaultLocale(defaultLocale);
+        workspace.setDefaultTimezone(defaultTimezone);
         workspace.setCreatedBy(userId.toString());
         workspace = workspaceRepository.save(workspace);
 
@@ -224,8 +234,4 @@ public class WorkspaceCommandService {
                 .collect(Collectors.toMap(Permission::getPermissionCode, permission -> permission));
     }
 
-    private String defaultValue(String value, String fallback) {
-        String normalized = AuthNormalizer.trimToNull(value);
-        return normalized == null ? fallback : normalized;
-    }
 }

@@ -1,11 +1,14 @@
 package com.plm.auth.util;
 
+import java.text.Normalizer;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
 public final class AuthNormalizer {
     private static final Pattern USERNAME_PATTERN = Pattern.compile("^[a-z0-9._-]{4,64}$");
     private static final Pattern WORKSPACE_CODE_PATTERN = Pattern.compile("^[a-z][a-z0-9_-]{2,63}$");
+    private static final Pattern WORKSPACE_CODE_SLUG_NON_ALNUM_PATTERN = Pattern.compile("[^a-z0-9]+");
+    private static final Pattern WORKSPACE_CODE_SLUG_UNDERSCORE_PATTERN = Pattern.compile("_+");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
     private static final Pattern VERIFICATION_CODE_PATTERN = Pattern.compile("^\\d{6}$");
 
@@ -68,6 +71,20 @@ public final class AuthNormalizer {
         return value;
     }
 
+    public static String normalizeWorkspaceCodeSlug(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            return null;
+        }
+        normalized = Normalizer.normalize(normalized, Normalizer.Form.NFKD)
+                .replaceAll("\\p{M}+", "");
+        normalized = normalized.toLowerCase(Locale.ROOT);
+        normalized = WORKSPACE_CODE_SLUG_NON_ALNUM_PATTERN.matcher(normalized).replaceAll("_");
+        normalized = WORKSPACE_CODE_SLUG_UNDERSCORE_PATTERN.matcher(normalized).replaceAll("_");
+        normalized = trimUnderscore(normalized);
+        return normalized == null || normalized.isEmpty() ? null : normalized;
+    }
+
     public static String normalizeVerificationCode(String verificationCode) {
         String value = trimToNull(verificationCode);
         if (value == null) {
@@ -86,5 +103,17 @@ public final class AuthNormalizer {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static String trimUnderscore(String value) {
+        int start = 0;
+        int end = value.length();
+        while (start < end && value.charAt(start) == '_') {
+            start++;
+        }
+        while (end > start && value.charAt(end - 1) == '_') {
+            end--;
+        }
+        return start >= end ? null : value.substring(start, end);
     }
 }

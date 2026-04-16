@@ -2,7 +2,7 @@
 
 ## 1. 文档范围
 
-本文档面向前端联调用途，覆盖当前 auth-service 已实现并通过集成测试验证的注册邮箱验证码发送、账号注册、密码登录、workspace 创建、workspace 切换、当前会话读取与退出能力。
+本文档面向前端联调用途，覆盖当前 auth-service 已实现并通过集成测试验证的注册邮箱验证码发送、账号注册、密码登录、workspace 创建、workspace 切换、当前会话读取与退出能力，以及 workspace 类型 / 语言 / 时区引导项获取能力。
 
 本地联调时，前端统一通过 gateway 访问 auth 接口：
 
@@ -21,6 +21,10 @@
 
 1. `isFirstLogin`：表示用户尚未完成首次 workspace 建立；首次成功创建 workspace 后会永久变为 `false`。
 2. `workspaceCount`：表示用户当前可用的活跃 workspace 数，用于处理“用户后来删光了所有 workspace”的空态分支。
+
+workspace 创建表单中的 `workspaceType`、`defaultLocale`、`defaultTimezone` 不允许前端硬编码，必须优先读取 GET /auth/public/workspace-bootstrap-options 返回的字典选项。
+
+workspace 创建接口中的 `workspaceCode` 已改为后端系统生成字段，前端不再传入，也不应提供手工填写入口。
 
 ## 2. 鉴权与 Header 约定
 
@@ -130,10 +134,11 @@
 ### 4.3 创建 Workspace 流程
 
 1. 前提是已登录并持有 platform token
-2. 调用 POST /auth/workspaces
-3. 成功后直接使用返回值刷新 currentWorkspaceSession
-4. 不需要额外再调用一次 switch
-5. 如果需要同步 defaultWorkspace 与 workspaceOptions，可以追加调用 GET /auth/me
+2. 先调用 GET /auth/public/workspace-bootstrap-options，获取可选 `workspaceType`、`defaultLocale`、`defaultTimezone`
+3. 调用 POST /auth/workspaces，并且请求体中的这三个字段必须使用 bootstrap 返回值
+4. 成功后直接使用返回值刷新 currentWorkspaceSession
+5. 不需要额外再调用一次 switch
+6. 如果需要同步 defaultWorkspace 与 workspaceOptions，可以追加调用 GET /auth/me
 
 ### 4.4 切换 Workspace 流程
 
@@ -245,6 +250,97 @@
 
 前端约束：注册成功后不要调用业务首页初始化逻辑，先进入登录流程。验证码成功消费后不能复用同一条验证码再次注册。
 
+## 5.2.1 GET /auth/public/workspace-bootstrap-options
+
+用途：获取 workspace 创建页的后端引导选项，包括 workspace 类型、默认语言和默认时区。
+
+请求头：无
+
+成功响应示例：
+
+```json
+{
+  "workspaceTypes": [
+    {
+      "code": "TEAM",
+      "label": "Team Workspace",
+      "description": "适用于团队协作和共享模型管理",
+      "sortOrder": 10,
+      "isDefault": true
+    },
+    {
+      "code": "PERSONAL",
+      "label": "Personal Workspace",
+      "description": "适用于个人试验、草稿和私有整理",
+      "sortOrder": 20,
+      "isDefault": false
+    },
+    {
+      "code": "LEARNING",
+      "label": "Learning Workspace",
+      "description": "适用于培训、演示和学习数据集",
+      "sortOrder": 30,
+      "isDefault": false
+    }
+  ],
+  "locales": [
+    {
+      "code": "zh-CN",
+      "label": "简体中文",
+      "description": "默认简体中文界面",
+      "sortOrder": 10,
+      "isDefault": true
+    },
+    {
+      "code": "en-US",
+      "label": "English (United States)",
+      "description": "默认英文界面",
+      "sortOrder": 20,
+      "isDefault": false
+    }
+  ],
+  "timezones": [
+    {
+      "code": "Asia/Shanghai",
+      "label": "Asia/Shanghai",
+      "description": "中国标准时间",
+      "sortOrder": 10,
+      "isDefault": true
+    },
+    {
+      "code": "UTC",
+      "label": "UTC",
+      "description": "协调世界时",
+      "sortOrder": 20,
+      "isDefault": false
+    },
+    {
+      "code": "America/Los_Angeles",
+      "label": "America/Los_Angeles",
+      "description": "太平洋时间",
+      "sortOrder": 30,
+      "isDefault": false
+    }
+  ]
+}
+```
+
+成功状态码：200
+
+字段说明：
+
+- `code`：提交给创建 workspace 接口的真实 code 值
+- `label`：前端展示文案
+- `description`：辅助说明文案
+- `sortOrder`：展示排序
+- `isDefault`：是否为默认推荐项
+
+前端约束：
+
+1. 创建 workspace 前必须先读取该接口，不要在前端本地硬编码 `TEAM`、`PERSONAL`、`LEARNING` 或 locale / timezone 列表。
+2. 建议将 `isDefault = true` 的选项作为表单初始值。
+3. 如果后端后续扩容字典项，前端页面应自动兼容，不应因为硬编码枚举而发版。
+
 ## 5.3 POST /auth/public/login/password
 
 用途：建立平台登录态，返回平台 token、用户摘要、默认 workspace 与可选 workspace 列表。
@@ -348,13 +444,18 @@ workspace token 在已有 currentWorkspace 时推荐一起带上，但平台 tok
     "displayName": "Alice",
     "email": "alice@example.com",
     "phone": "13800001234",
-    "status": "ACTIVE"
+    "status": "ACTIVE",
+    "isFirstLogin": false,
+    "workspaceCount": 1
   },
   "defaultWorkspace": {
     "workspaceId": "3d8b6370-f1f2-4704-8cc8-e4b3535198db",
-    "workspaceCode": "alpha_team",
+    "workspaceCode": "ws_9e4b810a_alpha_team_3d8b6370",
     "workspaceName": "Alpha Team",
     "workspaceStatus": "ACTIVE",
+    "workspaceType": "TEAM",
+    "defaultLocale": "zh-CN",
+    "defaultTimezone": "Asia/Shanghai",
     "workspaceMemberId": "ad97145a-3aa4-42f7-8f65-714b48a4d2a2",
     "memberStatus": "ACTIVE",
     "isDefaultWorkspace": true
@@ -362,9 +463,12 @@ workspace token 在已有 currentWorkspace 时推荐一起带上，但平台 tok
   "workspaceOptions": [
     {
       "workspaceId": "3d8b6370-f1f2-4704-8cc8-e4b3535198db",
-      "workspaceCode": "alpha_team",
+      "workspaceCode": "ws_9e4b810a_alpha_team_3d8b6370",
       "workspaceName": "Alpha Team",
       "workspaceStatus": "ACTIVE",
+      "workspaceType": "TEAM",
+      "defaultLocale": "zh-CN",
+      "defaultTimezone": "Asia/Shanghai",
       "workspaceMemberId": "ad97145a-3aa4-42f7-8f65-714b48a4d2a2",
       "memberStatus": "ACTIVE",
       "isDefaultWorkspace": true
@@ -374,8 +478,11 @@ workspace token 在已有 currentWorkspace 时推荐一起带上，但平台 tok
     "workspaceToken": "7a8b9c...",
     "workspaceTokenName": "satoken-workspace",
     "workspaceId": "3d8b6370-f1f2-4704-8cc8-e4b3535198db",
-    "workspaceCode": "alpha_team",
+    "workspaceCode": "ws_9e4b810a_alpha_team_3d8b6370",
     "workspaceName": "Alpha Team",
+    "workspaceType": "TEAM",
+    "defaultLocale": "zh-CN",
+    "defaultTimezone": "Asia/Shanghai",
     "workspaceMemberId": "ad97145a-3aa4-42f7-8f65-714b48a4d2a2",
     "roleCodes": [
       "workspace_owner"
@@ -411,9 +518,12 @@ workspace token 在已有 currentWorkspace 时推荐一起带上，但平台 tok
 [
   {
     "workspaceId": "3d8b6370-f1f2-4704-8cc8-e4b3535198db",
-    "workspaceCode": "alpha_team",
+    "workspaceCode": "ws_9e4b810a_alpha_team_3d8b6370",
     "workspaceName": "Alpha Team",
     "workspaceStatus": "ACTIVE",
+    "workspaceType": "TEAM",
+    "defaultLocale": "zh-CN",
+    "defaultTimezone": "Asia/Shanghai",
     "workspaceMemberId": "ad97145a-3aa4-42f7-8f65-714b48a4d2a2",
     "memberStatus": "ACTIVE",
     "isDefaultWorkspace": true
@@ -438,8 +548,7 @@ workspace token 在已有 currentWorkspace 时推荐一起带上，但平台 tok
 ```json
 {
   "workspaceName": "Alpha Team",
-  "workspaceCode": "alpha_team",
-  "workspaceType": "DEFAULT",
+  "workspaceType": "TEAM",
   "defaultLocale": "zh-CN",
   "defaultTimezone": "Asia/Shanghai",
   "rememberAsDefault": true
@@ -449,11 +558,13 @@ workspace token 在已有 currentWorkspace 时推荐一起带上，但平台 tok
 字段说明：
 
 - workspaceName：workspace 名称
-- workspaceCode：workspace 唯一编码
-- workspaceType：workspace 类型，当前测试使用 DEFAULT
-- defaultLocale：默认语言
-- defaultTimezone：默认时区
+- workspaceCode：系统生成的稳定标识，不再由前端传入；后端当前默认按 `ws_{ownerUserId8}_{workspaceNameSlug}_{workspaceId8}` 规则生成
+- workspaceType：workspace 类型，当前固定由后端字典表维护，首批可选值为 `TEAM`、`PERSONAL`、`LEARNING`
+- defaultLocale：默认语言，当前必须使用 bootstrap 接口返回的 locale code
+- defaultTimezone：默认时区，当前必须使用 bootstrap 接口返回的 timezone code
 - rememberAsDefault：是否设置为默认 workspace
+
+前端约束：`workspaceType`、`defaultLocale`、`defaultTimezone` 必须来自 GET /auth/public/workspace-bootstrap-options；`workspaceCode` 不应提交，如果传入会被后端按 `INVALID_ARGUMENT` 拒绝。
 
 成功响应示例：
 
@@ -462,8 +573,11 @@ workspace token 在已有 currentWorkspace 时推荐一起带上，但平台 tok
   "workspaceToken": "7a8b9c...",
   "workspaceTokenName": "satoken-workspace",
   "workspaceId": "3d8b6370-f1f2-4704-8cc8-e4b3535198db",
-  "workspaceCode": "alpha_team",
+  "workspaceCode": "ws_9e4b810a_alpha_team_3d8b6370",
   "workspaceName": "Alpha Team",
+  "workspaceType": "TEAM",
+  "defaultLocale": "zh-CN",
+  "defaultTimezone": "Asia/Shanghai",
   "workspaceMemberId": "ad97145a-3aa4-42f7-8f65-714b48a4d2a2",
   "roleCodes": [
     "workspace_owner"
@@ -475,10 +589,9 @@ workspace token 在已有 currentWorkspace 时推荐一起带上，但平台 tok
 
 典型失败：
 
-- 400 INVALID_ARGUMENT：workspaceName、workspaceCode 等字段不合法
+- 400 INVALID_ARGUMENT：workspaceName 等字段不合法，或错误传入 workspaceCode
 - 401 AUTH_NOT_LOGGED_IN
 - 403 USER_NOT_ACTIVE
-- 409 WORKSPACE_CODE_ALREADY_EXISTS
 
 前端约束：该接口成功后已经自动切入 workspace，不要再额外调用 switch。
 
@@ -569,6 +682,8 @@ type PlatformAuthState = {
     email: string | null;
     phone: string | null;
     status: string;
+    isFirstLogin: boolean;
+    workspaceCount: number;
   } | null;
 };
 
@@ -578,6 +693,9 @@ type WorkspaceSessionState = {
   workspaceId: string | null;
   workspaceCode: string | null;
   workspaceName: string | null;
+  workspaceType: string | null;
+  defaultLocale: string | null;
+  defaultTimezone: string | null;
   workspaceMemberId: string | null;
   roleCodes: string[];
 };
@@ -605,7 +723,6 @@ type WorkspaceSessionState = {
 | 400 EMAIL_VERIFICATION_CODE_INVALID / EMAIL_VERIFICATION_CODE_EXPIRED | 注册页验证码字段级提示，并引导重新发送验证码 |
 | 429 EMAIL_VERIFICATION_SEND_TOO_FREQUENT | 验证码发送页启动重发倒计时，不要立即重试 |
 | 502 EMAIL_VERIFICATION_SEND_FAILED / 503 EMAIL_VERIFICATION_NOT_CONFIGURED | 发送验证码失败，提示稍后重试或联系管理员 |
-| 409 WORKSPACE_CODE_ALREADY_EXISTS | 创建 workspace 表单字段级提示 |
 | 400 INVALID_ARGUMENT | 表单字段前置校验并展示具体 message |
 
 ## 8. 前端易错点
@@ -618,6 +735,8 @@ type WorkspaceSessionState = {
 6. DELETE /auth/workspace-session/current 不是退出登录。
 7. GET /auth/workspace-session/current 返回 204 是正常业务态。
 8. 恢复当前 workspace 的可信来源是 GET /auth/me 的 currentWorkspace，不是本地 localStorage 中缓存的 workspaceId。
+9. `workspaceType`、`defaultLocale`、`defaultTimezone` 由后端字典表维护，前端不要本地硬编码枚举。
+10. `workspaceCode` 已改为系统生成字段，前端不再展示或提交该输入项。
 
 ## 9. 当前已验证的集成测试覆盖
 
@@ -640,4 +759,4 @@ type WorkspaceSessionState = {
 15. inactive 成员切换 workspace 拒绝
 16. frozen workspace 切换拒绝
 
-当前测试结果：12 passed / 0 failed。
+说明：文档中的集成场景与当前实现保持同步；具体测试通过数量以最近一次测试运行结果为准。

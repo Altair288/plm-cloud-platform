@@ -116,6 +116,9 @@ public class AuthQueryService {
         option.setWorkspaceCode(workspace.getWorkspaceCode());
         option.setWorkspaceName(workspace.getWorkspaceName());
         option.setWorkspaceStatus(workspace.getWorkspaceStatus());
+        option.setWorkspaceType(workspace.getWorkspaceType());
+        option.setDefaultLocale(workspace.getDefaultLocale());
+        option.setDefaultTimezone(workspace.getDefaultTimezone());
         option.setWorkspaceMemberId(member.getId());
         option.setMemberStatus(member.getMemberStatus());
         option.setIsDefaultWorkspace(member.getIsDefaultWorkspace());

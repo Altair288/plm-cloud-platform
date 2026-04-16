@@ -72,6 +72,9 @@ public class WorkspaceSessionService {
         response.setWorkspaceId(workspace.getId());
         response.setWorkspaceCode(workspace.getWorkspaceCode());
         response.setWorkspaceName(workspace.getWorkspaceName());
+        response.setWorkspaceType(workspace.getWorkspaceType());
+        response.setDefaultLocale(workspace.getDefaultLocale());
+        response.setDefaultTimezone(workspace.getDefaultTimezone());
         response.setWorkspaceMemberId(member.getId());
         response.setRoleCodes(roleCodes);
         return response;
@@ -107,6 +110,9 @@ public class WorkspaceSessionService {
         response.setWorkspaceId(workspace.getId());
         response.setWorkspaceCode(workspace.getWorkspaceCode());
         response.setWorkspaceName(workspace.getWorkspaceName());
+        response.setWorkspaceType(workspace.getWorkspaceType());
+        response.setDefaultLocale(workspace.getDefaultLocale());
+        response.setDefaultTimezone(workspace.getDefaultTimezone());
         response.setWorkspaceMemberId(member.getId());
         response.setRoleCodes(roleCodes);
         return response;

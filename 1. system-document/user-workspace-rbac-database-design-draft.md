@@ -1,6 +1,6 @@
 # 用户、Workspace、角色与权限数据库设计草案
 
-更新时间：2026-04-10
+更新时间：2026-04-16
 阶段：数据库设计草案（当前阶段服务于 user -> workspace 结构，不一步到位实现完整 SaaS tenant 模型）
 
 ---
@@ -137,6 +137,13 @@
 - username、email 这类人输入标识建议按小写规范唯一。
 - PostgreSQL 层建议通过 UNIQUE INDEX ON lower(column) 实现。
 
+### 3.6 Workspace 引导字典约定
+
+- workspace 的 `workspace_type`、`default_locale`、`default_timezone` 当前不再建议写死常量，而是由平台控制面字典表统一维护。
+- 业务表仍保留字符串 code 列，便于接口传输与前端联调，但数据库层建议通过外键约束将其收敛到字典表。
+- 当前阶段 workspace 类型固定落地三种 code：`TEAM`、`PERSONAL`、`LEARNING`。
+- 历史数据若使用过旧值 `DEFAULT`，迁移时应先回填映射到 `TEAM`，再补外键约束。
+
 ---
 
 ## 4. 核心表设计
@@ -159,6 +166,8 @@ Schema：plm_platform
 | phone | VARCHAR(32) | N | 手机号 |
 | status | VARCHAR(20) | Y | 账号状态，如 ACTIVE、DISABLED、LOCKED |
 | source_type | VARCHAR(20) | Y | 账号来源，如 LOCAL、INVITED、SYSTEM |
+| is_first_login | BOOLEAN | Y | 是否尚未完成首次 workspace 创建 |
+| workspace_count | INTEGER | Y | 当前活跃 workspace 数 |
 | registered_at | TIMESTAMPTZ | Y | 注册时间 |
 | last_login_at | TIMESTAMPTZ | N | 最近登录时间 |
 | created_at | TIMESTAMPTZ | Y | 创建时间 |
@@ -230,14 +239,14 @@ Schema：plm_platform
 | 字段名 | 类型 | 非空 | 说明 |
 | --- | --- | ---: | --- |
 | id | UUID | Y | 主键 |
-| workspace_code | VARCHAR(64) | Y | 系统稳定标识 |
+| workspace_code | VARCHAR(64) | Y | 系统生成的稳定标识，当前默认规则为 `ws_{ownerUserId8}_{workspaceNameSlug}_{workspaceId8}` |
 | workspace_name | VARCHAR(128) | Y | 空间名称 |
 | workspace_status | VARCHAR(20) | Y | 状态，如 ACTIVE、FROZEN、ARCHIVED |
 | owner_user_id | UUID | Y | 默认拥有者 |
-| workspace_type | VARCHAR(20) | Y | 类型，如 DEFAULT、TEAM |
+| workspace_type | VARCHAR(20) | Y | 类型 code，引用 `plm_platform.workspace_type`，当前值为 TEAM / PERSONAL / LEARNING |
 | lifecycle_stage | VARCHAR(20) | Y | 生命周期阶段 |
-| default_locale | VARCHAR(16) | Y | 默认语言环境 |
-| default_timezone | VARCHAR(64) | Y | 默认时区 |
+| default_locale | VARCHAR(16) | Y | 默认语言环境 code，引用 `plm_platform.workspace_locale` |
+| default_timezone | VARCHAR(64) | Y | 默认时区 code，引用 `plm_platform.workspace_timezone` |
 | config_json | JSONB | N | 空间级扩展配置 |
 | created_at | TIMESTAMPTZ | Y | 创建时间 |
 | created_by | VARCHAR(64) | N | 创建者 |
@@ -248,6 +257,9 @@ Schema：plm_platform
 
 - PRIMARY KEY (id)
 - FOREIGN KEY (owner_user_id) REFERENCES plm_platform.user_account(id)
+- FOREIGN KEY (workspace_type) REFERENCES plm_platform.workspace_type(code)
+- FOREIGN KEY (default_locale) REFERENCES plm_platform.workspace_locale(code)
+- FOREIGN KEY (default_timezone) REFERENCES plm_platform.workspace_timezone(code)
 - UNIQUE (workspace_code)
 
 #### Workspace 索引
@@ -257,6 +269,111 @@ Schema：plm_platform
 - INDEX idx_workspace_type ON plm_platform.workspace (workspace_type)
 - INDEX idx_workspace_created_at ON plm_platform.workspace (created_at)
 - GIN INDEX idx_workspace_config_gin ON plm_platform.workspace USING gin (config_json jsonb_path_ops)
+
+---
+
+### 4.3.1 WorkspaceTypeDefinition
+
+Schema：plm_platform  
+表名：workspace_type
+
+用途：workspace 类型字典，供创建引导、表单校验和后续 UI 分类展示使用。
+
+#### WorkspaceTypeDefinition 字段
+
+| 字段名 | 类型 | 非空 | 说明 |
+| --- | --- | ---: | --- |
+| code | VARCHAR(20) | Y | 主键，类型编码，如 TEAM、PERSONAL、LEARNING |
+| name | VARCHAR(64) | Y | 类型名称 |
+| description | VARCHAR(255) | N | 类型说明 |
+| sort_order | INTEGER | Y | 排序号 |
+| enabled | BOOLEAN | Y | 是否可用 |
+| is_default | BOOLEAN | Y | 是否默认选项 |
+| created_at | TIMESTAMPTZ | Y | 创建时间 |
+| created_by | VARCHAR(64) | N | 创建者 |
+| updated_at | TIMESTAMPTZ | N | 更新时间 |
+| updated_by | VARCHAR(64) | N | 更新者 |
+
+#### WorkspaceTypeDefinition 约束
+
+- PRIMARY KEY (code)
+
+#### WorkspaceTypeDefinition 索引
+
+- INDEX idx_workspace_type_enabled_sort ON plm_platform.workspace_type (enabled, sort_order)
+- UNIQUE INDEX uidx_workspace_type_default ON plm_platform.workspace_type (is_default) WHERE is_default = TRUE
+
+说明：当前初始化数据固定为 `TEAM`、`PERSONAL`、`LEARNING`，其中 `TEAM` 为默认项。
+
+---
+
+### 4.3.2 WorkspaceLocaleDefinition
+
+Schema：plm_platform  
+表名：workspace_locale
+
+用途：workspace 默认语言环境字典。
+
+#### WorkspaceLocaleDefinition 字段
+
+| 字段名 | 类型 | 非空 | 说明 |
+| --- | --- | ---: | --- |
+| code | VARCHAR(16) | Y | 主键，如 zh-CN、en-US |
+| name | VARCHAR(64) | Y | 显示名称 |
+| description | VARCHAR(255) | N | 说明 |
+| sort_order | INTEGER | Y | 排序号 |
+| enabled | BOOLEAN | Y | 是否可用 |
+| is_default | BOOLEAN | Y | 是否默认选项 |
+| created_at | TIMESTAMPTZ | Y | 创建时间 |
+| created_by | VARCHAR(64) | N | 创建者 |
+| updated_at | TIMESTAMPTZ | N | 更新时间 |
+| updated_by | VARCHAR(64) | N | 更新者 |
+
+#### WorkspaceLocaleDefinition 约束
+
+- PRIMARY KEY (code)
+
+#### WorkspaceLocaleDefinition 索引
+
+- INDEX idx_workspace_locale_enabled_sort ON plm_platform.workspace_locale (enabled, sort_order)
+- UNIQUE INDEX uidx_workspace_locale_default ON plm_platform.workspace_locale (is_default) WHERE is_default = TRUE
+
+说明：当前初始化数据为 `zh-CN`、`en-US`，其中 `zh-CN` 为默认项。
+
+---
+
+### 4.3.3 WorkspaceTimezoneDefinition
+
+Schema：plm_platform  
+表名：workspace_timezone
+
+用途：workspace 默认时区字典。
+
+#### WorkspaceTimezoneDefinition 字段
+
+| 字段名 | 类型 | 非空 | 说明 |
+| --- | --- | ---: | --- |
+| code | VARCHAR(64) | Y | 主键，如 Asia/Shanghai、UTC |
+| name | VARCHAR(64) | Y | 显示名称 |
+| description | VARCHAR(255) | N | 说明 |
+| sort_order | INTEGER | Y | 排序号 |
+| enabled | BOOLEAN | Y | 是否可用 |
+| is_default | BOOLEAN | Y | 是否默认选项 |
+| created_at | TIMESTAMPTZ | Y | 创建时间 |
+| created_by | VARCHAR(64) | N | 创建者 |
+| updated_at | TIMESTAMPTZ | N | 更新时间 |
+| updated_by | VARCHAR(64) | N | 更新者 |
+
+#### WorkspaceTimezoneDefinition 约束
+
+- PRIMARY KEY (code)
+
+#### WorkspaceTimezoneDefinition 索引
+
+- INDEX idx_workspace_timezone_enabled_sort ON plm_platform.workspace_timezone (enabled, sort_order)
+- UNIQUE INDEX uidx_workspace_timezone_default ON plm_platform.workspace_timezone (is_default) WHERE is_default = TRUE
+
+说明：当前初始化数据为 `Asia/Shanghai`、`UTC`、`America/Los_Angeles`，其中 `Asia/Shanghai` 为默认项。
 
 ---
 

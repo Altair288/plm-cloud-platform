@@ -10,6 +10,9 @@ public class AuthWorkspaceOptionDto {
     private String workspaceCode;
     private String workspaceName;
     private String workspaceStatus;
+    private String workspaceType;
+    private String defaultLocale;
+    private String defaultTimezone;
     private UUID workspaceMemberId;
     private String memberStatus;
     private Boolean isDefaultWorkspace;

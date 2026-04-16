@@ -339,13 +339,13 @@ identifier 第一阶段建议支持：
   },
   "defaultWorkspace": {
     "workspaceId": "uuid",
-    "workspaceCode": "ws_alice",
+    "workspaceCode": "ws_9e4b810a_alice_workspace_3d8b6370",
     "workspaceName": "Alice Workspace"
   },
   "workspaceOptions": [
     {
       "workspaceId": "uuid",
-      "workspaceCode": "ws_alice",
+      "workspaceCode": "ws_9e4b810a_alice_workspace_3d8b6370",
       "workspaceName": "Alice Workspace",
       "memberStatus": "ACTIVE"
     }
@@ -371,33 +371,37 @@ identifier 第一阶段建议支持：
 ```json
 {
   "workspaceName": "Alice Workspace",
-  "workspaceCode": "ws_alice",
-  "workspaceType": "DEFAULT",
+  "workspaceType": "TEAM",
   "defaultLocale": "zh-CN",
   "defaultTimezone": "Asia/Shanghai",
   "rememberAsDefault": true
 }
 ```
 
+说明：
+
+- `workspaceCode` 不再由前端传入，当前由后端按 `ws_{ownerUserId8}_{workspaceNameSlug}_{workspaceId8}` 规则系统生成。
+
 处理流程：
 
 1. 校验 platform 登录态。
-2. 校验 workspaceCode 唯一。
-3. 创建 workspace，owner_user_id = 当前 userId。
-4. 创建 workspace_member：
+2. 解析并校验 `workspaceType`、`defaultLocale`、`defaultTimezone`。
+3. 预生成 workspace 主键，并按规则生成 `workspaceCode`。
+4. 创建 workspace，owner_user_id = 当前 userId。
+5. 创建 workspace_member：
    - user_id = 当前 userId
    - member_status = ACTIVE
    - join_type = OWNER
    - joined_at = now
-5. 初始化该 workspace 的内建角色：
+6. 初始化该 workspace 的内建角色：
    - workspace_owner
    - workspace_admin
    - workspace_member
    - workspace_viewer
-6. 给创建者分配 workspace_owner 角色。
-7. 若 rememberAsDefault = true，更新默认 workspace 标记。
-8. 建立或替换当前 workspace 上下文态。
-9. 返回 workspace 信息与 workspaceToken。
+7. 给创建者分配 workspace_owner 角色。
+8. 若 rememberAsDefault = true，更新默认 workspace 标记。
+9. 建立或替换当前 workspace 上下文态。
+10. 返回 workspace 信息与 workspaceToken。
 
 事务边界：
 
@@ -414,7 +418,7 @@ identifier 第一阶段建议支持：
 {
   "workspace": {
     "id": "uuid",
-    "workspaceCode": "ws_alice",
+    "workspaceCode": "ws_9e4b810a_alice_workspace_3d8b6370",
     "workspaceName": "Alice Workspace"
   },
   "workspaceToken": "token",
@@ -463,7 +467,7 @@ identifier 第一阶段建议支持：
   "workspaceToken": "token",
   "workspace": {
     "id": "uuid",
-    "workspaceCode": "ws_alice",
+    "workspaceCode": "ws_9e4b810a_alice_workspace_3d8b6370",
     "workspaceName": "Alice Workspace"
   },
   "workspaceMemberId": "uuid",

@@ -12,6 +12,9 @@ public class AuthWorkspaceSessionResponseDto {
     private UUID workspaceId;
     private String workspaceCode;
     private String workspaceName;
+    private String workspaceType;
+    private String defaultLocale;
+    private String defaultTimezone;
     private UUID workspaceMemberId;
     private List<String> roleCodes;
 }
