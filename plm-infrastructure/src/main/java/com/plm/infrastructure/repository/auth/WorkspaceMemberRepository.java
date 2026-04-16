@@ -20,6 +20,19 @@ public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember
 
     Optional<WorkspaceMember> findByUserIdAndWorkspaceId(UUID userId, UUID workspaceId);
 
+    @Query("""
+            select count(wm) > 0
+            from WorkspaceMember wm
+            join UserAccount ua on ua.id = wm.userId
+            where wm.workspaceId = :workspaceId
+              and lower(coalesce(wm.memberStatus, '')) = lower(:memberStatus)
+              and ua.email is not null
+              and lower(ua.email) = lower(:email)
+            """)
+    boolean existsByWorkspaceIdAndUserEmailAndMemberStatus(@Param("workspaceId") UUID workspaceId,
+                                                           @Param("email") String email,
+                                                           @Param("memberStatus") String memberStatus);
+
     Optional<WorkspaceMember> findByUserIdAndIsDefaultWorkspaceTrue(UUID userId);
 
     boolean existsByUserIdAndIsDefaultWorkspaceTrue(UUID userId);

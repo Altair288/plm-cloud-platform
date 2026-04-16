@@ -17,6 +17,10 @@
       "type": "java.lang.Object"
     },
     {
+      "name": "plm.auth.invitation",
+      "type": "com.plm.auth.config.AuthInvitationProperties"
+    },
+    {
       "name": "plm.auth.email.verification",
       "type": "com.plm.auth.config.AuthEmailVerificationProperties"
     }
@@ -36,6 +40,30 @@
     },
     {
       "name": "plm.datasource.driver-class-name",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.invitation.email-subject",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.invitation.email-expire-in-seconds",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "plm.auth.invitation.link-expire-in-hours",
+      "type": "java.lang.Integer"
+    },
+    {
+      "name": "plm.auth.invitation.max-batch-size",
+      "type": "java.lang.Integer"
+    },
+    {
+      "name": "plm.auth.invitation.email-accept-url-template",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "plm.auth.invitation.link-accept-url-template",
       "type": "java.lang.String"
     },
     {

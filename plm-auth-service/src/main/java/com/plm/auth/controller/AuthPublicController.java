@@ -4,7 +4,10 @@ import com.plm.auth.service.AuthLoginService;
 import com.plm.auth.service.AuthEmailTestService;
 import com.plm.auth.service.AuthRegistrationService;
 import com.plm.auth.service.RegisterEmailVerificationService;
+import com.plm.auth.service.WorkspaceInvitationService;
 import com.plm.auth.service.WorkspaceDictionaryService;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationLinkPreviewResponseDto;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationPreviewResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceBootstrapOptionsResponseDto;
 import com.plm.common.api.dto.auth.AuthPasswordLoginRequestDto;
 import com.plm.common.api.dto.auth.AuthPasswordLoginResponseDto;
@@ -17,6 +20,7 @@ import com.plm.common.api.dto.auth.AuthSendTestEmailResponseDto;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,22 +32,35 @@ public class AuthPublicController {
     private final RegisterEmailVerificationService registerEmailVerificationService;
     private final AuthEmailTestService authEmailTestService;
     private final WorkspaceDictionaryService workspaceDictionaryService;
+    private final WorkspaceInvitationService workspaceInvitationService;
 
     public AuthPublicController(AuthRegistrationService authRegistrationService,
                                 AuthLoginService authLoginService,
                                 RegisterEmailVerificationService registerEmailVerificationService,
                                 AuthEmailTestService authEmailTestService,
-                                WorkspaceDictionaryService workspaceDictionaryService) {
+                                WorkspaceDictionaryService workspaceDictionaryService,
+                                WorkspaceInvitationService workspaceInvitationService) {
         this.authRegistrationService = authRegistrationService;
         this.authLoginService = authLoginService;
         this.registerEmailVerificationService = registerEmailVerificationService;
         this.authEmailTestService = authEmailTestService;
         this.workspaceDictionaryService = workspaceDictionaryService;
+        this.workspaceInvitationService = workspaceInvitationService;
     }
 
     @GetMapping("/auth/public/workspace-bootstrap-options")
     public ResponseEntity<AuthWorkspaceBootstrapOptionsResponseDto> getWorkspaceBootstrapOptions() {
         return ResponseEntity.ok(workspaceDictionaryService.getWorkspaceBootstrapOptions());
+    }
+
+    @GetMapping("/auth/public/workspace-invitations/email/{token}")
+    public ResponseEntity<AuthWorkspaceInvitationPreviewResponseDto> getEmailInvitationPreview(@PathVariable("token") String token) {
+        return ResponseEntity.ok(workspaceInvitationService.getEmailInvitationPreview(token));
+    }
+
+    @GetMapping("/auth/public/workspace-invitation-links/{token}")
+    public ResponseEntity<AuthWorkspaceInvitationLinkPreviewResponseDto> getInvitationLinkPreview(@PathVariable("token") String token) {
+        return ResponseEntity.ok(workspaceInvitationService.getInvitationLinkPreview(token));
     }
 
     @PostMapping("/auth/public/register/email-code")

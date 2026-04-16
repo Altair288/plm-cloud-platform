@@ -8,6 +8,13 @@ plm:
     password: p@ssw0rd@2025
     driver-class-name: org.postgresql.Driver
   auth:
+    invitation:
+      email-subject: PLM Cloud Workspace Invitation
+      email-expire-in-seconds: 604800
+      link-expire-in-hours: 168
+      max-batch-size: 50
+      email-accept-url-template: ${PLM_AUTH_INVITATION_EMAIL_ACCEPT_URL_TEMPLATE:http://localhost:8080/invite/email?token=%s}
+      link-accept-url-template: ${PLM_AUTH_INVITATION_LINK_ACCEPT_URL_TEMPLATE:http://localhost:8080/invite/link?token=%s}
     email:
       verification:
         enabled: true

@@ -26,4 +26,7 @@ public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> 
                or (u.phone is not null and u.phone = :identifier)
             """)
     Optional<UserAccount> findByIdentifier(@Param("identifier") String identifier);
+
+    @Query("select u from UserAccount u where u.email is not null and lower(u.email) = lower(:email)")
+    Optional<UserAccount> findByEmailIgnoreCase(@Param("email") String email);
 }

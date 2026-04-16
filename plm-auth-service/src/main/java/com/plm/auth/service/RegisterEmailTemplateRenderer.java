@@ -1,45 +1,43 @@
 package com.plm.auth.service;
 
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StreamUtils;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 public class RegisterEmailTemplateRenderer {
+    private static final String VERIFICATION_TEMPLATE_PATH = "templates/email-checkcode-preview.html";
+    private static final String INVITATION_TEMPLATE_PATH = "templates/email-invite-preview.html";
+  private static final String TEST_TEMPLATE_PATH = "templates/email-test-preview.html";
+
+    private final String verificationHtmlTemplate;
+    private final String invitationHtmlTemplate;
+  private final String testHtmlTemplate;
+
+    public RegisterEmailTemplateRenderer() {
+        this.verificationHtmlTemplate = loadTemplate(VERIFICATION_TEMPLATE_PATH);
+        this.invitationHtmlTemplate = loadTemplate(INVITATION_TEMPLATE_PATH);
+    this.testHtmlTemplate = loadTemplate(TEST_TEMPLATE_PATH);
+    }
+
     public String render(String email, String verificationCode, OffsetDateTime expiresAt) {
         long minutes = Math.max(1, ChronoUnit.MINUTES.between(OffsetDateTime.now(), expiresAt));
         String safeEmail = escapeHtml(email);
         String safeCode = escapeHtml(verificationCode);
-        return """
-                <!DOCTYPE html>
-                <html lang=\"en\">
-                <head>
-                  <meta charset=\"UTF-8\" />
-                  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
-                  <title>PLM Cloud Verification</title>
-                </head>
-                <body style=\"margin:0;padding:0;background:#f3f5f8;font-family:Segoe UI,Arial,sans-serif;color:#1f2937;\">
-                  <div style=\"padding:32px 16px;\">
-                    <div style=\"max-width:560px;margin:0 auto;\">
-                      <div style=\"text-align:center;margin-bottom:18px;color:#64748b;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;\">PLM Cloud Security Verification</div>
-                      <div style=\"background:#ffffff;border:1px solid #dbe3ea;border-radius:24px;box-shadow:0 18px 48px rgba(15,23,42,0.08);overflow:hidden;\">
-                        <div style=\"padding:28px 28px 18px;text-align:center;border-bottom:1px solid #eef2f7;\">
-                          <div style=\"width:56px;height:56px;margin:0 auto 18px;border-radius:18px;background:linear-gradient(135deg,#0f172a,#2563eb);color:#ffffff;font-size:28px;line-height:56px;font-weight:700;\">P</div>
-                          <div style=\"font-size:34px;line-height:1.15;font-weight:700;color:#111827;\">Email Verification</div>
-                          <div style=\"margin-top:12px;font-size:15px;line-height:1.7;color:#475569;\">Use this code to complete your PLM Cloud registration for <strong>%s</strong>.</div>
-                        </div>
-                        <div style=\"padding:28px;\">
-                          <div style=\"text-align:center;font-size:44px;font-weight:700;letter-spacing:0.2em;color:#0f172a;padding:18px 12px;border-radius:20px;background:linear-gradient(180deg,#f8fafc,#eef4ff);border:1px solid #d8e3ff;\">%s</div>
-                          <div style=\"margin-top:18px;text-align:center;font-size:14px;color:#475569;line-height:1.7;\">The code will remain valid for the next <strong>%d minutes</strong>.</div>
-                          <div style=\"margin-top:24px;padding-top:20px;border-top:1px solid #eef2f7;font-size:13px;line-height:1.8;color:#64748b;text-align:center;\">If you did not request this email, you can safely ignore it. For security reasons, do not share this code with anyone.</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </body>
-                </html>
-                """.formatted(safeEmail, safeCode, minutes);
+        return replacePlaceholder(
+            replacePlaceholder(
+                replacePlaceholder(verificationHtmlTemplate, "%s", safeEmail),
+                "%s",
+                safeCode),
+            "%d",
+            String.valueOf(minutes));
     }
 
     public String renderText(String verificationCode, OffsetDateTime expiresAt) {
@@ -47,40 +45,61 @@ public class RegisterEmailTemplateRenderer {
         return "Your PLM Cloud verification code is " + verificationCode + ". It will expire in " + minutes + " minutes.";
     }
 
+    public String renderWorkspaceInvitationEmail(String workspaceName,
+                                                 String inviterDisplayName,
+                                                 String acceptUrl,
+                                                 OffsetDateTime expiresAt) {
+        long hours = Math.max(1, ChronoUnit.HOURS.between(OffsetDateTime.now(), expiresAt));
+        String safeWorkspaceName = escapeHtml(workspaceName);
+        String safeInviterDisplayName = escapeHtml(inviterDisplayName == null ? "PLM Cloud" : inviterDisplayName);
+        String safeAcceptUrl = escapeHtml(acceptUrl);
+        return replacePlaceholder(
+            replacePlaceholder(
+                replacePlaceholder(
+                    replacePlaceholder(invitationHtmlTemplate, "%s", safeInviterDisplayName),
+                    "%s",
+                    safeWorkspaceName),
+                "%s",
+                safeAcceptUrl),
+            "%d",
+            String.valueOf(hours));
+    }
+
+    public String renderWorkspaceInvitationEmailText(String workspaceName,
+                                                     String inviterDisplayName,
+                                                     String acceptUrl,
+                                                     OffsetDateTime expiresAt) {
+        long hours = Math.max(1, ChronoUnit.HOURS.between(OffsetDateTime.now(), expiresAt));
+        return (inviterDisplayName == null ? "PLM Cloud" : inviterDisplayName)
+                + " invited you to join workspace " + workspaceName
+                + ". Open " + acceptUrl
+                + " within " + hours + " hours.";
+    }
+
     public String renderTestEmail(String email, OffsetDateTime sentAt) {
         String safeEmail = escapeHtml(email);
         String safeSentAt = escapeHtml(sentAt.toString());
-        return """
-                <!DOCTYPE html>
-                <html lang=\"en\">
-                <head>
-                  <meta charset=\"UTF-8\" />
-                  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
-                  <title>PLM Cloud Test Email</title>
-                </head>
-                <body style=\"margin:0;padding:0;background:#f3f5f8;font-family:Segoe UI,Arial,sans-serif;color:#1f2937;\">
-                  <div style=\"padding:32px 16px;\">
-                    <div style=\"max-width:560px;margin:0 auto;\">
-                      <div style=\"background:#ffffff;border:1px solid #dbe3ea;border-radius:24px;box-shadow:0 18px 48px rgba(15,23,42,0.08);overflow:hidden;\">
-                        <div style=\"padding:28px 28px 18px;text-align:center;border-bottom:1px solid #eef2f7;\">
-                          <div style=\"width:56px;height:56px;margin:0 auto 18px;border-radius:18px;background:linear-gradient(135deg,#0f172a,#2563eb);color:#ffffff;font-size:28px;line-height:56px;font-weight:700;\">P</div>
-                          <div style=\"font-size:30px;line-height:1.15;font-weight:700;color:#111827;\">Email Delivery Test</div>
-                          <div style=\"margin-top:12px;font-size:15px;line-height:1.7;color:#475569;\">This is a test email from PLM Cloud. The target mailbox <strong>%s</strong> has received the request successfully.</div>
-                        </div>
-                        <div style=\"padding:28px;\">
-                          <div style=\"font-size:14px;line-height:1.8;color:#475569;text-align:center;\">Sent at: <strong>%s</strong></div>
-                          <div style=\"margin-top:24px;padding-top:20px;border-top:1px solid #eef2f7;font-size:13px;line-height:1.8;color:#64748b;text-align:center;\">If you triggered this email yourself, the mail delivery path is working. If not, you can ignore this message.</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </body>
-                </html>
-                """.formatted(safeEmail, safeSentAt);
+        return replacePlaceholder(
+                replacePlaceholder(testHtmlTemplate, "%s", safeEmail),
+                "%s",
+                safeSentAt);
     }
 
     public String renderTestEmailText(String email, OffsetDateTime sentAt) {
         return "PLM Cloud test email delivered to " + email + " at " + sentAt + ".";
+    }
+
+    private String loadTemplate(String path) {
+        ClassPathResource resource = new ClassPathResource(path);
+        try {
+            return StreamUtils.copyToString(resource.getInputStream(), StandardCharsets.UTF_8);
+        } catch (IOException ex) {
+            throw new IllegalStateException("failed to load email template: " + path, ex);
+        }
+    }
+
+    private String replacePlaceholder(String template, String placeholder, String value) {
+        return template.replaceFirst(Pattern.quote(placeholder), Matcher.quoteReplacement(value));
     }
 
     private String escapeHtml(String value) {
@@ -88,7 +107,7 @@ public class RegisterEmailTemplateRenderer {
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
-          .replace("\"", "&quot;")
+              .replace("\"", "&quot;")
                 .replace("'", "&#39;");
     }
 }

@@ -3,6 +3,7 @@ package com.plm.auth.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plm.auth.config.AuthEmailVerificationProperties;
+import com.plm.auth.config.AuthInvitationProperties;
 import com.plm.auth.exception.AuthBusinessException;
 import com.plm.auth.util.AuthNormalizer;
 import org.springframework.http.HttpStatus;
@@ -22,14 +23,17 @@ import java.util.Map;
 @Service
 public class ResendRegisterEmailSender implements RegisterEmailSender {
     private final AuthEmailVerificationProperties properties;
+    private final AuthInvitationProperties invitationProperties;
     private final RegisterEmailTemplateRenderer templateRenderer;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
     public ResendRegisterEmailSender(AuthEmailVerificationProperties properties,
+                                     AuthInvitationProperties invitationProperties,
                                      RegisterEmailTemplateRenderer templateRenderer,
                                      ObjectMapper objectMapper) {
         this.properties = properties;
+        this.invitationProperties = invitationProperties;
         this.templateRenderer = templateRenderer;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newHttpClient();
@@ -48,6 +52,26 @@ public class ResendRegisterEmailSender implements RegisterEmailSender {
                 "email verification is disabled",
                 "resend email sender is not configured",
                 "failed to send verification email"
+        );
+    }
+
+    @Override
+    public void sendWorkspaceInvitationEmail(String email,
+                                             String workspaceName,
+                                             String inviterDisplayName,
+                                             String acceptUrl,
+                                             OffsetDateTime expiresAt) {
+        sendEmail(
+                email,
+                invitationProperties.getEmailSubject() + " - " + workspaceName,
+                templateRenderer.renderWorkspaceInvitationEmail(workspaceName, inviterDisplayName, acceptUrl, expiresAt),
+                templateRenderer.renderWorkspaceInvitationEmailText(workspaceName, inviterDisplayName, acceptUrl, expiresAt),
+                "WORKSPACE_INVITATION_EMAIL_DISABLED",
+                "WORKSPACE_INVITATION_EMAIL_NOT_CONFIGURED",
+                "WORKSPACE_INVITATION_EMAIL_SEND_FAILED",
+                "workspace invitation email sending is disabled",
+                "resend email sender is not configured",
+                "failed to send workspace invitation email"
         );
     }
 

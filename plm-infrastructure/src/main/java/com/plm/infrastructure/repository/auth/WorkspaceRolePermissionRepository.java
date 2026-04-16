@@ -20,4 +20,14 @@ public interface WorkspaceRolePermissionRepository extends JpaRepository<Workspa
             order by p.permissionCode asc
             """)
     List<String> findPermissionCodesByWorkspaceRoleId(@Param("workspaceRoleId") UUID workspaceRoleId);
+
+        @Query("""
+            select distinct p.permissionCode
+            from WorkspaceMemberRole wmr
+            join WorkspaceRolePermission wrp on wrp.workspaceRoleId = wmr.workspaceRoleId
+            join Permission p on p.id = wrp.permissionId
+            where wmr.workspaceMemberId = :workspaceMemberId
+            order by p.permissionCode asc
+            """)
+        List<String> findPermissionCodesByWorkspaceMemberId(@Param("workspaceMemberId") UUID workspaceMemberId);
 }

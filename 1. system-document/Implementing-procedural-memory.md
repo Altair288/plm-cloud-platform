@@ -103,9 +103,22 @@
 
 ## 2026-04-16 workspace_code 改为系统生成
 
-- `POST /auth/workspaces` 已改为不再接受前端传入 `workspaceCode`，如果请求体携带该字段，后端会返回 `INVALID_ARGUMENT`。
+- `POST /auth/workspaces` 的请求 DTO 已移除 `workspaceCode` 字段，前端创建 workspace 时只提交名称、类型、语言、时区和默认标记。
 - 新增 `WorkspaceCodeGenerationService`，当前默认规则为 `ws_{ownerUserId8}_{workspaceNameSlug}_{workspaceId8}`，其中 owner 和 workspace 都取 UUID 去连字符后的前 8 位。
 - 为避免用户名改名带来的稳定性风险，workspace_code 生成规则已彻底移除对 username 的依赖。
 - `workspaceName` 会先做 slug 归一化；如果归一化后为空，则回退到 `workspaceType` 的小写值，保证纯中文等场景仍能生成可用 code。
 - `workspaceCode` 继续作为响应字段返回，用于日志、路由、审计和系统内部稳定标识，但不再作为前端输入项。
-- AuthFlowControllerIT 已补充对系统生成 code、同名 workspace 生成不同 code、手工传入 workspaceCode 被拒绝等场景的覆盖。
+- AuthFlowControllerIT 已补充对系统生成 code、同名 workspace 生成不同 code 等场景的覆盖。
+
+## 2026-04-16 邀请功能草案
+
+- 已新增 `user-workspace-invitation-design-draft.md`，结合当前 `workspace_invitation` 设计补充了批量邮箱邀请、复制邀请链接、工作区内单个邮箱邀请三条主链路的推荐方案。
+
+## 2026-04-16 邀请功能三阶段实现落地与文档收口
+
+- `plm-auth-service` 已完成邀请功能三阶段落地，覆盖邮箱批量邀请、邮箱邀请预览与接受、邀请记录查询、邀请取消、分享链接创建、链接预览、链接接受、链接禁用。
+- `plm-common`、`plm-infrastructure`、`plm-auth-service` 已同步补齐 invitation DTO、实体、Repository、Flyway 迁移与邮件模板能力；当前邀请主数据落在 `workspace_invitation`、`workspace_invitation_link`、`workspace_invitation_link_accept_log`。
+- 邀请接受成功后，后端会直接创建或复用 workspace_member，并立即建立当前 workspace session；邮箱邀请写入 `joinType = INVITE`，分享链接写入 `joinType = INVITE_LINK`。
+- 本轮联调中曾出现邀请相关接口全部返回 400 的问题，根因不是业务逻辑，而是当前编译配置下 Spring MVC 不应依赖参数名推断；后续新增 controller 参数时统一显式写 `@PathVariable("token")`、`@PathVariable("id")`、`@RequestParam("workspaceId")` 这一类声明。
+- `AuthFlowControllerIT` 当前已提升到 23 passed / 0 failed，新增覆盖邮箱不匹配拒绝、取消后不可接受、禁用链接不可接受、单次链接首次使用后自动过期等边界场景。
+- `system-user-api-document/auth-service-frontend-integration.md` 已新增统一的邀请接口版块，集中说明邀请鉴权、预览、接受、状态机、逐项结果语义与前端错误处理，不再把邀请接口散写在其他章节。

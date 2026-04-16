@@ -14,15 +14,27 @@ import com.plm.common.api.dto.auth.AuthRegisterResponseDto;
 import com.plm.common.api.dto.auth.AuthSendRegisterEmailCodeRequestDto;
 import com.plm.common.api.dto.auth.AuthSendRegisterEmailCodeResponseDto;
 import com.plm.common.api.dto.auth.AuthSwitchWorkspaceRequestDto;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationDto;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationEmailBatchRequestDto;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationEmailBatchResponseDto;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationLinkPreviewResponseDto;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationLinkRequestDto;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationLinkResponseDto;
+import com.plm.common.api.dto.auth.AuthWorkspaceInvitationPreviewResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceBootstrapOptionsResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceSessionResponseDto;
 import com.plm.common.domain.auth.EmailVerificationCode;
 import com.plm.common.domain.auth.UserCredential;
 import com.plm.common.domain.auth.UserAccount;
 import com.plm.common.domain.auth.Workspace;
+import com.plm.common.domain.auth.WorkspaceInvitation;
+import com.plm.common.domain.auth.WorkspaceInvitationLinkAcceptLog;
 import com.plm.common.domain.auth.WorkspaceMember;
 import com.plm.infrastructure.repository.auth.EmailVerificationCodeRepository;
 import com.plm.infrastructure.repository.auth.UserAccountRepository;
+import com.plm.infrastructure.repository.auth.WorkspaceInvitationLinkAcceptLogRepository;
+import com.plm.infrastructure.repository.auth.WorkspaceInvitationLinkRepository;
+import com.plm.infrastructure.repository.auth.WorkspaceInvitationRepository;
 import com.plm.infrastructure.repository.auth.UserCredentialRepository;
 import com.plm.infrastructure.repository.auth.WorkspaceMemberRepository;
 import com.plm.infrastructure.repository.auth.WorkspaceRolePermissionRepository;
@@ -88,6 +100,15 @@ class AuthFlowControllerIT {
 
         @Autowired
         private WorkspaceRepository workspaceRepository;
+
+        @Autowired
+        private WorkspaceInvitationRepository workspaceInvitationRepository;
+
+        @Autowired
+        private WorkspaceInvitationLinkRepository workspaceInvitationLinkRepository;
+
+        @Autowired
+        private WorkspaceInvitationLinkAcceptLogRepository workspaceInvitationLinkAcceptLogRepository;
 
         @Autowired
         private WorkspaceRoleRepository workspaceRoleRepository;
@@ -341,29 +362,6 @@ class AuthFlowControllerIT {
         }
 
         @Test
-        void createWorkspace_shouldRejectManualWorkspaceCode() throws Exception {
-                AuthRegisterResponseDto registered = registerUser(uniqueSuffix());
-                AuthPasswordLoginResponseDto loginResponse = login(registered.getUsername(), "Password123!");
-
-                AuthCreateWorkspaceRequestDto request = newCreateWorkspaceRequest(
-                                "Manual Code Workspace",
-                                "TEAM",
-                                "zh-CN",
-                                "Asia/Shanghai",
-                                true);
-                request.setWorkspaceCode("custom_workspace_code");
-
-                mockMvc.perform(post("/auth/workspaces")
-                                .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken())
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsBytes(request)))
-                                .andExpect(status().isBadRequest())
-                                .andExpect(jsonPath("$.code").value("INVALID_ARGUMENT"))
-                                .andExpect(jsonPath("$.message")
-                                                .value("workspaceCode is system-generated and must not be provided"));
-        }
-
-        @Test
         void createWorkspace_shouldRejectInvalidDictionaryCodes() throws Exception {
                 AuthRegisterResponseDto registered = registerUser(uniqueSuffix());
                 AuthPasswordLoginResponseDto loginResponse = login(registered.getUsername(), "Password123!");
@@ -436,6 +434,368 @@ class AuthFlowControllerIT {
                                 firstWorkspace.getWorkspaceId(), "Alpha Workspace", "TEAM");
                 assertGeneratedWorkspaceCode(secondWorkspace.getWorkspaceCode(), registered.getUserId(),
                                 secondWorkspace.getWorkspaceId(), "Alpha Workspace", "TEAM");
+        }
+
+        @Test
+        void emailInvitation_shouldPreviewAndAcceptIntoWorkspace() throws Exception {
+                AuthRegisterResponseDto owner = registerUser(uniqueSuffix());
+                AuthPasswordLoginResponseDto ownerLogin = login(owner.getUsername(), "Password123!");
+                AuthWorkspaceSessionResponseDto workspace = createWorkspace(
+                                ownerLogin.getPlatformTokenName(),
+                                ownerLogin.getPlatformToken(),
+                                "Invite Mail Workspace",
+                                true);
+
+                String inviteeEmail = uniqueSuffix() + "@example.com";
+                AuthRegisterResponseDto invitee = registerUserWithEmail(uniqueSuffix(), inviteeEmail);
+
+                doNothing().when(registerEmailSender).sendWorkspaceInvitationEmail(anyString(), anyString(), anyString(),
+                                anyString(), any());
+
+                AuthWorkspaceInvitationEmailBatchRequestDto inviteRequest = new AuthWorkspaceInvitationEmailBatchRequestDto();
+                inviteRequest.setWorkspaceId(workspace.getWorkspaceId());
+                inviteRequest.setEmails(List.of(inviteeEmail));
+                inviteRequest.setSourceScene("WORKSPACE");
+                inviteRequest.setTargetRoleCode("workspace_member");
+
+                MvcResult sendResult = mockMvc.perform(post("/auth/workspace-invitations/email-batch")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(inviteRequest)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.successCount").value(1))
+                                .andReturn();
+
+                AuthWorkspaceInvitationEmailBatchResponseDto sendResponse = readValue(sendResult,
+                                AuthWorkspaceInvitationEmailBatchResponseDto.class);
+                UUID invitationId = sendResponse.getResults().get(0).getInvitationId();
+                WorkspaceInvitation invitation = workspaceInvitationRepository.findById(invitationId).orElseThrow();
+
+                mockMvc.perform(get("/auth/public/workspace-invitations/email/{token}", invitation.getInvitationToken()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.workspaceId").value(workspace.getWorkspaceId().toString()))
+                                .andExpect(jsonPath("$.invitationStatus").value("PENDING"))
+                                .andExpect(jsonPath("$.canAccept").value(true));
+
+                AuthPasswordLoginResponseDto inviteeLogin = login(invitee.getUsername(), "Password123!");
+                MvcResult acceptResult = mockMvc.perform(post("/auth/workspace-invitations/email/{token}/accept",
+                                invitation.getInvitationToken())
+                                .header(inviteeLogin.getPlatformTokenName(), inviteeLogin.getPlatformToken()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.workspaceId").value(workspace.getWorkspaceId().toString()))
+                                .andExpect(jsonPath("$.roleCodes[0]").value("workspace_member"))
+                                .andReturn();
+
+                AuthWorkspaceSessionResponseDto acceptedSession = readValue(acceptResult,
+                                AuthWorkspaceSessionResponseDto.class);
+                WorkspaceMember member = workspaceMemberRepository.findById(acceptedSession.getWorkspaceMemberId())
+                                .orElseThrow();
+                Assertions.assertEquals(AuthDomainConstants.WORKSPACE_JOIN_TYPE_INVITE, member.getJoinType());
+
+                WorkspaceInvitation updatedInvitation = workspaceInvitationRepository.findById(invitationId).orElseThrow();
+                Assertions.assertEquals(AuthDomainConstants.INVITATION_STATUS_ACCEPTED,
+                                updatedInvitation.getInvitationStatus());
+                Assertions.assertEquals(invitee.getUserId(), updatedInvitation.getAcceptedByUserId());
+        }
+
+        @Test
+        void emailBatchInvitation_shouldReturnPendingExistsAndDuplicateInput() throws Exception {
+                AuthRegisterResponseDto owner = registerUser(uniqueSuffix());
+                AuthPasswordLoginResponseDto ownerLogin = login(owner.getUsername(), "Password123!");
+                AuthWorkspaceSessionResponseDto workspace = createWorkspace(
+                                ownerLogin.getPlatformTokenName(),
+                                ownerLogin.getPlatformToken(),
+                                "Batch Invite Workspace",
+                                true);
+
+                String email = uniqueSuffix() + "@example.com";
+                doNothing().when(registerEmailSender).sendWorkspaceInvitationEmail(anyString(), anyString(), anyString(),
+                                anyString(), any());
+
+                AuthWorkspaceInvitationEmailBatchRequestDto firstRequest = new AuthWorkspaceInvitationEmailBatchRequestDto();
+                firstRequest.setWorkspaceId(workspace.getWorkspaceId());
+                firstRequest.setEmails(List.of(email));
+                firstRequest.setSourceScene("ONBOARDING");
+
+                mockMvc.perform(post("/auth/workspace-invitations/email-batch")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(firstRequest)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.successCount").value(1));
+
+                AuthWorkspaceInvitationEmailBatchRequestDto secondRequest = new AuthWorkspaceInvitationEmailBatchRequestDto();
+                secondRequest.setWorkspaceId(workspace.getWorkspaceId());
+                secondRequest.setEmails(List.of(email, email));
+                secondRequest.setSourceScene("ONBOARDING");
+
+                MvcResult secondResult = mockMvc.perform(post("/auth/workspace-invitations/email-batch")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(secondRequest)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.successCount").value(0))
+                                .andExpect(jsonPath("$.skippedCount").value(2))
+                                .andReturn();
+
+                AuthWorkspaceInvitationEmailBatchResponseDto secondResponse = readValue(secondResult,
+                                AuthWorkspaceInvitationEmailBatchResponseDto.class);
+                Assertions.assertEquals("PENDING_EXISTS", secondResponse.getResults().get(0).getResult());
+                Assertions.assertEquals("DUPLICATE_INPUT", secondResponse.getResults().get(1).getResult());
+
+                MvcResult listResult = mockMvc.perform(get("/auth/workspace-invitations")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .param("workspaceId", workspace.getWorkspaceId().toString())
+                                .param("status", "PENDING"))
+                                .andExpect(status().isOk())
+                                .andReturn();
+
+                AuthWorkspaceInvitationDto[] invitations = readValue(listResult, AuthWorkspaceInvitationDto[].class);
+                Assertions.assertEquals(1, invitations.length);
+                Assertions.assertEquals("PENDING", invitations[0].getInvitationStatus());
+        }
+
+        @Test
+        void invitationLink_shouldPreviewAndAcceptIntoWorkspace() throws Exception {
+                AuthRegisterResponseDto owner = registerUser(uniqueSuffix());
+                AuthPasswordLoginResponseDto ownerLogin = login(owner.getUsername(), "Password123!");
+                AuthWorkspaceSessionResponseDto workspace = createWorkspace(
+                                ownerLogin.getPlatformTokenName(),
+                                ownerLogin.getPlatformToken(),
+                                "Invite Link Workspace",
+                                true);
+
+                AuthRegisterResponseDto invitee = registerUser(uniqueSuffix());
+                AuthWorkspaceInvitationLinkRequestDto request = new AuthWorkspaceInvitationLinkRequestDto();
+                request.setWorkspaceId(workspace.getWorkspaceId());
+                request.setSourceScene("ONBOARDING");
+                request.setTargetRoleCode("workspace_member");
+                request.setExpiresInHours(24);
+
+                MvcResult createResult = mockMvc.perform(post("/auth/workspace-invitation-links")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(request)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                                .andReturn();
+
+                AuthWorkspaceInvitationLinkResponseDto linkResponse = readValue(createResult,
+                                AuthWorkspaceInvitationLinkResponseDto.class);
+                String token = linkResponse.getShareUrl().substring(linkResponse.getShareUrl().indexOf("token=") + 6);
+
+                MvcResult previewResult = mockMvc.perform(get("/auth/public/workspace-invitation-links/{token}", token))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.workspaceId").value(workspace.getWorkspaceId().toString()))
+                                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                                .andReturn();
+                AuthWorkspaceInvitationLinkPreviewResponseDto preview = readValue(previewResult,
+                                AuthWorkspaceInvitationLinkPreviewResponseDto.class);
+                Assertions.assertTrue(preview.isCanAccept());
+
+                AuthPasswordLoginResponseDto inviteeLogin = login(invitee.getUsername(), "Password123!");
+                MvcResult acceptResult = mockMvc.perform(post("/auth/workspace-invitation-links/{token}/accept", token)
+                                .header(inviteeLogin.getPlatformTokenName(), inviteeLogin.getPlatformToken()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.workspaceId").value(workspace.getWorkspaceId().toString()))
+                                .andReturn();
+
+                AuthWorkspaceSessionResponseDto acceptedSession = readValue(acceptResult,
+                                AuthWorkspaceSessionResponseDto.class);
+                WorkspaceMember member = workspaceMemberRepository.findById(acceptedSession.getWorkspaceMemberId())
+                                .orElseThrow();
+                Assertions.assertEquals(AuthDomainConstants.WORKSPACE_JOIN_TYPE_INVITE_LINK, member.getJoinType());
+
+                List<WorkspaceInvitationLinkAcceptLog> logs = workspaceInvitationLinkAcceptLogRepository.findAll();
+                Assertions.assertEquals(1, logs.size());
+                Assertions.assertEquals(invitee.getUserId(), logs.get(0).getAcceptedByUserId());
+        }
+
+        @Test
+        void emailInvitation_shouldRejectWhenCurrentUserEmailDoesNotMatch() throws Exception {
+                AuthRegisterResponseDto owner = registerUser(uniqueSuffix());
+                AuthPasswordLoginResponseDto ownerLogin = login(owner.getUsername(), "Password123!");
+                AuthWorkspaceSessionResponseDto workspace = createWorkspace(
+                                ownerLogin.getPlatformTokenName(),
+                                ownerLogin.getPlatformToken(),
+                                "Mismatch Invite Workspace",
+                                true);
+
+                String targetEmail = uniqueSuffix() + "@example.com";
+                doNothing().when(registerEmailSender).sendWorkspaceInvitationEmail(anyString(), anyString(), anyString(),
+                                anyString(), any());
+
+                AuthWorkspaceInvitationEmailBatchRequestDto inviteRequest = new AuthWorkspaceInvitationEmailBatchRequestDto();
+                inviteRequest.setWorkspaceId(workspace.getWorkspaceId());
+                inviteRequest.setEmails(List.of(targetEmail));
+                inviteRequest.setSourceScene("WORKSPACE");
+                inviteRequest.setTargetRoleCode("workspace_member");
+
+                MvcResult sendResult = mockMvc.perform(post("/auth/workspace-invitations/email-batch")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(inviteRequest)))
+                                .andExpect(status().isOk())
+                                .andReturn();
+
+                AuthWorkspaceInvitationEmailBatchResponseDto sendResponse = readValue(sendResult,
+                                AuthWorkspaceInvitationEmailBatchResponseDto.class);
+                WorkspaceInvitation invitation = workspaceInvitationRepository
+                                .findById(sendResponse.getResults().get(0).getInvitationId())
+                                .orElseThrow();
+
+                AuthRegisterResponseDto outsider = registerUser(uniqueSuffix());
+                AuthPasswordLoginResponseDto outsiderLogin = login(outsider.getUsername(), "Password123!");
+
+                mockMvc.perform(post("/auth/workspace-invitations/email/{token}/accept", invitation.getInvitationToken())
+                                .header(outsiderLogin.getPlatformTokenName(), outsiderLogin.getPlatformToken()))
+                                .andExpect(status().isForbidden())
+                                .andExpect(jsonPath("$.code").value("INVITATION_EMAIL_MISMATCH"));
+        }
+
+        @Test
+        void canceledEmailInvitation_shouldRejectAcceptanceAndPreviewCanAcceptFalse() throws Exception {
+                AuthRegisterResponseDto owner = registerUser(uniqueSuffix());
+                AuthPasswordLoginResponseDto ownerLogin = login(owner.getUsername(), "Password123!");
+                AuthWorkspaceSessionResponseDto workspace = createWorkspace(
+                                ownerLogin.getPlatformTokenName(),
+                                ownerLogin.getPlatformToken(),
+                                "Canceled Invite Workspace",
+                                true);
+
+                String inviteeEmail = uniqueSuffix() + "@example.com";
+                AuthRegisterResponseDto invitee = registerUserWithEmail(uniqueSuffix(), inviteeEmail);
+                doNothing().when(registerEmailSender).sendWorkspaceInvitationEmail(anyString(), anyString(), anyString(),
+                                anyString(), any());
+
+                AuthWorkspaceInvitationEmailBatchRequestDto inviteRequest = new AuthWorkspaceInvitationEmailBatchRequestDto();
+                inviteRequest.setWorkspaceId(workspace.getWorkspaceId());
+                inviteRequest.setEmails(List.of(inviteeEmail));
+                inviteRequest.setSourceScene("WORKSPACE");
+
+                MvcResult sendResult = mockMvc.perform(post("/auth/workspace-invitations/email-batch")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(inviteRequest)))
+                                .andExpect(status().isOk())
+                                .andReturn();
+
+                AuthWorkspaceInvitationEmailBatchResponseDto sendResponse = readValue(sendResult,
+                                AuthWorkspaceInvitationEmailBatchResponseDto.class);
+                UUID invitationId = sendResponse.getResults().get(0).getInvitationId();
+                WorkspaceInvitation invitation = workspaceInvitationRepository.findById(invitationId).orElseThrow();
+
+                mockMvc.perform(post("/auth/workspace-invitations/{id}/cancel", invitationId)
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.invitationStatus").value("CANCELED"));
+
+                mockMvc.perform(get("/auth/public/workspace-invitations/email/{token}", invitation.getInvitationToken()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.invitationStatus").value("CANCELED"))
+                                .andExpect(jsonPath("$.canAccept").value(false));
+
+                AuthPasswordLoginResponseDto inviteeLogin = login(invitee.getUsername(), "Password123!");
+                mockMvc.perform(post("/auth/workspace-invitations/email/{token}/accept", invitation.getInvitationToken())
+                                .header(inviteeLogin.getPlatformTokenName(), inviteeLogin.getPlatformToken()))
+                                .andExpect(status().isGone())
+                                .andExpect(jsonPath("$.code").value("WORKSPACE_INVITATION_CANCELED"));
+        }
+
+        @Test
+        void disabledInvitationLink_shouldRejectAcceptanceAndPreviewCanAcceptFalse() throws Exception {
+                AuthRegisterResponseDto owner = registerUser(uniqueSuffix());
+                AuthPasswordLoginResponseDto ownerLogin = login(owner.getUsername(), "Password123!");
+                AuthWorkspaceSessionResponseDto workspace = createWorkspace(
+                                ownerLogin.getPlatformTokenName(),
+                                ownerLogin.getPlatformToken(),
+                                "Disabled Link Workspace",
+                                true);
+
+                AuthRegisterResponseDto invitee = registerUser(uniqueSuffix());
+                AuthWorkspaceInvitationLinkRequestDto request = new AuthWorkspaceInvitationLinkRequestDto();
+                request.setWorkspaceId(workspace.getWorkspaceId());
+                request.setSourceScene("WORKSPACE");
+                request.setTargetRoleCode("workspace_member");
+                request.setExpiresInHours(24);
+
+                MvcResult createResult = mockMvc.perform(post("/auth/workspace-invitation-links")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(request)))
+                                .andExpect(status().isOk())
+                                .andReturn();
+
+                AuthWorkspaceInvitationLinkResponseDto linkResponse = readValue(createResult,
+                                AuthWorkspaceInvitationLinkResponseDto.class);
+                String token = linkResponse.getShareUrl().substring(linkResponse.getShareUrl().indexOf("token=") + 6);
+
+                mockMvc.perform(post("/auth/workspace-invitation-links/{id}/disable", linkResponse.getLinkId())
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("DISABLED"));
+
+                mockMvc.perform(get("/auth/public/workspace-invitation-links/{token}", token))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("DISABLED"))
+                                .andExpect(jsonPath("$.canAccept").value(false));
+
+                AuthPasswordLoginResponseDto inviteeLogin = login(invitee.getUsername(), "Password123!");
+                mockMvc.perform(post("/auth/workspace-invitation-links/{token}/accept", token)
+                                .header(inviteeLogin.getPlatformTokenName(), inviteeLogin.getPlatformToken()))
+                                .andExpect(status().isGone())
+                                .andExpect(jsonPath("$.code").value("WORKSPACE_INVITATION_LINK_DISABLED"));
+        }
+
+        @Test
+        void singleUseInvitationLink_shouldExpireAfterFirstAcceptance() throws Exception {
+                AuthRegisterResponseDto owner = registerUser(uniqueSuffix());
+                AuthPasswordLoginResponseDto ownerLogin = login(owner.getUsername(), "Password123!");
+                AuthWorkspaceSessionResponseDto workspace = createWorkspace(
+                                ownerLogin.getPlatformTokenName(),
+                                ownerLogin.getPlatformToken(),
+                                "Single Use Link Workspace",
+                                true);
+
+                AuthRegisterResponseDto firstInvitee = registerUser(uniqueSuffix());
+                AuthRegisterResponseDto secondInvitee = registerUser(uniqueSuffix());
+
+                AuthWorkspaceInvitationLinkRequestDto request = new AuthWorkspaceInvitationLinkRequestDto();
+                request.setWorkspaceId(workspace.getWorkspaceId());
+                request.setSourceScene("ONBOARDING");
+                request.setTargetRoleCode("workspace_member");
+                request.setExpiresInHours(24);
+                request.setMaxUseCount(1);
+
+                MvcResult createResult = mockMvc.perform(post("/auth/workspace-invitation-links")
+                                .header(ownerLogin.getPlatformTokenName(), ownerLogin.getPlatformToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(request)))
+                                .andExpect(status().isOk())
+                                .andReturn();
+
+                AuthWorkspaceInvitationLinkResponseDto linkResponse = readValue(createResult,
+                                AuthWorkspaceInvitationLinkResponseDto.class);
+                String token = linkResponse.getShareUrl().substring(linkResponse.getShareUrl().indexOf("token=") + 6);
+
+                AuthPasswordLoginResponseDto firstInviteeLogin = login(firstInvitee.getUsername(), "Password123!");
+                mockMvc.perform(post("/auth/workspace-invitation-links/{token}/accept", token)
+                                .header(firstInviteeLogin.getPlatformTokenName(), firstInviteeLogin.getPlatformToken()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.workspaceId").value(workspace.getWorkspaceId().toString()));
+
+                mockMvc.perform(get("/auth/public/workspace-invitation-links/{token}", token))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("EXPIRED"))
+                                .andExpect(jsonPath("$.usedCount").value(1))
+                                .andExpect(jsonPath("$.maxUseCount").value(1))
+                                .andExpect(jsonPath("$.canAccept").value(false));
+
+                AuthPasswordLoginResponseDto secondInviteeLogin = login(secondInvitee.getUsername(), "Password123!");
+                mockMvc.perform(post("/auth/workspace-invitation-links/{token}/accept", token)
+                                .header(secondInviteeLogin.getPlatformTokenName(), secondInviteeLogin.getPlatformToken()))
+                                .andExpect(status().isGone())
+                                .andExpect(jsonPath("$.code").value("WORKSPACE_INVITATION_LINK_EXPIRED"));
         }
 
         @Test
@@ -618,12 +978,15 @@ class AuthFlowControllerIT {
         }
 
         private AuthRegisterResponseDto registerUser(String suffix) throws Exception {
+                return registerUserWithEmail(suffix, suffix + "@example.com");
+        }
+
+        private AuthRegisterResponseDto registerUserWithEmail(String suffix, String email) throws Exception {
                 AuthRegisterRequestDto request = new AuthRegisterRequestDto();
                 request.setUsername("user_" + suffix);
                 request.setDisplayName("User " + suffix);
                 request.setPassword("Password123!");
                 request.setConfirmPassword("Password123!");
-                String email = suffix + "@example.com";
                 request.setEmail(email);
                 request.setEmailVerificationCode(sendRegisterEmailCode(email));
                 request.setPhone("1390000" + suffix.substring(0, 4));

@@ -6,12 +6,47 @@
       "sourceType": "com.plm.infrastructure.config.FlywayConfig"
     },
     {
+      "name": "plm.auth.invitation",
+      "type": "com.plm.auth.config.AuthInvitationProperties",
+      "sourceType": "com.plm.auth.config.AuthInvitationProperties"
+    },
+    {
       "name": "plm.auth.email.verification",
       "type": "com.plm.auth.config.AuthEmailVerificationProperties",
       "sourceType": "com.plm.auth.config.AuthEmailVerificationProperties"
     }
   ],
   "properties": [
+    {
+      "name": "plm.auth.invitation.email-subject",
+      "type": "java.lang.String",
+      "description": "Email subject used for workspace invitation messages."
+    },
+    {
+      "name": "plm.auth.invitation.email-expire-in-seconds",
+      "type": "java.lang.Long",
+      "description": "Default expiration window in seconds for email invitations."
+    },
+    {
+      "name": "plm.auth.invitation.link-expire-in-hours",
+      "type": "java.lang.Integer",
+      "description": "Default expiration window in hours for shared invitation links."
+    },
+    {
+      "name": "plm.auth.invitation.max-batch-size",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of email invitations accepted in a single batch request."
+    },
+    {
+      "name": "plm.auth.invitation.email-accept-url-template",
+      "type": "java.lang.String",
+      "description": "String.format template used to generate workspace email invitation URLs."
+    },
+    {
+      "name": "plm.auth.invitation.link-accept-url-template",
+      "type": "java.lang.String",
+      "description": "String.format template used to generate shared workspace invitation URLs."
+    },
     {
       "name": "plm.datasource.url",
       "type": "java.lang.String",

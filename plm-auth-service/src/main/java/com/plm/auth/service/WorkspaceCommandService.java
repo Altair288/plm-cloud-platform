@@ -82,9 +82,6 @@ public class WorkspaceCommandService {
         if (workspaceName == null || workspaceName.length() > 128) {
             throw new IllegalArgumentException("workspaceName is required and must be <= 128 chars");
         }
-        if (AuthNormalizer.trimToNull(request.getWorkspaceCode()) != null) {
-            throw new IllegalArgumentException("workspaceCode is system-generated and must not be provided");
-        }
 
         String workspaceType = workspaceDictionaryService.resolveWorkspaceTypeCode(request.getWorkspaceType());
         String defaultLocale = workspaceDictionaryService.resolveWorkspaceLocaleCode(request.getDefaultLocale());
