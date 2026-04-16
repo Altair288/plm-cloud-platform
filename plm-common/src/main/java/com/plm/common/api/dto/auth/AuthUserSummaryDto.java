@@ -12,4 +12,6 @@ public class AuthUserSummaryDto {
     private String email;
     private String phone;
     private String status;
+    private Boolean isFirstLogin;
+    private Integer workspaceCount;
 }

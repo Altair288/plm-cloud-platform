@@ -16,6 +16,8 @@ import java.util.UUID;
 public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember, UUID> {
     List<WorkspaceMember> findByUserIdAndMemberStatusOrderByCreatedAtAsc(UUID userId, String memberStatus);
 
+  long countByUserIdAndMemberStatus(UUID userId, String memberStatus);
+
     Optional<WorkspaceMember> findByUserIdAndWorkspaceId(UUID userId, UUID workspaceId);
 
     Optional<WorkspaceMember> findByUserIdAndIsDefaultWorkspaceTrue(UUID userId);

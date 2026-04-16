@@ -27,17 +27,20 @@ public class AuthLoginService {
     private final LoginAuditRepository loginAuditRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthQueryService authQueryService;
+    private final UserWorkspaceStateService userWorkspaceStateService;
 
     public AuthLoginService(UserAccountRepository userAccountRepository,
                             UserCredentialRepository userCredentialRepository,
                             LoginAuditRepository loginAuditRepository,
                             PasswordEncoder passwordEncoder,
-                            AuthQueryService authQueryService) {
+                            AuthQueryService authQueryService,
+                            UserWorkspaceStateService userWorkspaceStateService) {
         this.userAccountRepository = userAccountRepository;
         this.userCredentialRepository = userCredentialRepository;
         this.loginAuditRepository = loginAuditRepository;
         this.passwordEncoder = passwordEncoder;
         this.authQueryService = authQueryService;
+        this.userWorkspaceStateService = userWorkspaceStateService;
     }
 
     @Transactional
@@ -81,6 +84,7 @@ public class AuthLoginService {
         user.setLastLoginAt(OffsetDateTime.now());
         user.setUpdatedBy(user.getId().toString());
         userAccountRepository.save(user);
+        user = userWorkspaceStateService.syncUserWorkspaceState(user);
         credential.setLastVerifiedAt(OffsetDateTime.now());
         credential.setUpdatedBy(user.getId().toString());
         userCredentialRepository.save(credential);

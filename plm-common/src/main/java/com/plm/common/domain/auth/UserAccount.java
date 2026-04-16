@@ -39,6 +39,12 @@ public class UserAccount {
     @Column(name = "source_type", nullable = false, length = 20)
     private String sourceType = "LOCAL";
 
+    @Column(name = "is_first_login", nullable = false)
+    private Boolean isFirstLogin = Boolean.TRUE;
+
+    @Column(name = "workspace_count", nullable = false)
+    private Integer workspaceCount = 0;
+
     @Column(name = "registered_at", nullable = false)
     private OffsetDateTime registeredAt;
 
@@ -68,6 +74,12 @@ public class UserAccount {
         }
         if (sourceType == null || sourceType.isBlank()) {
             sourceType = "LOCAL";
+        }
+        if (isFirstLogin == null) {
+            isFirstLogin = Boolean.TRUE;
+        }
+        if (workspaceCount == null || workspaceCount < 0) {
+            workspaceCount = 0;
         }
         if (registeredAt == null) {
             registeredAt = now;

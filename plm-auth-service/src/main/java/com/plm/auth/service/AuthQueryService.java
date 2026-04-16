@@ -30,22 +30,25 @@ public class AuthQueryService {
     private final WorkspaceMemberRepository workspaceMemberRepository;
     private final WorkspaceMemberRoleRepository workspaceMemberRoleRepository;
     private final WorkspaceSessionService workspaceSessionService;
+    private final UserWorkspaceStateService userWorkspaceStateService;
 
     public AuthQueryService(UserAccountRepository userAccountRepository,
                             WorkspaceRepository workspaceRepository,
                             WorkspaceMemberRepository workspaceMemberRepository,
                             WorkspaceMemberRoleRepository workspaceMemberRoleRepository,
-                            WorkspaceSessionService workspaceSessionService) {
+                            WorkspaceSessionService workspaceSessionService,
+                            UserWorkspaceStateService userWorkspaceStateService) {
         this.userAccountRepository = userAccountRepository;
         this.workspaceRepository = workspaceRepository;
         this.workspaceMemberRepository = workspaceMemberRepository;
         this.workspaceMemberRoleRepository = workspaceMemberRoleRepository;
         this.workspaceSessionService = workspaceSessionService;
+        this.userWorkspaceStateService = userWorkspaceStateService;
     }
 
     public AuthUserSummaryDto getCurrentUserSummary(UUID userId) {
         UserAccount user = userAccountRepository.findById(userId).orElseThrow(() -> new IllegalArgumentException("user not found"));
-        return toUserSummary(user);
+        return toUserSummary(userWorkspaceStateService.syncUserWorkspaceState(user));
     }
 
     public List<AuthWorkspaceOptionDto> listWorkspaceOptions(UUID userId) {
@@ -102,6 +105,8 @@ public class AuthQueryService {
         summary.setEmail(user.getEmail());
         summary.setPhone(user.getPhone());
         summary.setStatus(user.getStatus());
+        summary.setIsFirstLogin(user.getIsFirstLogin());
+        summary.setWorkspaceCount(user.getWorkspaceCount());
         return summary;
     }
 

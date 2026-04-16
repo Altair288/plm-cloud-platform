@@ -82,3 +82,11 @@
 - Spring Cloud Gateway 2025.0.x 下 dev 配置 key 已迁移到 `spring.cloud.gateway.server.webflux.*`，避免运行期 properties migration 警告。
 - gateway 已新增最小 JSON 异常处理：未命中路由返回 `GATEWAY_ROUTE_NOT_FOUND`，下游不可达返回 `GATEWAY_DOWNSTREAM_UNAVAILABLE`，下游已返回的业务错误继续原样透传。
 - auth 前端对接文档与 attribute API 文档已补充“前端统一通过 gateway 8080 访问”的 base URL 约定。
+
+## 2026-04-16 用户首次登录与 workspace 数量状态
+
+- 已为 `plm_platform.user_account` 增加 `is_first_login` 与 `workspace_count` 字段，并通过 `V36__auth_user_first_login_and_workspace_count.sql` 回填历史数据。
+- 语义约定：`is_first_login` 表示用户是否尚未完成首次 workspace 建立；一旦首次成功创建 workspace，就永久翻转为 `false`。
+- `workspace_count` 表示用户当前活跃 workspace 数，供前端处理“用户后来删光所有 workspace”的空态分支，避免停留在空白页。
+- 登录与 `/auth/me` 查询链路已接入 `UserWorkspaceStateService`，会基于 `workspace_member` 活跃记录做一次自愈同步，降低未来删除或迁移逻辑导致字段漂移的风险。
+- `AuthUserSummaryDto` 与前端 `auth.ts` 类型已同步增加 `isFirstLogin`、`workspaceCount` 字段。

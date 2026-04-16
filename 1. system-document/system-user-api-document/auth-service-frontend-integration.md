@@ -17,6 +17,11 @@
 3. 创建 workspace 会自动创建 owner member、内建角色、默认权限绑定，并自动切入该 workspace。
 4. 当前 workspace 上下文以后端 platform session 中保存的 currentWorkspaceMemberId 为准，前端本地缓存只用于恢复请求头，不可替代后端真实会话。
 
+另外，`user` 摘要中新增两个与 workspace 引导直接相关的字段：
+
+1. `isFirstLogin`：表示用户尚未完成首次 workspace 建立；首次成功创建 workspace 后会永久变为 `false`。
+2. `workspaceCount`：表示用户当前可用的活跃 workspace 数，用于处理“用户后来删光了所有 workspace”的空态分支。
+
 ## 2. 鉴权与 Header 约定
 
 ### 2.1 平台登录态
@@ -114,10 +119,11 @@
 
 1. 调用 POST /auth/public/login/password
 2. 保存 platformToken、platformTokenName、user、defaultWorkspace、workspaceOptions
-3. 如果 workspaceOptions 为空，进入“创建第一个 workspace”页面
-4. 如果 workspaceOptions 不为空且 defaultWorkspace 存在，优先调用 POST /auth/workspace-session/switch 切入 defaultWorkspace
-5. switch 成功后保存 workspaceToken、workspaceTokenName、currentWorkspace、roleCodes
-6. 进入依赖 workspace 上下文的业务页面
+3. 如果 `user.isFirstLogin = true`，直接进入“创建第一个 workspace”页面
+4. 如果 `user.isFirstLogin = false` 且 `user.workspaceCount = 0`，进入“无 workspace 空态页”或“恢复创建 workspace”页面，不要停留在空白页
+5. 如果 `user.workspaceCount > 0` 且 `defaultWorkspace` 存在，优先调用 POST /auth/workspace-session/switch 切入 defaultWorkspace
+6. switch 成功后保存 workspaceToken、workspaceTokenName、currentWorkspace、roleCodes
+7. 进入依赖 workspace 上下文的业务页面
 
 注意：登录成功不代表可以直接访问 workspace 业务页面，因为此时通常还没有 workspace token。
 
@@ -141,8 +147,10 @@
 
 1. 先用本地 platform token 调用 GET /auth/me
 2. 如果 currentWorkspace 存在且本地 workspace token 也存在，可恢复当前 workspace UI 状态
-3. 如果 currentWorkspace 为 null，进入“选空间 / 建空间”流程
-4. 如果 currentWorkspace 存在但本地 workspace token 已丢失，应使用 currentWorkspace.workspaceId 再调一次 POST /auth/workspace-session/switch，重新获取 workspace token
+3. 如果 `user.isFirstLogin = true`，进入首次创建 workspace 流程
+4. 如果 `user.isFirstLogin = false` 且 `user.workspaceCount = 0`，进入无 workspace 空态页或创建页
+5. 如果 currentWorkspace 为 null 且 `user.workspaceCount > 0`，进入“选空间 / 建空间”流程
+6. 如果 currentWorkspace 存在但本地 workspace token 已丢失，应使用 currentWorkspace.workspaceId 再调一次 POST /auth/workspace-session/switch，重新获取 workspace token
 
 ## 5. 接口明细
 
@@ -264,7 +272,9 @@
     "displayName": "Alice",
     "email": "alice@example.com",
     "phone": "13800001234",
-    "status": "ACTIVE"
+    "status": "ACTIVE",
+    "isFirstLogin": true,
+    "workspaceCount": 0
   },
   "defaultWorkspace": null,
   "workspaceOptions": [],
@@ -276,10 +286,16 @@
 
 - platformToken：平台登录 token
 - platformTokenName：平台 token 对应 header 名称
-- user：当前登录用户摘要
+- user：当前用户摘要，其中 `isFirstLogin` 与 `workspaceCount` 是前端进入首次创建页或无 workspace 空态页的主判断依据
 - defaultWorkspace：默认 workspace 摘要，不等于当前 workspace
 - workspaceOptions：可选 workspace 摘要列表
 - currentWorkspace：当前 workspace 会话，登录成功后通常为空
+
+前端建议判断顺序：
+
+1. `user.isFirstLogin = true`：进入首次创建 workspace 页面
+2. `user.isFirstLogin = false && user.workspaceCount = 0`：进入无 workspace 空态页或恢复创建页
+3. `user.workspaceCount > 0`：继续按 defaultWorkspace / currentWorkspace 正常恢复业务上下文
 
 成功状态码：200
 

@@ -42,6 +42,7 @@ public class WorkspaceCommandService {
     private final PermissionRepository permissionRepository;
     private final WorkspaceRolePermissionRepository workspaceRolePermissionRepository;
     private final WorkspaceSessionService workspaceSessionService;
+    private final UserWorkspaceStateService userWorkspaceStateService;
 
     public WorkspaceCommandService(UserAccountRepository userAccountRepository,
                                    WorkspaceRepository workspaceRepository,
@@ -50,7 +51,8 @@ public class WorkspaceCommandService {
                                    WorkspaceMemberRoleRepository workspaceMemberRoleRepository,
                                    PermissionRepository permissionRepository,
                                    WorkspaceRolePermissionRepository workspaceRolePermissionRepository,
-                                   WorkspaceSessionService workspaceSessionService) {
+                                   WorkspaceSessionService workspaceSessionService,
+                                   UserWorkspaceStateService userWorkspaceStateService) {
         this.userAccountRepository = userAccountRepository;
         this.workspaceRepository = workspaceRepository;
         this.workspaceMemberRepository = workspaceMemberRepository;
@@ -59,6 +61,7 @@ public class WorkspaceCommandService {
         this.permissionRepository = permissionRepository;
         this.workspaceRolePermissionRepository = workspaceRolePermissionRepository;
         this.workspaceSessionService = workspaceSessionService;
+        this.userWorkspaceStateService = userWorkspaceStateService;
     }
 
     @Transactional
@@ -120,6 +123,8 @@ public class WorkspaceCommandService {
         if (shouldRememberAsDefault) {
             workspaceSessionService.markDefaultWorkspace(userId, member);
         }
+
+        userWorkspaceStateService.syncUserWorkspaceState(user);
 
         return workspaceSessionService.openWorkspaceSession(workspace, member, List.of(AuthDomainConstants.ROLE_CODE_WORKSPACE_OWNER));
     }

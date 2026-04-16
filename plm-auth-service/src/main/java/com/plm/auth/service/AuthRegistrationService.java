@@ -77,6 +77,8 @@ public class AuthRegistrationService {
         user.setPhone(phone);
         user.setStatus(AuthDomainConstants.USER_STATUS_ACTIVE);
         user.setSourceType("LOCAL");
+        user.setIsFirstLogin(Boolean.TRUE);
+        user.setWorkspaceCount(0);
         user.setCreatedBy("SELF_REGISTER");
         user = userAccountRepository.save(user);
 
