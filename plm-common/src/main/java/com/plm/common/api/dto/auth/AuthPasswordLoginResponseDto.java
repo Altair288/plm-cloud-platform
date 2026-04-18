@@ -8,6 +8,8 @@ import java.util.List;
 public class AuthPasswordLoginResponseDto {
     private String platformToken;
     private String platformTokenName;
+    private Boolean remember;
+    private Long platformTokenExpireInSeconds;
     private AuthUserSummaryDto user;
     private AuthWorkspaceOptionDto defaultWorkspace;
     private List<AuthWorkspaceOptionDto> workspaceOptions;

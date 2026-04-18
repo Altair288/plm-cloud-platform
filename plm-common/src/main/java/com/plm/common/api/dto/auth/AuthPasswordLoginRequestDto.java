@@ -6,4 +6,7 @@ import lombok.Data;
 public class AuthPasswordLoginRequestDto {
     private String identifier;
     private String password;
+    private String passwordCiphertext;
+    private String encryptionKeyId;
+    private Boolean remember;
 }

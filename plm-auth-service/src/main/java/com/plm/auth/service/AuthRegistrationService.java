@@ -23,23 +23,34 @@ public class AuthRegistrationService {
     private final UserCredentialRepository userCredentialRepository;
     private final PasswordEncoder passwordEncoder;
     private final RegisterEmailVerificationService registerEmailVerificationService;
+    private final PasswordTransportSecurityService passwordTransportSecurityService;
 
     public AuthRegistrationService(UserAccountRepository userAccountRepository,
                                    UserCredentialRepository userCredentialRepository,
                                    PasswordEncoder passwordEncoder,
-                                   RegisterEmailVerificationService registerEmailVerificationService) {
+                                   RegisterEmailVerificationService registerEmailVerificationService,
+                                   PasswordTransportSecurityService passwordTransportSecurityService) {
         this.userAccountRepository = userAccountRepository;
         this.userCredentialRepository = userCredentialRepository;
         this.passwordEncoder = passwordEncoder;
         this.registerEmailVerificationService = registerEmailVerificationService;
+        this.passwordTransportSecurityService = passwordTransportSecurityService;
     }
 
     @Transactional
     public AuthRegisterResponseDto register(AuthRegisterRequestDto request) {
         String username = AuthNormalizer.normalizeUsername(request.getUsername());
         String displayName = AuthNormalizer.trimToNull(request.getDisplayName());
-        String password = request.getPassword();
-        String confirmPassword = request.getConfirmPassword();
+        String password = passwordTransportSecurityService.resolvePassword(
+            request.getPassword(),
+            request.getPasswordCiphertext(),
+            request.getEncryptionKeyId(),
+            "password");
+        String confirmPassword = passwordTransportSecurityService.resolvePassword(
+            request.getConfirmPassword(),
+            request.getConfirmPasswordCiphertext(),
+            request.getEncryptionKeyId(),
+            "confirmPassword");
         String email = AuthNormalizer.normalizeEmail(request.getEmail());
         String emailVerificationCode = AuthNormalizer.normalizeVerificationCode(request.getEmailVerificationCode());
         String phone = AuthNormalizer.normalizePhone(request.getPhone());

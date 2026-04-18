@@ -122,3 +122,29 @@
 - 本轮联调中曾出现邀请相关接口全部返回 400 的问题，根因不是业务逻辑，而是当前编译配置下 Spring MVC 不应依赖参数名推断；后续新增 controller 参数时统一显式写 `@PathVariable("token")`、`@PathVariable("id")`、`@RequestParam("workspaceId")` 这一类声明。
 - `AuthFlowControllerIT` 当前已提升到 23 passed / 0 failed，新增覆盖邮箱不匹配拒绝、取消后不可接受、禁用链接不可接受、单次链接首次使用后自动过期等边界场景。
 - `system-user-api-document/auth-service-frontend-integration.md` 已新增统一的邀请接口版块，集中说明邀请鉴权、预览、接受、状态机、逐项结果语义与前端错误处理，不再把邀请接口散写在其他章节。
+
+## 2026-04-17 登录 remember 选项与 token 有效期
+
+- `POST /auth/public/login/password` 已新增可选字段 `remember`，用于区分普通登录与“记住登录”两档平台 token 有效期。
+- auth-service 已新增 `plm.auth.login.expire-in-seconds` 与 `plm.auth.login.remember-expire-in-seconds` 配置；当前 dev 默认分别为 12 小时和 30 天，并支持环境变量覆盖。
+- `AuthLoginService` 已改为通过 Sa-Token `SaLoginModel` 显式设置平台 token timeout，而不是继续使用框架默认登录时长。
+- 登录响应已新增 `remember` 与 `platformTokenExpireInSeconds`，前端应以后端返回的实际有效期管理本地 token 生命周期，而不是自行写死 TTL。
+- `AuthFlowControllerIT` 已补 remember 登录分支，校验普通登录与 remember 登录返回的有效期差异，并校验平台 token 实际超时配置已生效。
+
+## 2026-04-17 注册与登录密码改为 RSA 非对称加密传输
+
+- auth-service 已新增公开接口 `GET /auth/public/security/password-encryption-key`，用于给前端下发当前 password transport RSA 公钥、keyId 与加密 transformation。
+- `POST /auth/public/register` 与 `POST /auth/public/login/password` 当前优先接收 `passwordCiphertext` / `confirmPasswordCiphertext` 与 `encryptionKeyId`，由后端解密后再进入原有密码校验与 BCrypt 哈希流程。
+- 当前 `plm.auth.password-rsa.allow-plaintext-fallback=false`，表示明文 `password` 在当前配置下会被拒绝，避免前端“名义支持加密，实际仍传明文”。
+- RSA 实现当前使用 `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`；若未通过环境变量注入固定公私钥，auth-service 会在启动时生成一组临时密钥用于本地联调。
+- `AuthFlowControllerIT` 的注册与登录 helper 已切到“先拉公钥、再加密密码提交”的真实链路，并补充了公钥接口可用、明文登录被拒绝等安全测试。
+- 额外排查确认：仅传 `RSA/ECB/OAEPWithSHA-256AndMGF1Padding` 给 JCE 并不能保证 MGF1 摘要也一定是 SHA-256；当前实现与测试已改为显式传入 `OAEPParameterSpec(SHA-256, MGF1, SHA-256, default)`，避免落成 SHA-256 + MGF1(SHA-1) 的混合模式。
+
+## 2026-04-17 RSA 密钥对改为 Redis 24 小时持久化
+
+- auth-service 已引入 `spring-boot-starter-data-redis`，并为 password transport RSA 增加 Redis key store 配置：`redis-key-prefix`、`redis-ttl-seconds`。
+- 当前默认策略为：未显式配置固定 PEM 公私钥时，GET `/auth/public/security/password-encryption-key` 会先查 Redis 当前活动 keyId；若不存在则生成新密钥对，写入 Redis，并设置 24 小时 TTL。
+- 注册与登录解密流程已改为按请求中的 `encryptionKeyId` 从 Redis 读取对应私钥，而不是继续依赖服务启动时保存在内存中的单例私钥。
+- 当前实现已收口为“未配置固定 PEM 时必须使用 Redis”；如果 Redis 不可达或认证失败，公钥接口与解密流程会直接报错，不再回退到进程内临时密钥。
+- `application-dev.yml` 已补充 `spring.data.redis.password`，当前默认开发密码为 `p@ssw0rd@2025`，并支持通过 `PLM_AUTH_REDIS_PASSWORD` 覆盖。
+- 新增 `PasswordTransportSecurityServiceTest`，覆盖 Redis 模式下的 keyId 复用、TTL 写入和私钥解密链路；当前 Maven 聚合验证结果为 `AuthFlowControllerIT 27 passed / 0 failed`、`PasswordTransportSecurityServiceTest 2 passed / 0 failed`、`RegisterEmailTemplateRendererTest 3 passed / 0 failed`。

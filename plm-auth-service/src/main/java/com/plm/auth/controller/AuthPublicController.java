@@ -3,9 +3,11 @@ package com.plm.auth.controller;
 import com.plm.auth.service.AuthLoginService;
 import com.plm.auth.service.AuthEmailTestService;
 import com.plm.auth.service.AuthRegistrationService;
+import com.plm.auth.service.PasswordTransportSecurityService;
 import com.plm.auth.service.RegisterEmailVerificationService;
 import com.plm.auth.service.WorkspaceInvitationService;
 import com.plm.auth.service.WorkspaceDictionaryService;
+import com.plm.common.api.dto.auth.AuthPasswordEncryptionKeyResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceInvitationLinkPreviewResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceInvitationPreviewResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceBootstrapOptionsResponseDto;
@@ -33,19 +35,27 @@ public class AuthPublicController {
     private final AuthEmailTestService authEmailTestService;
     private final WorkspaceDictionaryService workspaceDictionaryService;
     private final WorkspaceInvitationService workspaceInvitationService;
+    private final PasswordTransportSecurityService passwordTransportSecurityService;
 
     public AuthPublicController(AuthRegistrationService authRegistrationService,
                                 AuthLoginService authLoginService,
                                 RegisterEmailVerificationService registerEmailVerificationService,
                                 AuthEmailTestService authEmailTestService,
                                 WorkspaceDictionaryService workspaceDictionaryService,
-                                WorkspaceInvitationService workspaceInvitationService) {
+                                WorkspaceInvitationService workspaceInvitationService,
+                                PasswordTransportSecurityService passwordTransportSecurityService) {
         this.authRegistrationService = authRegistrationService;
         this.authLoginService = authLoginService;
         this.registerEmailVerificationService = registerEmailVerificationService;
         this.authEmailTestService = authEmailTestService;
         this.workspaceDictionaryService = workspaceDictionaryService;
         this.workspaceInvitationService = workspaceInvitationService;
+        this.passwordTransportSecurityService = passwordTransportSecurityService;
+    }
+
+    @GetMapping("/auth/public/security/password-encryption-key")
+    public ResponseEntity<AuthPasswordEncryptionKeyResponseDto> getPasswordEncryptionKey() {
+        return ResponseEntity.ok(passwordTransportSecurityService.getPasswordEncryptionKey());
     }
 
     @GetMapping("/auth/public/workspace-bootstrap-options")

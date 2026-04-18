@@ -1,12 +1,14 @@
 package com.plm.auth.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.plm.auth.config.AuthLoginProperties;
 import com.plm.auth.service.RegisterEmailSender;
 import com.plm.auth.support.AuthDomainConstants;
 import com.plm.auth.support.AuthStpKit;
 import com.plm.auth.util.AuthNormalizer;
 import com.plm.common.api.dto.auth.AuthCreateWorkspaceRequestDto;
 import com.plm.common.api.dto.auth.AuthMeResponseDto;
+import com.plm.common.api.dto.auth.AuthPasswordEncryptionKeyResponseDto;
 import com.plm.common.api.dto.auth.AuthPasswordLoginRequestDto;
 import com.plm.common.api.dto.auth.AuthPasswordLoginResponseDto;
 import com.plm.common.api.dto.auth.AuthRegisterRequestDto;
@@ -55,6 +57,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.OAEPParameterSpec;
+import javax.crypto.spec.PSource;
+import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.PublicKey;
+import java.security.spec.MGF1ParameterSpec;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
@@ -85,6 +96,9 @@ class AuthFlowControllerIT {
 
         @Autowired
         private ObjectMapper objectMapper;
+
+        @Autowired
+        private AuthLoginProperties authLoginProperties;
 
         @Autowired
         private UserAccountRepository userAccountRepository;
@@ -140,8 +154,7 @@ class AuthFlowControllerIT {
                 AuthRegisterRequestDto request = new AuthRegisterRequestDto();
                 request.setUsername("user_" + suffix);
                 request.setDisplayName("User " + suffix);
-                request.setPassword("Password123!");
-                request.setConfirmPassword("Password123!");
+                applyEncryptedRegisterPasswords(request, "Password123!", "Password123!");
                 String email = suffix + "@example.com";
                 request.setEmail(email);
                 request.setEmailVerificationCode(sendRegisterEmailCode(email));
@@ -202,11 +215,32 @@ class AuthFlowControllerIT {
         }
 
         @Test
+        void passwordEncryptionKey_shouldExposeCurrentPublicKey() throws Exception {
+                AuthPasswordEncryptionKeyResponseDto response = fetchPasswordEncryptionKey();
+
+                Assertions.assertNotNull(response.getKeyId());
+                Assertions.assertEquals("RSA", response.getAlgorithm());
+                Assertions.assertFalse(response.getPublicKeyBase64().contains("BEGIN PUBLIC KEY"));
+        }
+
+        @Test
+        void passwordEncryptionKey_shouldReuseSameRedisKeyWithinTtl() throws Exception {
+                AuthPasswordEncryptionKeyResponseDto first = fetchPasswordEncryptionKey();
+                AuthPasswordEncryptionKeyResponseDto second = fetchPasswordEncryptionKey();
+
+                Assertions.assertEquals(first.getKeyId(), second.getKeyId());
+                Assertions.assertEquals(first.getPublicKeyBase64(), second.getPublicKeyBase64());
+        }
+
+        @Test
         void login_createWorkspace_switch_and_me_shouldWork() throws Exception {
                 AuthRegisterResponseDto registered = registerUser(uniqueSuffix());
 
                 AuthPasswordLoginResponseDto loginResponse = login(registered.getUsername(), "Password123!");
                 Assertions.assertNotNull(loginResponse.getPlatformToken());
+                Assertions.assertEquals(Boolean.FALSE, loginResponse.getRemember());
+                Assertions.assertEquals(authLoginProperties.getExpireInSeconds(),
+                                loginResponse.getPlatformTokenExpireInSeconds());
                 Assertions.assertTrue(Boolean.TRUE.equals(loginResponse.getUser().getIsFirstLogin()));
                 Assertions.assertEquals(0, loginResponse.getUser().getWorkspaceCount());
                 Assertions.assertTrue(loginResponse.getWorkspaceOptions().isEmpty());
@@ -806,8 +840,7 @@ class AuthFlowControllerIT {
                 AuthRegisterRequestDto duplicate = new AuthRegisterRequestDto();
                 duplicate.setUsername("user_" + suffix);
                 duplicate.setDisplayName("Duplicate User");
-                duplicate.setPassword("Password123!");
-                duplicate.setConfirmPassword("Password123!");
+                applyEncryptedRegisterPasswords(duplicate, "Password123!", "Password123!");
                 String email = "duplicate-" + suffix + "@example.com";
                 duplicate.setEmail(email);
                 duplicate.setEmailVerificationCode(sendRegisterEmailCode(email));
@@ -844,8 +877,7 @@ class AuthFlowControllerIT {
                 AuthRegisterRequestDto request = new AuthRegisterRequestDto();
                 request.setUsername("user_" + suffix);
                 request.setDisplayName("User " + suffix);
-                request.setPassword("Password123!");
-                request.setConfirmPassword("Password123!");
+                applyEncryptedRegisterPasswords(request, "Password123!", "Password123!");
                 request.setEmail(email);
                 request.setEmailVerificationCode("123456");
                 request.setPhone("1360000" + suffix.substring(0, 4));
@@ -863,7 +895,7 @@ class AuthFlowControllerIT {
 
                 AuthPasswordLoginRequestDto request = new AuthPasswordLoginRequestDto();
                 request.setIdentifier(registered.getUsername());
-                request.setPassword("WrongPassword123!");
+                applyEncryptedLoginPassword(request, "WrongPassword123!");
 
                 mockMvc.perform(post("/auth/public/login/password")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -871,6 +903,65 @@ class AuthFlowControllerIT {
                                 .andExpect(status().isUnauthorized())
                                 .andExpect(jsonPath("$.code").value("AUTH_INVALID_CREDENTIALS"))
                                 .andExpect(jsonPath("$.message").value("用户名或密码错误"));
+        }
+
+        @Test
+        void login_shouldRejectPlaintextPasswordWhenRsaTransportIsRequired() throws Exception {
+                AuthRegisterResponseDto registered = registerUser(uniqueSuffix());
+
+                AuthPasswordLoginRequestDto request = new AuthPasswordLoginRequestDto();
+                request.setIdentifier(registered.getUsername());
+                request.setPassword("Password123!");
+
+                mockMvc.perform(post("/auth/public/login/password")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.code").value("INVALID_ARGUMENT"))
+                                .andExpect(jsonPath("$.message").value("passwordCiphertext is required"));
+        }
+
+        @Test
+        void login_shouldRejectInvalidEncryptionKeyId() throws Exception {
+                AuthRegisterResponseDto registered = registerUser(uniqueSuffix());
+                AuthPasswordEncryptionKeyResponseDto key = fetchPasswordEncryptionKey();
+
+                AuthPasswordLoginRequestDto request = new AuthPasswordLoginRequestDto();
+                request.setIdentifier(registered.getUsername());
+                request.setEncryptionKeyId(key.getKeyId() + "-expired");
+                request.setPasswordCiphertext(encryptWithPublicKey(key, "Password123!"));
+
+                mockMvc.perform(post("/auth/public/login/password")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(request)))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.code").value("INVALID_ARGUMENT"))
+                                .andExpect(jsonPath("$.message").value("encryptionKeyId is invalid or expired"));
+        }
+
+        @Test
+        void login_shouldSupportRememberOptionAndReturnTokenLifetime() throws Exception {
+                AuthRegisterResponseDto registered = registerUser(uniqueSuffix());
+
+                AuthPasswordLoginResponseDto defaultLogin = login(registered.getUsername(), "Password123!", false);
+                Assertions.assertEquals(Boolean.FALSE, defaultLogin.getRemember());
+                Assertions.assertEquals(authLoginProperties.getExpireInSeconds(),
+                                defaultLogin.getPlatformTokenExpireInSeconds());
+                long defaultTokenTimeout = AuthStpKit.PLATFORM.getTokenTimeout(defaultLogin.getPlatformToken());
+                Assertions.assertTrue(defaultTokenTimeout <= authLoginProperties.getExpireInSeconds());
+                Assertions.assertTrue(defaultTokenTimeout > authLoginProperties.getExpireInSeconds() - 10);
+
+                mockMvc.perform(post("/auth/logout")
+                                .header(defaultLogin.getPlatformTokenName(), defaultLogin.getPlatformToken()))
+                                .andExpect(status().isNoContent());
+
+                AuthPasswordLoginResponseDto rememberedLogin = login(registered.getUsername(), "Password123!", true);
+                Assertions.assertEquals(Boolean.TRUE, rememberedLogin.getRemember());
+                Assertions.assertEquals(authLoginProperties.getRememberExpireInSeconds(),
+                                rememberedLogin.getPlatformTokenExpireInSeconds());
+                long rememberedTokenTimeout = AuthStpKit.PLATFORM.getTokenTimeout(rememberedLogin.getPlatformToken());
+                Assertions.assertTrue(rememberedTokenTimeout <= authLoginProperties.getRememberExpireInSeconds());
+                Assertions.assertTrue(rememberedTokenTimeout > authLoginProperties.getRememberExpireInSeconds() - 10);
         }
 
         @Test
@@ -907,7 +998,7 @@ class AuthFlowControllerIT {
 
                 AuthPasswordLoginRequestDto request = new AuthPasswordLoginRequestDto();
                 request.setIdentifier(registered.getUsername());
-                request.setPassword("Password123!");
+                applyEncryptedLoginPassword(request, "Password123!");
 
                 mockMvc.perform(post("/auth/public/login/password")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -985,8 +1076,7 @@ class AuthFlowControllerIT {
                 AuthRegisterRequestDto request = new AuthRegisterRequestDto();
                 request.setUsername("user_" + suffix);
                 request.setDisplayName("User " + suffix);
-                request.setPassword("Password123!");
-                request.setConfirmPassword("Password123!");
+                applyEncryptedRegisterPasswords(request, "Password123!", "Password123!");
                 request.setEmail(email);
                 request.setEmailVerificationCode(sendRegisterEmailCode(email));
                 request.setPhone("1390000" + suffix.substring(0, 4));
@@ -1000,9 +1090,14 @@ class AuthFlowControllerIT {
         }
 
         private AuthPasswordLoginResponseDto login(String identifier, String password) throws Exception {
+                return login(identifier, password, false);
+        }
+
+        private AuthPasswordLoginResponseDto login(String identifier, String password, boolean remember) throws Exception {
                 AuthPasswordLoginRequestDto request = new AuthPasswordLoginRequestDto();
                 request.setIdentifier(identifier);
-                request.setPassword(password);
+                applyEncryptedLoginPassword(request, password);
+                request.setRemember(remember);
 
                 MvcResult result = mockMvc.perform(post("/auth/public/login/password")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -1086,6 +1181,45 @@ class AuthFlowControllerIT {
 
         private <T> T readValue(MvcResult result, Class<T> type) throws Exception {
                 return objectMapper.readValue(result.getResponse().getContentAsByteArray(), type);
+        }
+
+        private void applyEncryptedRegisterPasswords(AuthRegisterRequestDto request,
+                        String password,
+                        String confirmPassword) throws Exception {
+                AuthPasswordEncryptionKeyResponseDto key = fetchPasswordEncryptionKey();
+                request.setEncryptionKeyId(key.getKeyId());
+                request.setPasswordCiphertext(encryptWithPublicKey(key, password));
+                request.setConfirmPasswordCiphertext(encryptWithPublicKey(key, confirmPassword));
+                request.setPassword(null);
+                request.setConfirmPassword(null);
+        }
+
+        private void applyEncryptedLoginPassword(AuthPasswordLoginRequestDto request, String password) throws Exception {
+                AuthPasswordEncryptionKeyResponseDto key = fetchPasswordEncryptionKey();
+                request.setEncryptionKeyId(key.getKeyId());
+                request.setPasswordCiphertext(encryptWithPublicKey(key, password));
+                request.setPassword(null);
+        }
+
+        private AuthPasswordEncryptionKeyResponseDto fetchPasswordEncryptionKey() throws Exception {
+                MvcResult result = mockMvc.perform(get("/auth/public/security/password-encryption-key"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.keyId").isNotEmpty())
+                                .andExpect(jsonPath("$.publicKeyBase64").isNotEmpty())
+                                .andReturn();
+                return readValue(result, AuthPasswordEncryptionKeyResponseDto.class);
+        }
+
+        private String encryptWithPublicKey(AuthPasswordEncryptionKeyResponseDto key, String plainText) throws Exception {
+                byte[] decoded = Base64.getDecoder().decode(key.getPublicKeyBase64());
+                PublicKey publicKey = KeyFactory.getInstance("RSA")
+                                .generatePublic(new X509EncodedKeySpec(decoded));
+                Cipher cipher = Cipher.getInstance(key.getTransformation());
+                cipher.init(Cipher.ENCRYPT_MODE,
+                                publicKey,
+                                new OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256,
+                                                PSource.PSpecified.DEFAULT));
+                return Base64.getEncoder().encodeToString(cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8)));
         }
 
         private String sendRegisterEmailCode(String email) throws Exception {

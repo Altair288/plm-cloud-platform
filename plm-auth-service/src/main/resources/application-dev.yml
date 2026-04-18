@@ -8,6 +8,19 @@ plm:
     password: p@ssw0rd@2025
     driver-class-name: org.postgresql.Driver
   auth:
+    login:
+      expire-in-seconds: ${PLM_AUTH_LOGIN_EXPIRE_IN_SECONDS:43200}
+      remember-expire-in-seconds: ${PLM_AUTH_LOGIN_REMEMBER_EXPIRE_IN_SECONDS:2592000}
+    password-rsa:
+      enabled: ${PLM_AUTH_PASSWORD_RSA_ENABLED:true}
+      redis-key-prefix: ${PLM_AUTH_PASSWORD_RSA_REDIS_KEY_PREFIX:plm:auth:password-rsa}
+      redis-ttl-seconds: ${PLM_AUTH_PASSWORD_RSA_REDIS_TTL_SECONDS:86400}
+      allow-plaintext-fallback: ${PLM_AUTH_PASSWORD_RSA_ALLOW_PLAINTEXT_FALLBACK:false}
+      key-id: ${PLM_AUTH_PASSWORD_RSA_KEY_ID:auth-password-rsa-v1}
+      transformation: ${PLM_AUTH_PASSWORD_RSA_TRANSFORMATION:RSA/ECB/OAEPWithSHA-256AndMGF1Padding}
+      key-size: ${PLM_AUTH_PASSWORD_RSA_KEY_SIZE:2048}
+      public-key-pem: ${PLM_AUTH_PASSWORD_RSA_PUBLIC_KEY_PEM:}
+      private-key-pem: ${PLM_AUTH_PASSWORD_RSA_PRIVATE_KEY_PEM:}
     invitation:
       email-subject: PLM Cloud Workspace Invitation
       email-expire-in-seconds: 604800
@@ -27,6 +40,12 @@ plm:
         resend-cooldown-seconds: 60
 
 spring:
+  data:
+    redis:
+      host: ${PLM_AUTH_REDIS_HOST:localhost}
+      port: ${PLM_AUTH_REDIS_PORT:6379}
+      password: ${PLM_AUTH_REDIS_PASSWORD:p@ssw0rd@2025}
+      database: ${PLM_AUTH_REDIS_DATABASE:0}
   jpa:
     hibernate:
       ddl-auto: none

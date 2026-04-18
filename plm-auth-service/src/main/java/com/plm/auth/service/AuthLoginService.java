@@ -1,5 +1,7 @@
 package com.plm.auth.service;
 
+import cn.dev33.satoken.stp.SaLoginModel;
+import com.plm.auth.config.AuthLoginProperties;
 import com.plm.auth.exception.AuthBusinessException;
 import com.plm.auth.support.AuthDomainConstants;
 import com.plm.auth.support.AuthStpKit;
@@ -22,6 +24,8 @@ import java.time.OffsetDateTime;
 
 @Service
 public class AuthLoginService {
+    private final AuthLoginProperties authLoginProperties;
+    private final PasswordTransportSecurityService passwordTransportSecurityService;
     private final UserAccountRepository userAccountRepository;
     private final UserCredentialRepository userCredentialRepository;
     private final LoginAuditRepository loginAuditRepository;
@@ -29,12 +33,16 @@ public class AuthLoginService {
     private final AuthQueryService authQueryService;
     private final UserWorkspaceStateService userWorkspaceStateService;
 
-    public AuthLoginService(UserAccountRepository userAccountRepository,
+    public AuthLoginService(AuthLoginProperties authLoginProperties,
+                            PasswordTransportSecurityService passwordTransportSecurityService,
+                            UserAccountRepository userAccountRepository,
                             UserCredentialRepository userCredentialRepository,
                             LoginAuditRepository loginAuditRepository,
                             PasswordEncoder passwordEncoder,
                             AuthQueryService authQueryService,
                             UserWorkspaceStateService userWorkspaceStateService) {
+        this.authLoginProperties = authLoginProperties;
+        this.passwordTransportSecurityService = passwordTransportSecurityService;
         this.userAccountRepository = userAccountRepository;
         this.userCredentialRepository = userCredentialRepository;
         this.loginAuditRepository = loginAuditRepository;
@@ -46,7 +54,11 @@ public class AuthLoginService {
     @Transactional
     public AuthPasswordLoginResponseDto login(AuthPasswordLoginRequestDto request, HttpServletRequest servletRequest) {
         String identifier = AuthNormalizer.normalizeIdentifier(request.getIdentifier());
-        String password = request.getPassword();
+        String password = passwordTransportSecurityService.resolvePassword(
+                request.getPassword(),
+                request.getPasswordCiphertext(),
+                request.getEncryptionKeyId(),
+                "password");
         if (identifier == null) {
             throw new IllegalArgumentException("identifier is required");
         }
@@ -75,7 +87,12 @@ public class AuthLoginService {
             throw new AuthBusinessException("AUTH_INVALID_CREDENTIALS", HttpStatus.UNAUTHORIZED, "用户名或密码错误");
         }
 
-        AuthStpKit.PLATFORM.login(user.getId());
+        boolean remember = Boolean.TRUE.equals(request.getRemember());
+        long tokenExpireInSeconds = resolveTokenExpireInSeconds(remember);
+
+        AuthStpKit.PLATFORM.login(user.getId(), new SaLoginModel()
+                .setTimeout(tokenExpireInSeconds)
+                .setIsLastingCookie(remember));
         AuthStpKit.clearCurrentWorkspaceMemberId();
         if (AuthStpKit.WORKSPACE.isLogin()) {
             AuthStpKit.WORKSPACE.logout();
@@ -93,6 +110,8 @@ public class AuthLoginService {
         AuthPasswordLoginResponseDto response = new AuthPasswordLoginResponseDto();
         response.setPlatformToken(AuthStpKit.PLATFORM.getTokenValue());
         response.setPlatformTokenName(AuthStpKit.PLATFORM.getTokenName());
+        response.setRemember(remember);
+        response.setPlatformTokenExpireInSeconds(tokenExpireInSeconds);
         response.setUser(authQueryService.toUserSummary(user));
         response.setWorkspaceOptions(authQueryService.listWorkspaceOptions(user.getId()));
         response.setDefaultWorkspace(authQueryService.getDefaultWorkspace(user.getId()));
@@ -135,5 +154,15 @@ public class AuthLoginService {
             return commaIndex >= 0 ? forwarded.substring(0, commaIndex).trim() : forwarded.trim();
         }
         return request.getRemoteAddr();
+    }
+
+    private long resolveTokenExpireInSeconds(boolean remember) {
+        long tokenExpireInSeconds = remember
+                ? authLoginProperties.getRememberExpireInSeconds()
+                : authLoginProperties.getExpireInSeconds();
+        if (tokenExpireInSeconds <= 0) {
+            throw new IllegalStateException("login token expireInSeconds must be > 0");
+        }
+        return tokenExpireInSeconds;
     }
 }
