@@ -2,6 +2,7 @@ package com.plm.auth.controller;
 
 import com.plm.auth.service.AuthLoginService;
 import com.plm.auth.service.AuthEmailTestService;
+import com.plm.auth.service.PlatformAdminAuthService;
 import com.plm.auth.service.AuthRegistrationService;
 import com.plm.auth.service.PasswordTransportSecurityService;
 import com.plm.auth.service.RegisterEmailVerificationService;
@@ -13,6 +14,7 @@ import com.plm.common.api.dto.auth.AuthWorkspaceInvitationPreviewResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceBootstrapOptionsResponseDto;
 import com.plm.common.api.dto.auth.AuthPasswordLoginRequestDto;
 import com.plm.common.api.dto.auth.AuthPasswordLoginResponseDto;
+import com.plm.common.api.dto.auth.AuthPlatformAdminLoginResponseDto;
 import com.plm.common.api.dto.auth.AuthRegisterRequestDto;
 import com.plm.common.api.dto.auth.AuthRegisterResponseDto;
 import com.plm.common.api.dto.auth.AuthSendRegisterEmailCodeRequestDto;
@@ -31,6 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthPublicController {
     private final AuthRegistrationService authRegistrationService;
     private final AuthLoginService authLoginService;
+    private final PlatformAdminAuthService platformAdminAuthService;
     private final RegisterEmailVerificationService registerEmailVerificationService;
     private final AuthEmailTestService authEmailTestService;
     private final WorkspaceDictionaryService workspaceDictionaryService;
@@ -39,6 +42,7 @@ public class AuthPublicController {
 
     public AuthPublicController(AuthRegistrationService authRegistrationService,
                                 AuthLoginService authLoginService,
+                                PlatformAdminAuthService platformAdminAuthService,
                                 RegisterEmailVerificationService registerEmailVerificationService,
                                 AuthEmailTestService authEmailTestService,
                                 WorkspaceDictionaryService workspaceDictionaryService,
@@ -46,6 +50,7 @@ public class AuthPublicController {
                                 PasswordTransportSecurityService passwordTransportSecurityService) {
         this.authRegistrationService = authRegistrationService;
         this.authLoginService = authLoginService;
+        this.platformAdminAuthService = platformAdminAuthService;
         this.registerEmailVerificationService = registerEmailVerificationService;
         this.authEmailTestService = authEmailTestService;
         this.workspaceDictionaryService = workspaceDictionaryService;
@@ -96,5 +101,11 @@ public class AuthPublicController {
     public ResponseEntity<AuthPasswordLoginResponseDto> login(@RequestBody AuthPasswordLoginRequestDto request,
                                                               HttpServletRequest servletRequest) {
         return ResponseEntity.ok(authLoginService.login(request, servletRequest));
+    }
+
+    @PostMapping("/auth/public/platform-admin/login/password")
+    public ResponseEntity<AuthPlatformAdminLoginResponseDto> platformAdminLogin(@RequestBody AuthPasswordLoginRequestDto request,
+                                                                                HttpServletRequest servletRequest) {
+        return ResponseEntity.ok(platformAdminAuthService.login(request, servletRequest));
     }
 }

@@ -11,6 +11,9 @@ import java.util.UUID;
 
 @Repository
 public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> {
+    @Query("select u from UserAccount u where lower(u.username) = lower(:username)")
+    Optional<UserAccount> findByUsernameIgnoreCase(@Param("username") String username);
+
     @Query("select count(u) > 0 from UserAccount u where lower(u.username) = lower(:username)")
     boolean existsByUsernameIgnoreCase(@Param("username") String username);
 

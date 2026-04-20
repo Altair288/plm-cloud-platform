@@ -2,11 +2,14 @@ package com.plm.auth.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plm.auth.config.AuthLoginProperties;
+import com.plm.auth.config.AuthPlatformAdminBootstrapProperties;
 import com.plm.auth.service.RegisterEmailSender;
 import com.plm.auth.support.AuthDomainConstants;
 import com.plm.auth.support.AuthStpKit;
 import com.plm.auth.util.AuthNormalizer;
 import com.plm.common.api.dto.auth.AuthCreateWorkspaceRequestDto;
+import com.plm.common.api.dto.auth.AuthPlatformAdminLoginResponseDto;
+import com.plm.common.api.dto.auth.AuthPlatformAdminSessionResponseDto;
 import com.plm.common.api.dto.auth.AuthMeResponseDto;
 import com.plm.common.api.dto.auth.AuthPasswordEncryptionKeyResponseDto;
 import com.plm.common.api.dto.auth.AuthPasswordLoginRequestDto;
@@ -99,6 +102,9 @@ class AuthFlowControllerIT {
 
         @Autowired
         private AuthLoginProperties authLoginProperties;
+
+        @Autowired
+        private AuthPlatformAdminBootstrapProperties authPlatformAdminBootstrapProperties;
 
         @Autowired
         private UserAccountRepository userAccountRepository;
@@ -230,6 +236,37 @@ class AuthFlowControllerIT {
 
                 Assertions.assertEquals(first.getKeyId(), second.getKeyId());
                 Assertions.assertEquals(first.getPublicKeyBase64(), second.getPublicKeyBase64());
+        }
+
+        @Test
+        void devPlatformAdmin_shouldBootstrapAndLoginWithoutWorkspace() throws Exception {
+                String username = authPlatformAdminBootstrapProperties.getUsername();
+                String password = authPlatformAdminBootstrapProperties.getPassword();
+                String roleCode = authPlatformAdminBootstrapProperties.getRoleCode();
+
+                UserAccount adminUser = userAccountRepository.findByUsernameIgnoreCase(username).orElseThrow();
+                Assertions.assertEquals(Boolean.FALSE, adminUser.getIsFirstLogin());
+                Assertions.assertEquals(0, adminUser.getWorkspaceCount());
+
+                AuthPlatformAdminLoginResponseDto loginResponse = adminLogin(username, password, false);
+                Assertions.assertNotNull(loginResponse.getPlatformToken());
+                Assertions.assertEquals(username, loginResponse.getAdmin().getUsername());
+                Assertions.assertEquals(List.of(roleCode), loginResponse.getAdmin().getRoleCodes());
+                Assertions.assertEquals(
+                                AuthDomainConstants.ROLE_CODE_PLATFORM_SUPER_ADMIN.equalsIgnoreCase(roleCode),
+                                loginResponse.getAdmin().getSuperAdmin());
+
+                MvcResult meResult = mockMvc.perform(get("/auth/platform-admin/me")
+                                .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken()))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.admin.username").value(username))
+                                .andExpect(jsonPath("$.admin.roleCodes[0]").value(roleCode))
+                                .andReturn();
+
+                AuthPlatformAdminSessionResponseDto meResponse = readValue(meResult,
+                                AuthPlatformAdminSessionResponseDto.class);
+                Assertions.assertEquals(username, meResponse.getAdmin().getUsername());
+                Assertions.assertEquals(List.of(roleCode), meResponse.getAdmin().getRoleCodes());
         }
 
         @Test
@@ -940,6 +977,27 @@ class AuthFlowControllerIT {
         }
 
         @Test
+        void platformAdminEndpoints_shouldRejectUserWithoutPlatformRole() throws Exception {
+                AuthRegisterResponseDto registered = registerUser(uniqueSuffix());
+
+                AuthPasswordLoginRequestDto adminRequest = new AuthPasswordLoginRequestDto();
+                adminRequest.setIdentifier(registered.getUsername());
+                applyEncryptedLoginPassword(adminRequest, "Password123!");
+
+                mockMvc.perform(post("/auth/public/platform-admin/login/password")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(adminRequest)))
+                                .andExpect(status().isForbidden())
+                                .andExpect(jsonPath("$.code").value("PLATFORM_ADMIN_REQUIRED"));
+
+                AuthPasswordLoginResponseDto userLogin = login(registered.getUsername(), "Password123!");
+                mockMvc.perform(get("/auth/platform-admin/me")
+                                .header(userLogin.getPlatformTokenName(), userLogin.getPlatformToken()))
+                                .andExpect(status().isForbidden())
+                                .andExpect(jsonPath("$.code").value("PLATFORM_ADMIN_REQUIRED"));
+        }
+
+        @Test
         void login_shouldSupportRememberOptionAndReturnTokenLifetime() throws Exception {
                 AuthRegisterResponseDto registered = registerUser(uniqueSuffix());
 
@@ -1105,6 +1163,21 @@ class AuthFlowControllerIT {
                                 .andExpect(status().isOk())
                                 .andReturn();
                 return readValue(result, AuthPasswordLoginResponseDto.class);
+        }
+
+        private AuthPlatformAdminLoginResponseDto adminLogin(String identifier, String password, boolean remember)
+                        throws Exception {
+                AuthPasswordLoginRequestDto request = new AuthPasswordLoginRequestDto();
+                request.setIdentifier(identifier);
+                applyEncryptedLoginPassword(request, password);
+                request.setRemember(remember);
+
+                MvcResult result = mockMvc.perform(post("/auth/public/platform-admin/login/password")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsBytes(request)))
+                                .andExpect(status().isOk())
+                                .andReturn();
+                return readValue(result, AuthPlatformAdminLoginResponseDto.class);
         }
 
         private AuthWorkspaceSessionResponseDto createWorkspace(String platformTokenName,

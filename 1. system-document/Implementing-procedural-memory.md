@@ -148,3 +148,13 @@
 - 当前实现已收口为“未配置固定 PEM 时必须使用 Redis”；如果 Redis 不可达或认证失败，公钥接口与解密流程会直接报错，不再回退到进程内临时密钥。
 - `application-dev.yml` 已补充 `spring.data.redis.password`，当前默认开发密码为 `p@ssw0rd@2025`，并支持通过 `PLM_AUTH_REDIS_PASSWORD` 覆盖。
 - 新增 `PasswordTransportSecurityServiceTest`，覆盖 Redis 模式下的 keyId 复用、TTL 写入和私钥解密链路；当前 Maven 聚合验证结果为 `AuthFlowControllerIT 27 passed / 0 failed`、`PasswordTransportSecurityServiceTest 2 passed / 0 failed`、`RegisterEmailTemplateRendererTest 3 passed / 0 failed`。
+
+## 2026-04-20 平台管理员独立登录与 dev 默认管理员初始化
+
+- auth-service 已新增平台管理员独立登录接口：`POST /auth/public/platform-admin/login/password`，返回平台 token 与管理员摘要，不再返回任何 workspace 字段。
+- auth-service 已新增平台管理员会话查询接口：`GET /auth/platform-admin/me`，供管理员前端刷新后做身份恢复与平台角色校验。
+- 当前平台管理员判定不再依赖 workspace，后端改为读取 `plm_platform.platform_user_role` 关联的活跃平台角色；没有任何活跃平台角色的账号访问管理员入口时会返回 `PLATFORM_ADMIN_REQUIRED`。
+- `plm-common` 与 `plm-infrastructure` 已补齐 `PlatformRole`、`PlatformUserRole` 实体与 Repository，正式接入此前 V33 迁移里已存在但尚未落 Java 层的表结构。
+- 当前 dev 环境已新增 `plm.auth.platform-admin.bootstrap.*` 配置；服务启动时会幂等创建默认管理员账号、密码凭据与平台角色绑定，避免每次本地联调手工造数。
+- 本轮联调中暴露出一个表结构对齐问题：`platform_role` 现有表只有 `created_at` / `created_by`，没有 `updated_at` / `updated_by`，新增实体必须严格按 migration 落地字段建模，否则应用启动期就会因 Hibernate 读不存在列而失败。
+- 当前 VS Code 内置测试结果：`AuthFlowControllerIT 30 passed / 0 failed`。

@@ -11,6 +11,14 @@ plm:
     login:
       expire-in-seconds: ${PLM_AUTH_LOGIN_EXPIRE_IN_SECONDS:43200}
       remember-expire-in-seconds: ${PLM_AUTH_LOGIN_REMEMBER_EXPIRE_IN_SECONDS:2592000}
+    platform-admin:
+      bootstrap:
+        enabled: ${PLM_AUTH_PLATFORM_ADMIN_BOOTSTRAP_ENABLED:true}
+        username: ${PLM_AUTH_PLATFORM_ADMIN_USERNAME:plm_admin}
+        display-name: ${PLM_AUTH_PLATFORM_ADMIN_DISPLAY_NAME:Platform Admin}
+        email: ${PLM_AUTH_PLATFORM_ADMIN_EMAIL:admin@plm.local}
+        password: ${PLM_AUTH_PLATFORM_ADMIN_PASSWORD:Admin@123456}
+        role-code: ${PLM_AUTH_PLATFORM_ADMIN_ROLE_CODE:platform_super_admin}
     password-rsa:
       enabled: ${PLM_AUTH_PASSWORD_RSA_ENABLED:true}
       redis-key-prefix: ${PLM_AUTH_PASSWORD_RSA_REDIS_KEY_PREFIX:plm:auth:password-rsa}

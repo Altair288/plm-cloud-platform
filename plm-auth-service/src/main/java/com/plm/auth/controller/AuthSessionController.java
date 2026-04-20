@@ -2,12 +2,14 @@ package com.plm.auth.controller;
 
 import com.plm.auth.service.AuthLoginService;
 import com.plm.auth.service.AuthQueryService;
+import com.plm.auth.service.PlatformAdminAuthService;
 import com.plm.auth.service.WorkspaceCommandService;
 import com.plm.auth.service.WorkspaceInvitationService;
 import com.plm.auth.service.WorkspaceSessionService;
 import com.plm.auth.support.AuthStpKit;
 import com.plm.common.api.dto.auth.AuthCreateWorkspaceRequestDto;
 import com.plm.common.api.dto.auth.AuthMeResponseDto;
+import com.plm.common.api.dto.auth.AuthPlatformAdminSessionResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceInvitationDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceInvitationEmailBatchRequestDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceInvitationEmailBatchResponseDto;
@@ -33,17 +35,20 @@ import java.util.UUID;
 @RestController
 public class AuthSessionController {
     private final AuthLoginService authLoginService;
+    private final PlatformAdminAuthService platformAdminAuthService;
     private final AuthQueryService authQueryService;
     private final WorkspaceCommandService workspaceCommandService;
     private final WorkspaceSessionService workspaceSessionService;
     private final WorkspaceInvitationService workspaceInvitationService;
 
     public AuthSessionController(AuthLoginService authLoginService,
+                                 PlatformAdminAuthService platformAdminAuthService,
                                  AuthQueryService authQueryService,
                                  WorkspaceCommandService workspaceCommandService,
                                  WorkspaceSessionService workspaceSessionService,
                                  WorkspaceInvitationService workspaceInvitationService) {
         this.authLoginService = authLoginService;
+        this.platformAdminAuthService = platformAdminAuthService;
         this.authQueryService = authQueryService;
         this.workspaceCommandService = workspaceCommandService;
         this.workspaceSessionService = workspaceSessionService;
@@ -60,6 +65,11 @@ public class AuthSessionController {
     public ResponseEntity<AuthMeResponseDto> me() {
         UUID userId = AuthStpKit.requirePlatformUserId();
         return ResponseEntity.ok(authQueryService.getCurrentSession(userId));
+    }
+
+    @GetMapping("/auth/platform-admin/me")
+    public ResponseEntity<AuthPlatformAdminSessionResponseDto> platformAdminMe() {
+        return ResponseEntity.ok(platformAdminAuthService.getCurrentAdminSession());
     }
 
     @GetMapping("/auth/workspaces")
