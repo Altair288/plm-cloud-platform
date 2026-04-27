@@ -1,0 +1,374 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: "backend-ci-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  JAVA_VERSION: '23'
+  ACTIVE_MODULES: 'plm-common,plm-infrastructure,plm-auth-service,plm-attribute-service,plm-gateway'
+
+jobs:
+  syntax:
+    name: Backend Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - id: compile
+        name: Compile active modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -pl "$ACTIVE_MODULES" -am -DskipTests compile
+          echo "command=mvn -B -ntp -pl $ACTIVE_MODULES -am -DskipTests compile" >> "$GITHUB_OUTPUT"
+
+      - name: Syntax summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Backend Syntax Summary"
+            echo ""
+            echo "- Java version: ${{ env.JAVA_VERSION }}"
+            echo "- Active modules: ${{ env.ACTIVE_MODULES }}"
+            echo "- Compile command: ${{ steps.compile.outputs.command }}"
+            echo "- Compile step: ${{ steps.compile.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release_gate:
+    name: Release Gate
+    runs-on: ubuntu-latest
+    needs: syntax
+    outputs:
+      should_release: ${{ steps.decide.outputs.should_release }}
+      reason: ${{ steps.decide.outputs.reason }}
+
+    steps:
+      - id: decide
+        name: Decide whether to run release pipeline
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+
+          should_release="false"
+          reason="normal_commit"
+          commit_message="${HEAD_COMMIT_MESSAGE:-}"
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            should_release="true"
+            reason="manual_dispatch"
+          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" == v* ]]; then
+            should_release="true"
+            reason="tag_push"
+          elif [ "$EVENT_NAME" = "push" ] && echo "$commit_message" | grep -Eiq '(^|[^a-z])(release|publish|push image|push release|backend release|ship)([^a-z]|$)|\[(release|publish|push)\]'; then
+            should_release="true"
+            reason="release_keyword_in_commit"
+          fi
+
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      - name: Release gate summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Backend Release Gate Summary"
+            echo ""
+            echo "- Event: ${{ github.event_name }}"
+            echo "- Ref name: ${{ github.ref_name }}"
+            echo "- Should run release pipeline: ${{ steps.decide.outputs.should_release }}"
+            echo "- Decision reason: ${{ steps.decide.outputs.reason }}"
+            echo "- Head commit message: ${{ github.event.head_commit.message || 'N/A' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  unified_verify:
+    name: Unified Verify
+    runs-on: ubuntu-latest
+    needs: [syntax, release_gate]
+    if: needs.release_gate.outputs.should_release == 'true'
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: plm
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: p@ssw0rd@2025
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin -d plm"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: bitnami/redis:7.4
+        env:
+          REDIS_PASSWORD: p@ssw0rd@2025
+          ALLOW_EMPTY_PASSWORD: no
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli -a p@ssw0rd@2025 ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SPRING_PROFILES_ACTIVE: dev
+      PLM_AUTH_REDIS_HOST: localhost
+      PLM_AUTH_REDIS_PORT: 6379
+      PLM_AUTH_REDIS_PASSWORD: p@ssw0rd@2025
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - id: verify
+        name: Run aggregate verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -pl "$ACTIVE_MODULES" -am clean verify -DfailIfNoTests=false
+          echo "command=mvn -B -ntp -pl $ACTIVE_MODULES -am clean verify -DfailIfNoTests=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-unified-surefire-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+
+      - name: Unified verify summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Backend Unified Verify Summary"
+            echo ""
+            echo "- Release reason: ${{ needs.release_gate.outputs.reason }}"
+            echo "- PostgreSQL service: enabled"
+            echo "- Redis service: enabled"
+            echo "- Verify command: ${{ steps.verify.outputs.command }}"
+            echo "- Verify step: ${{ steps.verify.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  service_it:
+    name: Service IT - ${{ matrix.service_name }}
+    runs-on: ubuntu-latest
+    needs: unified_verify
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service_name: auth
+            module: plm-auth-service
+          - service_name: attribute
+            module: plm-attribute-service
+          - service_name: gateway
+            module: plm-gateway
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: plm
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: p@ssw0rd@2025
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin -d plm"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: bitnami/redis:7.4
+        env:
+          REDIS_PASSWORD: p@ssw0rd@2025
+          ALLOW_EMPTY_PASSWORD: no
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli -a p@ssw0rd@2025 ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SPRING_PROFILES_ACTIVE: dev
+      PLM_AUTH_REDIS_HOST: localhost
+      PLM_AUTH_REDIS_PORT: 6379
+      PLM_AUTH_REDIS_PASSWORD: p@ssw0rd@2025
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - id: run_it
+        name: Run service verify lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -pl "${{ matrix.module }}" -am verify -DfailIfNoTests=false
+          echo "command=mvn -B -ntp -pl ${{ matrix.module }} -am verify -DfailIfNoTests=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload service test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.module }}-surefire-reports
+          path: |
+            ${{ matrix.module }}/target/surefire-reports/**
+            ${{ matrix.module }}/target/failsafe-reports/**
+
+      - name: Service IT summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Service IT Summary - ${{ matrix.module }}"
+            echo ""
+            echo "- Verify command: ${{ steps.run_it.outputs.command }}"
+            echo "- Verify step: ${{ steps.run_it.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  docker:
+    name: Docker Image - ${{ matrix.service_name }}
+    runs-on: ubuntu-latest
+    needs: [release_gate, service_it]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service_name: auth
+            module: plm-auth-service
+            image_name: plm-auth-service
+            dockerfile: ./plm-deployment/docker/Dockerfile-auth
+            jar_file: plm-auth-service/target/plm-auth-service-1.0-SNAPSHOT.jar
+          - service_name: attribute
+            module: plm-attribute-service
+            image_name: plm-attribute-service
+            dockerfile: ./plm-deployment/docker/Dockerfile-attribute
+            jar_file: plm-attribute-service/target/plm-attribute-service-1.0-SNAPSHOT.jar
+          - service_name: gateway
+            module: plm-gateway
+            image_name: plm-gateway
+            dockerfile: ./plm-deployment/docker/Dockerfile-gateway
+            jar_file: plm-gateway/target/plm-gateway-1.0-SNAPSHOT.jar
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - id: package_service
+        name: Package service jar
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -pl "${{ matrix.module }}" -am -DskipTests package
+          echo "command=mvn -B -ntp -pl ${{ matrix.module }} -am -DskipTests package" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: metadata
+        name: Generate image metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - id: build_image
+        name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            JAR_FILE=${{ matrix.jar_file }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Docker summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Backend Docker Summary - ${{ matrix.module }}"
+            echo ""
+            echo "- Release reason: ${{ needs.release_gate.outputs.reason }}"
+            echo "- Package command: ${{ steps.package_service.outputs.command }}"
+            echo "- Package step: ${{ steps.package_service.outcome }}"
+            echo "- Docker build step: ${{ steps.build_image.outcome }}"
+            echo "- Digest: ${{ steps.build_image.outputs.digest }}"
+            echo ""
+            echo "### Tags"
+            echo '${{ steps.metadata.outputs.tags }}'
+          } >> "$GITHUB_STEP_SUMMARY"
