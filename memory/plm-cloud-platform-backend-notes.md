@@ -8,10 +8,16 @@
 
 - plm-attribute-service now bootstraps built-in MATERIAL code rules CATEGORY/ATTRIBUTE/LOV and the default MATERIAL code rule set at startup when those tables were cleared, so service ITs no longer depend on preserved seed rows.
 
-- For plm-cloud-platform Java IT/controller validation, prefer VS Code-integrated test execution: use the runTests tool first; if editor-command parity is needed, quick-open the target Java test file and trigger java.test.editor.run instead of terminal Maven.
+- For plm-cloud-platform Java IT/controller validation, default to VS Code-integrated execution via the runTests tool first; do not substitute terminal Maven unless editor-side execution is unavailable or CLI parity is explicitly needed. If editor-command parity is needed, quick-open the target Java test file and trigger java.test.editor.run.
 - Workbook import review progress: JobState concurrency handling was tightened by documenting the model and funneling status/log access through synchronized helper methods; workbook service/controller tests passed 8/0 after that change.
+- Maven test lifecycle is now standardized in the parent pom: surefire runs only *Test during test, and failsafe runs *IT/*ITCase during integration-test and verify. For CI lifecycle checks, use targeted Maven test/verify even if normal Java validation still prefers VS Code runTests.
+- plm-infrastructure now packages an executable Spring Boot jar and exits automatically after startup migration, so it can be used as a one-shot Docker/CI database init job; compose/service dependencies should wait on service_completed_successfully from the plm-infrastructure container.
 
-- Attribute list endpoint GET /api/meta/attribute-defs treats categoryCode as an exact category filter, not a subtree/prefix filter; descendant loading should use category-tree APIs separately.。
+
+
+- Attribute list endpoint GET /api/meta/attribute-defs treats categoryCode as an exact category filter, not a subtree/prefix filter; descendant loading should use category-tree APIs separately.
+
+- MetaCategoryImportControllerIT 在 VS Code 集成测试/覆盖率运行下可能触发编辑器卡死，疑似与闭包表相关输出或覆盖率采集体量有关；该类及同类大输出 controller IT 优先使用终端 Maven 精确运行验证。
 
 - Workbook import jobs should be submitted through the workbookImportTaskExecutor directly; self-invoking @Async methods inside the same service will bypass the proxy and can silently become synchronous.
 
@@ -43,3 +49,18 @@
 
 - Workbook export implementation now exposes schema + async job/status/log/stream/download under /api/meta/exports/workbook and sources rows from category def/latest version, attribute def/latest version structureJson, and lov def/latest version valueJson.
 - After adding new DTO classes in plm-common, the VS Code runTests runner may hit stale target/classpath and throw NoClassDefFoundError until the dependent Maven modules are rebuilt; if that happens, do a targeted reactor rebuild before trusting the test result.
+
+- User clarified the old runtime schema/data can be discarded for the new user-domain work; discuss and design against plm_runtime as the formal runtime naming, not the older plm schema label still visible in legacy baseline files.
+- Current user-domain phase is intentionally limited to tenant/user/member/role/permission/auth scope; do not pull metadata push-back, approval workflow, or long-term governance requirements into the first-phase design unless the user explicitly asks.
+- User-domain design direction changed from tenant-first SaaS to user -> workspace first; current phase should model workspace/member/role/auth context as the primary collaboration boundary, while preserving future extensibility toward a fuller tenant/SaaS layer.
+
+
+- Auth workspace bootstrap endpoint GET /auth/public/workspace-bootstrap-options returns dictionary option fields as code/label/description/sortOrder/isDefault; backend ITs should assert against label, not a docs-only name field.
+- Workspace create no longer accepts request.workspaceCode; auth-service now generates workspace_code as ws_{ownerUserId8}_{workspaceNameSlug}_{workspaceId8}, and manual workspaceCode input should return INVALID_ARGUMENT.
+
+
+- 在当前 plm-auth-service 编译配置下，新加的 Spring MVC `@PathVariable` / `@RequestParam` 不要依赖方法参数名推断；显式写出注解名（如 `@PathVariable("token")`、`@RequestParam("workspaceId")`）可避免邀请类 GET 接口出现 400 绑定失败。
+
+- plm-auth-service password RSA transport now uses Redis-backed key pairs with a 24h TTL keyed by dynamic encryptionKeyId whenever fixed PEM keys are not configured; keep fixed PEM support as higher priority, and require Redis connectivity/authentication instead of falling back to in-process keys.
+
+- platform admin auth now uses dedicated endpoints POST /auth/public/platform-admin/login/password and GET /auth/platform-admin/me, backed by plm_platform.platform_role/platform_user_role; note that platform_role currently has created_at/created_by only and does not include updated_at/updated_by, so JPA entities must not map those columns.
