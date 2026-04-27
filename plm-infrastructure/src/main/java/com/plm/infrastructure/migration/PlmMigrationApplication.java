@@ -4,6 +4,7 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -20,10 +21,12 @@ public class PlmMigrationApplication {
     public static void main(String[] args) {
         SpringApplication application = new SpringApplication(PlmMigrationApplication.class);
         application.setWebApplicationType(WebApplicationType.NONE);
+        application.setDefaultProperties(java.util.Map.of("plm.migration.exit-on-complete", "true"));
         application.run(args);
     }
 
     @Bean
+    @ConditionalOnProperty(name = "plm.migration.exit-on-complete", havingValue = "true")
     ApplicationRunner migrationExitRunner(ConfigurableApplicationContext context) {
         return args -> {
             int exitCode = SpringApplication.exit(context, () -> 0);
