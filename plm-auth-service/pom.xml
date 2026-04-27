@@ -63,6 +63,7 @@
         <artifactId>spring-boot-maven-plugin</artifactId>
         <configuration>
           <mainClass>com.plm.auth.PlmAuthApplication</mainClass>
+          <classifier>exec</classifier>
         </configuration>
         <executions>
           <execution>

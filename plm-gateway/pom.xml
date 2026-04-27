@@ -34,6 +34,7 @@
         <artifactId>spring-boot-maven-plugin</artifactId>
         <configuration>
           <mainClass>com.plm.gateway.PlmGatewayApplication</mainClass>
+          <classifier>exec</classifier>
         </configuration>
         <executions>
           <execution>

@@ -45,6 +45,7 @@
         <artifactId>spring-boot-maven-plugin</artifactId>
         <configuration>
           <mainClass>com.plm.attribute.PlmAttributeApplication</mainClass>
+          <classifier>exec</classifier>
         </configuration>
         <executions>
           <execution>

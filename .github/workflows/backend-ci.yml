@@ -181,9 +181,9 @@ jobs:
         with:
           name: backend-service-jars
           path: |
-            plm-auth-service/target/plm-auth-service-1.0-SNAPSHOT.jar
-            plm-attribute-service/target/plm-attribute-service-1.0-SNAPSHOT.jar
-            plm-gateway/target/plm-gateway-1.0-SNAPSHOT.jar
+            plm-auth-service/target/plm-auth-service-1.0-SNAPSHOT-exec.jar
+            plm-attribute-service/target/plm-attribute-service-1.0-SNAPSHOT-exec.jar
+            plm-gateway/target/plm-gateway-1.0-SNAPSHOT-exec.jar
 
       - name: Unified verify summary
         if: always()
@@ -213,17 +213,17 @@ jobs:
             module: plm-auth-service
             image_name: plm-auth-service
             dockerfile: ./plm-deployment/docker/Dockerfile-auth
-            jar_file: plm-auth-service/target/plm-auth-service-1.0-SNAPSHOT.jar
+            jar_file: plm-auth-service/target/plm-auth-service-1.0-SNAPSHOT-exec.jar
           - service_name: attribute
             module: plm-attribute-service
             image_name: plm-attribute-service
             dockerfile: ./plm-deployment/docker/Dockerfile-attribute
-            jar_file: plm-attribute-service/target/plm-attribute-service-1.0-SNAPSHOT.jar
+            jar_file: plm-attribute-service/target/plm-attribute-service-1.0-SNAPSHOT-exec.jar
           - service_name: gateway
             module: plm-gateway
             image_name: plm-gateway
             dockerfile: ./plm-deployment/docker/Dockerfile-gateway
-            jar_file: plm-gateway/target/plm-gateway-1.0-SNAPSHOT.jar
+            jar_file: plm-gateway/target/plm-gateway-1.0-SNAPSHOT-exec.jar
 
     steps:
       - name: Checkout
