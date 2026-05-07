@@ -23,6 +23,8 @@ spring:
                   - "https://192.168.31.*:*"
                   - "http://172.20.10.*:*"
                   - "https://172.20.10.*:*"
+                  - "http://demo.altair288.eu.org:*"
+                  - "https://demo.altair288.eu.org:*"
                 allowedMethods:
                   - GET
                   - POST
