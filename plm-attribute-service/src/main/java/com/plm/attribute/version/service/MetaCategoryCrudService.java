@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.plm.attribute.version.exception.CategoryConflictException;
 import com.plm.attribute.version.exception.CategoryNotFoundException;
+import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchCopyOptionsDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteItemResultDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteRequestDto;
@@ -27,16 +28,24 @@ import com.plm.common.api.dto.category.MetaCategoryDetailDto;
 import com.plm.common.api.dto.code.CodeRuleDetailDto;
 import com.plm.common.api.dto.code.CodeRulePreviewRequestDto;
 import com.plm.common.api.dto.code.CodeRulePreviewResponseDto;
+import com.plm.common.version.domain.MetaAttributeDef;
+import com.plm.common.version.domain.MetaAttributeVersion;
 import com.plm.common.api.dto.category.version.MetaCategoryLatestVersionDto;
 import com.plm.common.api.dto.category.version.MetaCategoryVersionCompareDiffDto;
 import com.plm.common.api.dto.category.version.MetaCategoryVersionCompareDto;
 import com.plm.common.api.dto.category.version.MetaCategoryVersionHistoryDto;
 import com.plm.common.api.dto.category.version.MetaCategoryVersionSnapshotDto;
+import com.plm.common.version.domain.MetaLovDef;
+import com.plm.common.version.domain.MetaLovVersion;
 import com.plm.common.api.dto.category.UpdateCategoryRequestDto;
 import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;
+import com.plm.infrastructure.version.repository.MetaAttributeDefRepository;
+import com.plm.infrastructure.version.repository.MetaAttributeVersionRepository;
 import com.plm.infrastructure.version.repository.CategoryHierarchyRepository;
+import com.plm.infrastructure.version.repository.MetaLovDefRepository;
+import com.plm.infrastructure.version.repository.MetaLovVersionRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
 import org.springframework.stereotype.Service;
@@ -91,7 +100,12 @@ public class MetaCategoryCrudService {
 
     private final MetaCategoryDefRepository defRepository;
     private final MetaCategoryVersionRepository versionRepository;
+    private final MetaAttributeDefRepository attributeDefRepository;
+    private final MetaAttributeVersionRepository attributeVersionRepository;
+    private final MetaLovDefRepository lovDefRepository;
+    private final MetaLovVersionRepository lovVersionRepository;
     private final CategoryHierarchyRepository hierarchyRepository;
+    private final MetaAttributeManageService attributeManageService;
     private final MetaCodeRuleService metaCodeRuleService;
     private final MetaCodeRuleSetService metaCodeRuleSetService;
     private final TransactionTemplate requiresNewTxTemplate;
@@ -283,13 +297,23 @@ public class MetaCategoryCrudService {
 
     public MetaCategoryCrudService(MetaCategoryDefRepository defRepository,
                                    MetaCategoryVersionRepository versionRepository,
+                                   MetaAttributeDefRepository attributeDefRepository,
+                                   MetaAttributeVersionRepository attributeVersionRepository,
+                                   MetaLovDefRepository lovDefRepository,
+                                   MetaLovVersionRepository lovVersionRepository,
                                    CategoryHierarchyRepository hierarchyRepository,
+                                   MetaAttributeManageService attributeManageService,
                                    MetaCodeRuleService metaCodeRuleService,
                                    MetaCodeRuleSetService metaCodeRuleSetService,
                                    PlatformTransactionManager transactionManager) {
         this.defRepository = defRepository;
         this.versionRepository = versionRepository;
+        this.attributeDefRepository = attributeDefRepository;
+        this.attributeVersionRepository = attributeVersionRepository;
+        this.lovDefRepository = lovDefRepository;
+        this.lovVersionRepository = lovVersionRepository;
         this.hierarchyRepository = hierarchyRepository;
+        this.attributeManageService = attributeManageService;
         this.metaCodeRuleService = metaCodeRuleService;
         this.metaCodeRuleSetService = metaCodeRuleSetService;
 
@@ -1666,6 +1690,8 @@ public class MetaCategoryCrudService {
             codeMappings.add(codeMapping);
         }
 
+        copyAttributesForCopiedCategories(businessDomain, subtree, copiedBySourceId, operator);
+
         refreshParentLeafIfNeeded(targetParent);
         for (UUID parentId : parentIdsToNormalize) {
             normalizeSiblingOrders(parentId);
@@ -1681,6 +1707,194 @@ public class MetaCategoryCrudService {
                 sourceMappings,
                 codeMappings
         );
+    }
+
+    private void copyAttributesForCopiedCategories(String businessDomain,
+                                                   List<MetaCategoryDef> sourceSubtree,
+                                                   Map<UUID, MetaCategoryDef> copiedBySourceId,
+                                                   String operator) {
+        if (sourceSubtree == null || sourceSubtree.isEmpty() || copiedBySourceId.isEmpty()) {
+            return;
+        }
+
+        List<UUID> sourceCategoryIds = sourceSubtree.stream()
+                .map(MetaCategoryDef::getId)
+                .filter(Objects::nonNull)
+                .toList();
+        if (sourceCategoryIds.isEmpty()) {
+            return;
+        }
+
+        Map<UUID, Integer> categoryOrder = new HashMap<>();
+        for (int index = 0; index < sourceSubtree.size(); index++) {
+            categoryOrder.put(sourceSubtree.get(index).getId(), index);
+        }
+
+        List<MetaAttributeDef> sourceAttributeDefs = attributeDefRepository.findByCategoryDefIdIn(sourceCategoryIds).stream()
+                .filter(def -> !isDeleted(def))
+                .sorted(Comparator
+                        .comparingInt((MetaAttributeDef def) -> categoryOrder.getOrDefault(def.getCategoryDef().getId(), Integer.MAX_VALUE))
+                        .thenComparing(def -> def.getKey() == null ? "" : def.getKey()))
+                .toList();
+        if (sourceAttributeDefs.isEmpty()) {
+            return;
+        }
+
+        Map<UUID, MetaAttributeVersion> latestAttributeVersionByDefId = attributeVersionRepository
+                .findByAttributeDefInAndIsLatestTrue(sourceAttributeDefs)
+                .stream()
+                .filter(version -> version.getAttributeDef() != null && version.getAttributeDef().getId() != null)
+                .collect(Collectors.toMap(version -> version.getAttributeDef().getId(), Function.identity(), (left, right) -> left));
+
+        for (MetaAttributeDef sourceAttributeDef : sourceAttributeDefs) {
+            MetaCategoryDef copiedCategory = copiedBySourceId.get(sourceAttributeDef.getCategoryDef().getId());
+            if (copiedCategory == null) {
+                throw new IllegalArgumentException("copied category not found for source attribute: attributeId=" + sourceAttributeDef.getId());
+            }
+
+            MetaAttributeVersion sourceVersion = latestAttributeVersionByDefId.get(sourceAttributeDef.getId());
+            if (sourceVersion == null) {
+                throw new IllegalArgumentException("attribute has no latest version: id=" + sourceAttributeDef.getId());
+            }
+
+            MetaAttributeUpsertRequestDto request = buildCopyAttributeRequest(sourceAttributeDef, sourceVersion);
+            attributeManageService.create(businessDomain, copiedCategory.getCodeKey(), request, operator);
+        }
+    }
+
+    private MetaAttributeUpsertRequestDto buildCopyAttributeRequest(MetaAttributeDef sourceAttributeDef,
+                                                                   MetaAttributeVersion sourceVersion) {
+        JsonNode structure = readJsonNode(sourceVersion.getStructureJson());
+        MetaAttributeUpsertRequestDto request = new MetaAttributeUpsertRequestDto();
+        request.setGenerationMode("AUTO");
+        request.setDisplayName(textOrFallback(structure, "displayName", sourceVersion.getDisplayName()));
+        request.setAttributeField(textOrFallback(structure, "attributeField", sourceVersion.getAttributeField()));
+        request.setDescription(textOrNull(structure, "description"));
+        request.setDataType(textOrFallback(structure, "dataType", sourceVersion.getDataType()));
+        request.setUnit(textOrFallback(structure, "unit", sourceVersion.getUnit()));
+        request.setDefaultValue(textOrNull(structure, "defaultValue"));
+        request.setRequired(booleanOrFallback(structure, "required", sourceVersion.getRequiredFlag()));
+        request.setUnique(booleanOrFallback(structure, "unique", sourceVersion.getUniqueFlag()));
+        request.setHidden(booleanOrFallback(structure, "hidden", sourceVersion.getHiddenFlag()));
+        request.setReadOnly(booleanOrFallback(structure, "readOnly", sourceVersion.getReadOnlyFlag()));
+        request.setSearchable(booleanOrFallback(structure, "searchable", sourceVersion.getSearchableFlag()));
+        request.setMinValue(decimalOrNull(structure, "minValue"));
+        request.setMaxValue(decimalOrNull(structure, "maxValue"));
+        request.setStep(decimalOrNull(structure, "step"));
+        request.setPrecision(integerOrNull(structure, "precision"));
+        request.setTrueLabel(textOrNull(structure, "trueLabel"));
+        request.setFalseLabel(textOrNull(structure, "falseLabel"));
+        request.setLovValues(extractLovValues(sourceAttributeDef, sourceVersion));
+        return request;
+    }
+
+    private List<MetaAttributeUpsertRequestDto.LovValueUpsertItem> extractLovValues(MetaAttributeDef sourceAttributeDef,
+                                                                                    MetaAttributeVersion sourceVersion) {
+        String lovKey = trimToNull(sourceVersion.getLovKey());
+        if (lovKey == null) {
+            return null;
+        }
+
+        MetaLovDef lovDef = lovDefRepository.findByAttributeDefAndKey(sourceAttributeDef, lovKey).orElse(null);
+        if (lovDef == null) {
+            return null;
+        }
+
+        MetaLovVersion lovVersion = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+        if (lovVersion == null || trimToNull(lovVersion.getValueJson()) == null) {
+            return null;
+        }
+
+        JsonNode root = readJsonNode(lovVersion.getValueJson());
+        JsonNode valuesNode = root.path("values");
+        if (!valuesNode.isArray() || valuesNode.isEmpty()) {
+            return null;
+        }
+
+        List<MetaAttributeUpsertRequestDto.LovValueUpsertItem> items = new ArrayList<>();
+        valuesNode.forEach(node -> {
+            MetaAttributeUpsertRequestDto.LovValueUpsertItem item = new MetaAttributeUpsertRequestDto.LovValueUpsertItem();
+            item.setName(textOrNull(node, "name"));
+            item.setLabel(textOrNull(node, "label"));
+            if (item.getName() != null || item.getLabel() != null) {
+                items.add(item);
+            }
+        });
+        return items.isEmpty() ? null : items;
+    }
+
+    private JsonNode readJsonNode(String json) {
+        try {
+            String normalized = trimToNull(json);
+            return normalized == null ? objectMapper.createObjectNode() : objectMapper.readTree(normalized);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("invalid json payload", ex);
+        }
+    }
+
+    private String textOrFallback(JsonNode node, String fieldName, String fallback) {
+        String value = textOrNull(node, fieldName);
+        return value != null ? value : trimToNull(fallback);
+    }
+
+    private String textOrNull(JsonNode node, String fieldName) {
+        if (node == null || fieldName == null) {
+            return null;
+        }
+        JsonNode valueNode = node.path(fieldName);
+        if (valueNode.isMissingNode() || valueNode.isNull()) {
+            return null;
+        }
+        return trimToNull(valueNode.asText(null));
+    }
+
+    private Boolean booleanOrFallback(JsonNode node, String fieldName, Boolean fallback) {
+        Boolean value = booleanOrNull(node, fieldName);
+        return value != null ? value : fallback;
+    }
+
+    private Boolean booleanOrNull(JsonNode node, String fieldName) {
+        if (node == null || fieldName == null) {
+            return null;
+        }
+        JsonNode valueNode = node.path(fieldName);
+        if (valueNode.isMissingNode() || valueNode.isNull()) {
+            return null;
+        }
+        return valueNode.isBoolean() ? valueNode.booleanValue() : Boolean.valueOf(valueNode.asText());
+    }
+
+    private java.math.BigDecimal decimalOrNull(JsonNode node, String fieldName) {
+        if (node == null || fieldName == null) {
+            return null;
+        }
+        JsonNode valueNode = node.path(fieldName);
+        if (valueNode.isMissingNode() || valueNode.isNull() || valueNode.asText().isBlank()) {
+            return null;
+        }
+        try {
+            return valueNode.decimalValue();
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private Integer integerOrNull(JsonNode node, String fieldName) {
+        if (node == null || fieldName == null) {
+            return null;
+        }
+        JsonNode valueNode = node.path(fieldName);
+        if (valueNode.isMissingNode() || valueNode.isNull() || valueNode.asText().isBlank()) {
+            return null;
+        }
+        return valueNode.isInt() ? valueNode.intValue() : valueNode.asInt();
+    }
+
+    private boolean isDeleted(MetaAttributeDef def) {
+        if (def == null || def.getStatus() == null) {
+            return false;
+        }
+        return STATUS_DELETED.equalsIgnoreCase(def.getStatus().trim());
     }
 
     private String resolveCopyDisplayName(String businessDomain, MetaCategoryVersion version, CopyOptionsResolved options) {

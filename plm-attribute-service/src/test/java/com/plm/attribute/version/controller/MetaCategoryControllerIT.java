@@ -1,7 +1,9 @@
 package com.plm.attribute.version.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.plm.attribute.version.service.MetaAttributeManageService;
 import com.plm.attribute.version.service.MetaCategoryCrudService;
+import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
 import com.plm.common.api.dto.category.CreateCategoryCodePreviewRequestDto;
 import com.plm.common.api.dto.category.CreateCategoryRequestDto;
 import com.plm.common.api.dto.category.MetaCategoryChildrenBatchRequestDto;
@@ -10,11 +12,26 @@ import com.plm.common.api.dto.category.UpdateCategoryRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchDeleteRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferOperationDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferRequestDto;
+import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferResponseDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyOperationDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyRequestDto;
 import com.plm.common.api.dto.category.subtree.MetaCategorySubtreeRequestDto;
+import com.plm.common.version.domain.CategoryHierarchy;
+import com.plm.common.version.domain.MetaAttributeDef;
+import com.plm.common.version.domain.MetaAttributeVersion;
+import com.plm.common.version.domain.MetaCategoryDef;
+import com.plm.common.version.domain.MetaCategoryVersion;
+import com.plm.common.version.domain.MetaLovDef;
+import com.plm.common.version.domain.MetaLovVersion;
+import com.plm.infrastructure.version.repository.CategoryHierarchyRepository;
+import com.plm.infrastructure.version.repository.MetaAttributeDefRepository;
+import com.plm.infrastructure.version.repository.MetaAttributeVersionRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
+import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
+import com.plm.infrastructure.version.repository.MetaLovDefRepository;
+import com.plm.infrastructure.version.repository.MetaLovVersionRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,10 +39,16 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -57,8 +80,82 @@ public class MetaCategoryControllerIT {
     @Autowired
     private MetaCategoryCrudService categoryCrudService;
 
+        @Autowired
+        private MetaAttributeManageService attributeManageService;
+
     @Autowired
     private MetaCategoryDefRepository categoryDefRepository;
+
+        @Autowired
+        private MetaCategoryVersionRepository categoryVersionRepository;
+
+        @Autowired
+        private MetaAttributeDefRepository attributeDefRepository;
+
+        @Autowired
+        private MetaAttributeVersionRepository attributeVersionRepository;
+
+        @Autowired
+        private MetaLovDefRepository lovDefRepository;
+
+        @Autowired
+        private MetaLovVersionRepository lovVersionRepository;
+
+        @Autowired
+        private CategoryHierarchyRepository hierarchyRepository;
+
+        @Autowired
+        private PlatformTransactionManager transactionManager;
+
+        @AfterEach
+        void cleanupCommittedTestData() {
+                inNewTransaction(() -> {
+                        List<MetaCategoryDef> committedDefs = categoryDefRepository.findAll().stream()
+                                        .filter(this::isCommittedControllerTestDef)
+                                        .toList();
+                        if (committedDefs.isEmpty()) {
+                                return null;
+                        }
+
+                        Set<UUID> categoryIds = committedDefs.stream().map(MetaCategoryDef::getId).collect(java.util.stream.Collectors.toSet());
+                        List<CategoryHierarchy> hierarchies = hierarchyRepository.findAll().stream()
+                                        .filter(row -> row.getAncestorDef() != null && row.getDescendantDef() != null)
+                                        .filter(row -> categoryIds.contains(row.getAncestorDef().getId()) || categoryIds.contains(row.getDescendantDef().getId()))
+                                        .toList();
+                        if (!hierarchies.isEmpty()) {
+                                hierarchyRepository.deleteAll(hierarchies);
+                        }
+
+                        List<MetaAttributeDef> attributeDefs = attributeDefRepository.findByCategoryDefIdIn(categoryIds);
+                        List<MetaLovDef> lovDefs = attributeDefs.isEmpty() ? List.of() : lovDefRepository.findByAttributeDefIn(attributeDefs);
+                        if (!lovDefs.isEmpty()) {
+                                List<MetaLovVersion> lovVersions = lovVersionRepository.findByLovDefInAndIsLatestTrue(lovDefs);
+                                if (!lovVersions.isEmpty()) {
+                                        lovVersionRepository.deleteAll(lovVersions);
+                                }
+                                lovDefRepository.deleteAll(lovDefs);
+                        }
+
+                        List<MetaAttributeVersion> attributeVersions = attributeVersionRepository.findByAttributeDefCategoryDefIdInAndIsLatestTrue(categoryIds);
+                        if (!attributeVersions.isEmpty()) {
+                                attributeVersionRepository.deleteAll(attributeVersions);
+                        }
+
+                        if (!attributeDefs.isEmpty()) {
+                                attributeDefRepository.deleteAll(attributeDefs);
+                        }
+
+                        List<MetaCategoryVersion> categoryVersions = categoryVersionRepository.findAll().stream()
+                                        .filter(version -> version.getCategoryDef() != null && categoryIds.contains(version.getCategoryDef().getId()))
+                                        .toList();
+                        if (!categoryVersions.isEmpty()) {
+                                categoryVersionRepository.deleteAll(categoryVersions);
+                        }
+
+                        categoryDefRepository.deleteAll(committedDefs);
+                        return null;
+                });
+        }
 
     @Test
     void crudEndpoints_shouldSupportLifecycleAndCompareVersions() throws Exception {
@@ -338,6 +435,72 @@ public class MetaCategoryControllerIT {
                 .andExpect(jsonPath("$.results[0].sourceNodeId").value(moveChild.getId().toString()));
     }
 
+    @Test
+    void batchTransfer_copy_execute_shouldExposeCopiedAttributesViaQueryEndpoint() throws Exception {
+        String suffix = uniqueSuffix();
+
+                MetaCategoryDetailDto sourceRoot = inNewTransaction(() -> createCommittedCategory("MATERIAL", "CAT-COPY-ATTR-SRC-ROOT-" + suffix, "Copy Attr Root " + suffix, null));
+                MetaCategoryDetailDto sourceChild = inNewTransaction(() -> createCommittedCategory("MATERIAL", "CAT-COPY-ATTR-SRC-CHILD-" + suffix, "Copy Attr Child " + suffix, sourceRoot.getId()));
+                MetaCategoryDetailDto targetParent = inNewTransaction(() -> createCommittedCategory("MATERIAL", "CAT-COPY-ATTR-TARGET-" + suffix, "Copy Attr Target " + suffix, null));
+
+                inNewTransaction(() -> {
+                        attributeManageService.create("MATERIAL", sourceRoot.getCode(), textAttribute("ATTR-COPY-TEXT-" + suffix, "Copied Root Text " + suffix, "rootField" + suffix), "it-controller-commit");
+                        attributeManageService.create("MATERIAL", sourceChild.getCode(), textAttribute("ATTR-COPY-CHILD-" + suffix, "Copied Child Text " + suffix, "childField" + suffix), "it-controller-commit");
+                        return null;
+                });
+
+        MetaCategoryBatchTransferRequestDto request = new MetaCategoryBatchTransferRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setAction("COPY");
+        request.setAtomic(Boolean.FALSE);
+        request.setDryRun(Boolean.FALSE);
+        request.setOperator("transfer-user");
+        request.setTargetParentId(targetParent.getId());
+        request.setOperations(List.of(transferOperation("copy-attr-op", sourceRoot.getId(), null)));
+
+        MvcResult transferResult = mockMvc.perform(post("/api/meta/categories/batch-transfer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.successCount").value(1))
+                .andReturn();
+
+        MetaCategoryBatchTransferResponseDto transferResponse = objectMapper.readValue(
+                transferResult.getResponse().getContentAsByteArray(),
+                MetaCategoryBatchTransferResponseDto.class);
+
+        MetaCategoryDetailDto copiedRoot = categoryCrudService.detail(transferResponse.getResults().get(0).getCreatedRootId());
+        UUID copiedChildId = transferResponse.getResults().get(0).getSourceMappings().stream()
+                .filter(mapping -> sourceChild.getId().equals(mapping.getSourceNodeId()))
+                .findFirst()
+                .orElseThrow()
+                .getCreatedNodeId();
+        MetaCategoryDetailDto copiedChild = categoryCrudService.detail(copiedChildId);
+
+        mockMvc.perform(get("/api/meta/attribute-defs")
+                        .param("businessDomain", "MATERIAL")
+                        .param("categoryCode", copiedRoot.getCode())
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].displayName").value("Copied Root Text " + suffix))
+                .andExpect(jsonPath("$.content[0].attributeField").value("rootField" + suffix))
+                .andExpect(jsonPath("$.content[0].dataType").value("string"));
+
+        mockMvc.perform(get("/api/meta/attribute-defs")
+                        .param("businessDomain", "MATERIAL")
+                        .param("categoryCode", copiedChild.getCode())
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].displayName").value("Copied Child Text " + suffix))
+                .andExpect(jsonPath("$.content[0].attributeField").value("childField" + suffix))
+                .andExpect(jsonPath("$.content[0].dataType").value("string"));
+    }
+
     private MetaCategoryDetailDto createCategory(String businessDomain, String code, String name, UUID parentId) {
         CreateCategoryRequestDto request = new CreateCategoryRequestDto();
         request.setBusinessDomain(businessDomain);
@@ -349,6 +512,18 @@ public class MetaCategoryControllerIT {
         request.setSort(1);
         return categoryCrudService.create(request, "it-user");
     }
+
+        private MetaCategoryDetailDto createCommittedCategory(String businessDomain, String code, String name, UUID parentId) {
+                CreateCategoryRequestDto request = new CreateCategoryRequestDto();
+                request.setBusinessDomain(businessDomain);
+                request.setCode(code);
+                request.setName(name);
+                request.setParentId(parentId);
+                request.setStatus("ACTIVE");
+                request.setDescription(name + " description");
+                request.setSort(1);
+                return categoryCrudService.create(request, "it-controller-commit");
+        }
 
     private MetaCategoryBatchTransferOperationDto transferOperation(String clientOperationId, UUID sourceNodeId, UUID targetParentId) {
         MetaCategoryBatchTransferOperationDto dto = new MetaCategoryBatchTransferOperationDto();
@@ -374,4 +549,30 @@ public class MetaCategoryControllerIT {
     private String uniqueSuffix() {
         return UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
     }
+
+        private MetaAttributeUpsertRequestDto textAttribute(String key, String displayName, String attributeField) {
+                MetaAttributeUpsertRequestDto request = new MetaAttributeUpsertRequestDto();
+                request.setGenerationMode("MANUAL");
+                request.setKey(key);
+                request.setDisplayName(displayName);
+                request.setAttributeField(attributeField);
+                request.setDataType("string");
+                request.setSearchable(Boolean.TRUE);
+                return request;
+        }
+
+        private <T> T inNewTransaction(Supplier<T> supplier) {
+                DefaultTransactionDefinition definition = new DefaultTransactionDefinition();
+                definition.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                TransactionTemplate template = new TransactionTemplate(transactionManager, definition);
+                return template.execute(status -> supplier.get());
+        }
+
+        private boolean isCommittedControllerTestDef(MetaCategoryDef def) {
+                return def != null
+                                && "it-controller-commit".equals(def.getCreatedBy())
+                                && def.getCodeKey() != null
+                                && def.getCodeKey().startsWith("CAT-COPY-ATTR-");
+        }
+
 }

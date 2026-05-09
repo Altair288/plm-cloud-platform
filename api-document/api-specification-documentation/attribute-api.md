@@ -69,6 +69,7 @@
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---:|---|---|
+| businessDomain | string | 否 | - | 业务域过滤，例如 `MATERIAL/PRODUCT` |
 | categoryCode | string | 否 | - | 限定在某个分类 codeKey 下 |
 | keyword | string | 否 | - | 名称关键字（后端走 ILIKE/索引列） |
 | dataType | string | 否 | - | 例如 `string/number/bool/enum` |
@@ -78,11 +79,14 @@
 | includeDeleted | boolean | 否 | false | 是否包含已删除属性（默认不包含） |
 | page | int | 否 | 0 | 0-based 页码 |
 | size | int | 否 | 20 | 每页大小 |
+| sort | string | 否 | `key,asc` | 排序字段，支持重复传参；允许值：`createdAt/key/displayName/attributeField/dataType/latestVersionNo/categoryCode` |
+
+默认排序：按 `key asc`。如果需要显式排序，建议使用标准 Spring 风格重复参数，例如 `sort=createdAt,asc&sort=key,asc` 或 `sort=displayName,asc&sort=key,asc`。
 
 **curl 示例**
 
 ```bash
-curl "http://localhost:8080/api/meta/attribute-defs?categoryCode=44120000&keyword=colo&dataType=string&required=true&page=0&size=20"
+curl "http://localhost:8080/api/meta/attribute-defs?businessDomain=MATERIAL&categoryCode=44120000&keyword=colo&dataType=string&required=true&page=0&size=20&sort=displayName,asc&sort=key,asc"
 ```
 
 **响应：Page<MetaAttributeDefListItemDto>（示例）**

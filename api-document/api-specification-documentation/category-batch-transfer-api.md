@@ -110,6 +110,17 @@ copyOptions 字段：
 - namePolicy=AUTO_SUFFIX，默认自动派生可用名称；显式传 KEEP 时若原名称冲突则失败
 - defaultStatus 默认写为 draft
 - 每个复制出的新分类都会写入 copiedFromCategoryId
+- 若源分类下存在属性定义，则复制后的新分类会同步创建对应属性
+- 属性同样只复制 latest version，不复制属性历史版本
+- 枚举属性绑定的 LOV 选项会一并复制
+
+属性复制补充说明：
+
+- 复制后的属性不会复用源 attribute key，而是按当前属性编码规则重新生成。
+- 若属性为枚举型，复制后的 `lovKey` 也会按新属性上下文重新生成，不直接复用源 `lovKey`。
+- 枚举值 option code 不会直接复用源编码，而是重新生成，以满足同 businessDomain 下枚举值编码唯一约束。
+- 枚举值的 `name` / `label` 以及属性的展示名、字段名、数据类型等业务内容保持与源 latest version 一致。
+- 当前 batch-transfer 响应仍只返回分类维度的 `codeMappings`；如果前端需要查看复制后的属性结果，应在 COPY 成功后使用新分类 code 调用属性查询接口。
 
 复制来源字段：
 

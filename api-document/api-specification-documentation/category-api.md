@@ -34,7 +34,7 @@
 | 局部更新 | PATCH /api/meta/categories/{id} | ✅ | 局部更新语义 |
 | 删除分类 | DELETE /api/meta/categories/{id} | ✅ | 软删除，支持可选级联 |
 | 批量删除分类 | POST /api/meta/categories/batch-delete | ✅ | 支持 dryRun、atomic 和逐项结果 |
-| 批量移动/复制分类 | POST /api/meta/categories/batch-transfer | ✅ | 支持 MOVE/COPY、dryRun、atomic、逐项结果 |
+| 批量移动/复制分类 | POST /api/meta/categories/batch-transfer | ✅ | 支持 MOVE/COPY、dryRun、atomic、逐项结果；COPY 会同步复制分类下属性 latest version |
 | 拓扑感知批量移动分类 | POST /api/meta/categories/batch-transfer/topology | ✅ | 支持 MOVE、dependsOnOperationIds、descendant-first 拆分、dryRun 规划结果 |
 | taxonomy 元数据 | GET /api/meta/taxonomies/{code} | ❌（已下线） | 已移除 |
 

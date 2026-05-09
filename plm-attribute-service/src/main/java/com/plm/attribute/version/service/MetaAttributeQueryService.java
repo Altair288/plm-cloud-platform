@@ -16,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.Query;
+import jakarta.persistence.TypedQuery;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.*;
@@ -24,6 +26,9 @@ import java.util.stream.Collectors;
 @Service
 @Transactional(readOnly = true)
 public class MetaAttributeQueryService {
+
+    private static final Sort DEFAULT_LIST_SORT = Sort.by(
+            Sort.Order.asc("attributeDef.key"));
 
     private final MetaAttributeVersionRepository attributeVersionRepository;
     private final MetaLovDefRepository lovDefRepository;
@@ -51,16 +56,112 @@ public class MetaAttributeQueryService {
             Boolean searchable,
             boolean includeDeleted,
             Pageable pageable) {
-        return attributeVersionRepository.searchLatestListItems(
-                businessDomain,
-                categoryCode,
-                keyword,
-                dataType,
-                required,
-                unique,
-                searchable,
-                includeDeleted,
-                pageable);
+        Pageable effectivePageable = ensureSortedPageable(pageable);
+
+        String baseFromWhere = """
+                from MetaAttributeVersion v
+                join v.attributeDef d
+                join d.categoryDef c
+                where v.isLatest = true
+                    and (:includeDeleted = true or lower(d.status) <> 'deleted')
+                    and (:businessDomain is null or :businessDomain = '' or d.businessDomain = :businessDomain)
+                    and (:categoryCode is null or :categoryCode = '' or c.codeKey = :categoryCode)
+                    and (:keyword is null or :keyword = '' or v.displayName like concat('%', :keyword, '%'))
+                    and (:dataType is null or :dataType = '' or v.dataType = :dataType)
+                    and (:requiredFlag is null or v.requiredFlag = :requiredFlag)
+                    and (:uniqueFlag is null or v.uniqueFlag = :uniqueFlag)
+                    and (:searchableFlag is null or v.searchableFlag = :searchableFlag)
+                """;
+
+        String dataQueryJpql = """
+                select new com.plm.common.api.dto.attribute.MetaAttributeDefListItemDto(
+                    d.key,
+                    v.lovKey,
+                    d.businessDomain,
+                    c.codeKey,
+                    d.status,
+                    v.versionNo,
+                    v.displayName,
+                    v.attributeField,
+                    v.dataType,
+                    v.unit,
+                    d.lovFlag,
+                    v.requiredFlag,
+                    v.uniqueFlag,
+                    v.hiddenFlag,
+                    v.readOnlyFlag,
+                    v.searchableFlag,
+                    d.createdAt
+                )
+                """ + baseFromWhere + buildListOrderBy(effectivePageable.getSort());
+
+        String countQueryJpql = "select count(v.id) " + baseFromWhere;
+
+        TypedQuery<MetaAttributeDefListItemDto> dataQuery = em.createQuery(dataQueryJpql, MetaAttributeDefListItemDto.class);
+        TypedQuery<Long> countQuery = em.createQuery(countQueryJpql, Long.class);
+        applyListParameters(dataQuery, businessDomain, categoryCode, keyword, dataType, required, unique, searchable, includeDeleted);
+        applyListParameters(countQuery, businessDomain, categoryCode, keyword, dataType, required, unique, searchable, includeDeleted);
+
+        if (effectivePageable.isPaged()) {
+            dataQuery.setFirstResult((int) effectivePageable.getOffset());
+            dataQuery.setMaxResults(effectivePageable.getPageSize());
+        }
+
+        return new PageImpl<>(dataQuery.getResultList(), effectivePageable, countQuery.getSingleResult());
+    }
+
+    private Pageable ensureSortedPageable(Pageable pageable) {
+        if (pageable == null) {
+            return PageRequest.of(0, 20, DEFAULT_LIST_SORT);
+        }
+        if (pageable.isPaged() && pageable.getSort().isUnsorted()) {
+            return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), DEFAULT_LIST_SORT);
+        }
+        return pageable;
+    }
+
+    private String buildListOrderBy(Sort sort) {
+        if (sort == null || sort.isUnsorted()) {
+            return " order by d.key asc";
+        }
+        return sort.stream()
+                .map(this::toListOrderExpression)
+                .collect(Collectors.joining(", ", " order by ", ""));
+    }
+
+    private String toListOrderExpression(Sort.Order order) {
+        String direction = order.isAscending() ? "asc" : "desc";
+        return switch (order.getProperty()) {
+            case "attributeDef.createdAt" -> "d.createdAt " + direction;
+            case "attributeDef.key" -> "d.key " + direction;
+            case "displayName" -> "v.displayName " + direction;
+            case "attributeField" -> "v.attributeField " + direction;
+            case "dataType" -> "v.dataType " + direction;
+            case "versionNo" -> "v.versionNo " + direction;
+            case "attributeDef.categoryDef.codeKey" -> "c.codeKey " + direction;
+            default -> throw new IllegalArgumentException("unsupported sort property: " + order.getProperty());
+        };
+    }
+
+    private <T extends Query> T applyListParameters(
+            T query,
+            String businessDomain,
+            String categoryCode,
+            String keyword,
+            String dataType,
+            Boolean required,
+            Boolean unique,
+            Boolean searchable,
+            boolean includeDeleted) {
+        query.setParameter("businessDomain", businessDomain);
+        query.setParameter("categoryCode", categoryCode);
+        query.setParameter("keyword", keyword);
+        query.setParameter("dataType", dataType);
+        query.setParameter("requiredFlag", required);
+        query.setParameter("uniqueFlag", unique);
+        query.setParameter("searchableFlag", searchable);
+        query.setParameter("includeDeleted", includeDeleted);
+        return query;
     }
 
     public MetaAttributeDefDetailDto detail(String attrKey) {

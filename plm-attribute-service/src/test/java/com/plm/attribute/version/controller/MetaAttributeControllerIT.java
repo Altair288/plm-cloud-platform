@@ -185,6 +185,45 @@ class MetaAttributeControllerIT {
                 .andExpect(jsonPath("$.message").value(containsString("businessDomain is required")));
     }
 
+    @Test
+        void listEndpoint_shouldApplyStableDefaultSortAndSupportExplicitSort() throws Exception {
+        String suffix = uniqueSuffix();
+        String categoryCode = "MAT-SORT-" + suffix;
+        String createdFirstKey = "ZZZ_SORT_" + suffix;
+        String createdSecondKey = "AAA_SORT_" + suffix;
+
+        createCategory("MATERIAL", categoryCode, "Material Sort " + suffix);
+
+        attributeManageService.create("MATERIAL", categoryCode,
+                textAttribute(createdFirstKey, "Zeta Attribute " + suffix, "sortFieldZ" + suffix),
+                "seed-user");
+        attributeManageService.create("MATERIAL", categoryCode,
+                textAttribute(createdSecondKey, "Alpha Attribute " + suffix, "sortFieldA" + suffix),
+                "seed-user");
+        attributeManageService.update("MATERIAL", categoryCode, createdFirstKey,
+                textAttribute(createdFirstKey, "Zeta Attribute Updated " + suffix, "sortFieldZ" + suffix),
+                "seed-user");
+
+        mockMvc.perform(get("/api/meta/attribute-defs")
+                        .param("businessDomain", "MATERIAL")
+                        .param("categoryCode", categoryCode)
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].key").value(createdSecondKey))
+                .andExpect(jsonPath("$.content[1].key").value(createdFirstKey));
+
+        mockMvc.perform(get("/api/meta/attribute-defs")
+                        .param("businessDomain", "MATERIAL")
+                        .param("categoryCode", categoryCode)
+                        .param("page", "0")
+                        .param("size", "20")
+                        .param("sort", "key,desc"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].key").value(createdFirstKey))
+                .andExpect(jsonPath("$.content[1].key").value(createdSecondKey));
+    }
+
     private void createCategory(String businessDomain, String code, String name) {
         CreateCategoryRequestDto request = new CreateCategoryRequestDto();
         request.setBusinessDomain(businessDomain);

@@ -1,14 +1,24 @@
 package com.plm.attribute.version.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferItemResultDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferOperationDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferResponseDto;
 import com.plm.common.api.dto.category.MetaCategoryDetailDto;
+import com.plm.common.version.domain.MetaAttributeDef;
+import com.plm.common.version.domain.MetaAttributeVersion;
 import com.plm.common.version.domain.CategoryHierarchy;
 import com.plm.common.version.domain.MetaCategoryDef;
 import com.plm.common.version.domain.MetaCategoryVersion;
+import com.plm.common.version.domain.MetaLovDef;
+import com.plm.common.version.domain.MetaLovVersion;
 import com.plm.infrastructure.version.repository.CategoryHierarchyRepository;
+import com.plm.infrastructure.version.repository.MetaAttributeDefRepository;
+import com.plm.infrastructure.version.repository.MetaAttributeVersionRepository;
+import com.plm.infrastructure.version.repository.MetaLovDefRepository;
+import com.plm.infrastructure.version.repository.MetaLovVersionRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -43,6 +53,7 @@ import java.util.function.Supplier;
 class MetaCategoryCrudServiceBatchTransferIT {
 
     private static final short TEST_ROOT_DEPTH = 1;
+    private static final ObjectMapper TEST_OBJECT_MAPPER = new ObjectMapper();
 
     private static final class TransferFixture {
         private UUID sourceRootId;
@@ -59,6 +70,21 @@ class MetaCategoryCrudServiceBatchTransferIT {
 
     @Autowired
     private MetaCategoryVersionRepository versionRepository;
+
+    @Autowired
+    private MetaAttributeDefRepository attributeDefRepository;
+
+    @Autowired
+    private MetaAttributeVersionRepository attributeVersionRepository;
+
+    @Autowired
+    private MetaLovDefRepository lovDefRepository;
+
+    @Autowired
+    private MetaLovVersionRepository lovVersionRepository;
+
+    @Autowired
+    private MetaAttributeManageService attributeManageService;
 
     @Autowired
     private CategoryHierarchyRepository hierarchyRepository;
@@ -83,6 +109,25 @@ class MetaCategoryCrudServiceBatchTransferIT {
                     .toList();
             if (!hierarchies.isEmpty()) {
                 hierarchyRepository.deleteAll(hierarchies);
+            }
+
+            List<MetaAttributeDef> attributeDefs = attributeDefRepository.findByCategoryDefIdIn(testIds);
+            List<MetaLovDef> lovDefs = attributeDefs.isEmpty() ? List.of() : lovDefRepository.findByAttributeDefIn(attributeDefs);
+            if (!lovDefs.isEmpty()) {
+                List<MetaLovVersion> lovVersions = lovVersionRepository.findByLovDefInAndIsLatestTrue(lovDefs);
+                if (!lovVersions.isEmpty()) {
+                    lovVersionRepository.deleteAll(lovVersions);
+                }
+                lovDefRepository.deleteAll(lovDefs);
+            }
+
+            List<MetaAttributeVersion> attributeVersions = attributeVersionRepository.findByAttributeDefCategoryDefIdInAndIsLatestTrue(testIds);
+            if (!attributeVersions.isEmpty()) {
+                attributeVersionRepository.deleteAll(attributeVersions);
+            }
+
+            if (!attributeDefs.isEmpty()) {
+                attributeDefRepository.deleteAll(attributeDefs);
             }
 
             List<MetaCategoryVersion> versions = versionRepository.findAll().stream()
@@ -141,6 +186,127 @@ class MetaCategoryCrudServiceBatchTransferIT {
         Assertions.assertTrue(createdDefs.stream().allMatch(def -> "draft".equals(def.getStatus())));
         Assertions.assertTrue(createdDefs.stream().allMatch(def -> def.getCopiedFromCategoryId() != null));
     }
+
+    @Test
+    void batchTransfer_copy_shouldCloneAttributesForCopiedCategories() {
+        TransferFixture fixture = inNewTransaction(() -> {
+            TransferFixture created = new TransferFixture();
+            MetaCategoryDef sourceRoot = createNode("MATERIAL", uniqueCode("IT-COPY-ATTR-SRC-ROOT"), null, "active", 1, TEST_ROOT_DEPTH, false);
+            MetaCategoryDef sourceChild = createNode("MATERIAL", uniqueCode("IT-COPY-ATTR-SRC-CHILD"), sourceRoot, "active", 1, (short) (TEST_ROOT_DEPTH + 1), true);
+            MetaCategoryDef targetParent = createNode("MATERIAL", uniqueCode("IT-COPY-ATTR-TARGET"), null, "active", 2, TEST_ROOT_DEPTH, true);
+            saveClosureRows(List.of(sourceRoot, sourceChild, targetParent));
+
+            createAttribute("MATERIAL", sourceRoot, uniqueCode("IT-ATTR-ROOT"), "Root Attribute", "rootField");
+            createAttribute("MATERIAL", sourceChild, uniqueCode("IT-ATTR-CHILD"), "Child Attribute", "childField");
+
+            created.sourceRootId = sourceRoot.getId();
+            created.sourceChildId = sourceChild.getId();
+            created.targetParentId = targetParent.getId();
+            return created;
+        });
+
+        MetaCategoryBatchTransferRequestDto request = new MetaCategoryBatchTransferRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setAction("COPY");
+        request.setAtomic(false);
+        request.setDryRun(false);
+        request.setOperator("it-transfer");
+        request.setTargetParentId(fixture.targetParentId);
+        request.setOperations(List.of(operation("OP-COPY-ATTR", fixture.sourceRootId, null)));
+
+        MetaCategoryBatchTransferResponseDto response = crudService.batchTransfer(request);
+
+        MetaCategoryBatchTransferItemResultDto result = response.getResults().get(0);
+        Assertions.assertTrue(Boolean.TRUE.equals(result.getSuccess()));
+
+        List<MetaAttributeDef> copiedAttributeDefs = inNewTransaction(() ->
+                attributeDefRepository.findByCategoryDefIdIn(result.getCreatedIds()));
+        List<MetaAttributeVersion> copiedAttributeVersions = inNewTransaction(() ->
+                attributeVersionRepository.findByAttributeDefCategoryDefIdInAndIsLatestTrue(result.getCreatedIds()));
+        Set<UUID> copiedAttributeVersionCategoryIds = inNewTransaction(() ->
+            attributeVersionRepository.findByAttributeDefCategoryDefIdInAndIsLatestTrue(result.getCreatedIds()).stream()
+                .map(version -> version.getCategoryVersion().getCategoryDef().getId())
+                .collect(java.util.stream.Collectors.toSet()));
+
+        Assertions.assertEquals(2, copiedAttributeDefs.size());
+        Assertions.assertEquals(2, copiedAttributeVersions.size());
+        Assertions.assertTrue(copiedAttributeDefs.stream().allMatch(def -> result.getCreatedIds().contains(def.getCategoryDef().getId())));
+        Assertions.assertTrue(copiedAttributeVersionCategoryIds.stream().allMatch(result.getCreatedIds()::contains));
+        Assertions.assertTrue(copiedAttributeVersions.stream().allMatch(version -> Integer.valueOf(1).equals(version.getVersionNo())));
+        Assertions.assertEquals(
+                Set.of("Root Attribute", "Child Attribute"),
+                copiedAttributeVersions.stream().map(MetaAttributeVersion::getDisplayName).collect(java.util.stream.Collectors.toSet())
+        );
+    }
+
+        @Test
+        void batchTransfer_copy_shouldCloneEnumAttributeLovValuesForCopiedCategory() throws Exception {
+        TransferFixture fixture = inNewTransaction(() -> {
+            TransferFixture created = new TransferFixture();
+            MetaCategoryDef sourceRoot = createNode("MATERIAL", uniqueCode("IT-COPY-ENUM-SRC-ROOT"), null, "active", 1, TEST_ROOT_DEPTH, true);
+            MetaCategoryDef targetParent = createNode("MATERIAL", uniqueCode("IT-COPY-ENUM-TARGET"), null, "active", 2, TEST_ROOT_DEPTH, true);
+            saveClosureRows(List.of(sourceRoot, targetParent));
+
+            createEnumAttribute(
+                "MATERIAL",
+                sourceRoot.getCodeKey(),
+                uniqueCode("IT-ATTR-ENUM"),
+                "Enum Attribute",
+                "enumField",
+                List.of(
+                    lovValue("ENABLED", "Enabled", "Enabled Label"),
+                    lovValue("DISABLED", "Disabled", "Disabled Label")
+                )
+            );
+
+            created.sourceRootId = sourceRoot.getId();
+            created.targetParentId = targetParent.getId();
+            return created;
+        });
+
+        MetaCategoryBatchTransferRequestDto request = new MetaCategoryBatchTransferRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setAction("COPY");
+        request.setAtomic(false);
+        request.setDryRun(false);
+        request.setOperator("it-transfer");
+        request.setTargetParentId(fixture.targetParentId);
+        request.setOperations(List.of(operation("OP-COPY-ENUM", fixture.sourceRootId, null)));
+
+        MetaCategoryBatchTransferResponseDto response = crudService.batchTransfer(request);
+
+        MetaCategoryBatchTransferItemResultDto result = response.getResults().get(0);
+        Assertions.assertTrue(Boolean.TRUE.equals(result.getSuccess()));
+
+        List<MetaAttributeDef> copiedAttributeDefs = inNewTransaction(() ->
+            attributeDefRepository.findByCategoryDefIdIn(result.getCreatedIds()));
+        List<MetaLovDef> copiedLovDefs = inNewTransaction(() -> lovDefRepository.findByAttributeDefIn(copiedAttributeDefs));
+        List<MetaLovVersion> copiedLovVersions = inNewTransaction(() -> lovVersionRepository.findByLovDefInAndIsLatestTrue(copiedLovDefs));
+
+        Assertions.assertEquals(1, copiedAttributeDefs.size());
+        Assertions.assertEquals(1, copiedLovDefs.size());
+        Assertions.assertEquals(1, copiedLovVersions.size());
+
+        var values = TEST_OBJECT_MAPPER.readTree(copiedLovVersions.get(0).getValueJson()).path("values");
+        Assertions.assertEquals(2, values.size());
+        Assertions.assertEquals(2,
+            java.util.stream.StreamSupport.stream(values.spliterator(), false)
+                .map(node -> node.path("code").asText())
+                .filter(code -> code != null && !code.isBlank())
+                .collect(java.util.stream.Collectors.toSet()).size());
+        Assertions.assertEquals(Set.of("Enabled", "Disabled"),
+            java.util.stream.StreamSupport.stream(values.spliterator(), false)
+                .map(node -> node.path("name").asText())
+                .collect(java.util.stream.Collectors.toSet()));
+        Assertions.assertEquals(Set.of("Enabled Label", "Disabled Label"),
+            java.util.stream.StreamSupport.stream(values.spliterator(), false)
+                .map(node -> node.path("label").asText())
+                .collect(java.util.stream.Collectors.toSet()));
+        Assertions.assertNotEquals(Set.of("ENABLED", "DISABLED"),
+            java.util.stream.StreamSupport.stream(values.spliterator(), false)
+                .map(node -> node.path("code").asText())
+                .collect(java.util.stream.Collectors.toSet()));
+        }
 
     @Test
     void batchTransfer_copy_shouldAllocateFirstAvailableSuffixFromPrefetchedCodes() {
@@ -301,6 +467,60 @@ class MetaCategoryCrudServiceBatchTransferIT {
         version.setCreatedBy("it-transfer");
         versionRepository.save(version);
         return def;
+    }
+
+    private MetaAttributeDef createAttribute(String businessDomain,
+                                             MetaCategoryDef categoryDef,
+                                             String key,
+                                             String displayName,
+                                             String attributeField) {
+        MetaCategoryVersion categoryVersion = versionRepository.findLatestByDef(categoryDef).orElseThrow();
+
+        MetaAttributeDef attributeDef = new MetaAttributeDef();
+        attributeDef.setCategoryDef(categoryDef);
+        attributeDef.setBusinessDomain(businessDomain);
+        attributeDef.setKey(key);
+        attributeDef.setStatus("active");
+        attributeDef.setLovFlag(Boolean.FALSE);
+        attributeDef.setCreatedBy("it-transfer");
+        attributeDef = attributeDefRepository.save(attributeDef);
+
+        MetaAttributeVersion attributeVersion = new MetaAttributeVersion();
+        attributeVersion.setAttributeDef(attributeDef);
+        attributeVersion.setCategoryVersion(categoryVersion);
+        attributeVersion.setVersionNo(1);
+        attributeVersion.setStructureJson("{\"displayName\":\"" + displayName + "\",\"attributeField\":\"" + attributeField + "\",\"dataType\":\"string\",\"required\":false,\"unique\":false,\"searchable\":true,\"hidden\":false,\"readOnly\":false}");
+        attributeVersion.setHash(key + "-hash");
+        attributeVersion.setIsLatest(true);
+        attributeVersion.setStatus("active");
+        attributeVersion.setCreatedBy("it-transfer");
+        attributeVersionRepository.save(attributeVersion);
+        return attributeDef;
+    }
+
+    private void createEnumAttribute(String businessDomain,
+                                     String categoryCode,
+                                     String key,
+                                     String displayName,
+                                     String attributeField,
+                                     List<MetaAttributeUpsertRequestDto.LovValueUpsertItem> lovValues) {
+        MetaAttributeUpsertRequestDto request = new MetaAttributeUpsertRequestDto();
+        request.setGenerationMode("MANUAL");
+        request.setKey(key);
+        request.setDisplayName(displayName);
+        request.setAttributeField(attributeField);
+        request.setDataType("enum");
+        request.setSearchable(Boolean.TRUE);
+        request.setLovValues(lovValues);
+        attributeManageService.create(businessDomain, categoryCode, request, "it-transfer");
+    }
+
+    private MetaAttributeUpsertRequestDto.LovValueUpsertItem lovValue(String code, String name, String label) {
+        MetaAttributeUpsertRequestDto.LovValueUpsertItem item = new MetaAttributeUpsertRequestDto.LovValueUpsertItem();
+        item.setCode(code);
+        item.setName(name);
+        item.setLabel(label);
+        return item;
     }
 
     private void saveClosureRows(List<MetaCategoryDef> nodes) {
