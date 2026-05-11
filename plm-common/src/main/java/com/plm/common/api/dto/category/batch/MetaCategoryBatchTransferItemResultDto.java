@@ -24,5 +24,8 @@ public class MetaCategoryBatchTransferItemResultDto {
     private List<MetaCategoryCodeMappingDto> codeMappings;
     private String code;
     private String message;
+    private String exceptionType;
+    private String rootCauseType;
+    private String rootCauseMessage;
     private List<String> warning;
 }

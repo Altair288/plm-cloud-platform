@@ -48,13 +48,18 @@ import com.plm.infrastructure.version.repository.MetaLovDefRepository;
 import com.plm.infrastructure.version.repository.MetaLovVersionRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
+import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.DefaultTransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -71,6 +76,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
@@ -92,6 +98,7 @@ public class MetaCategoryCrudService {
     private static final String PLANNING_MODE_TOPOLOGY_AWARE = "TOPOLOGY_AWARE";
     private static final String ORDERING_STRATEGY_CLIENT_ORDER = "CLIENT_ORDER";
     private static final String ORDERING_STRATEGY_TOPOLOGICAL_BOTTOM_UP = "TOPOLOGICAL_BOTTOM_UP";
+    private static final long BATCH_TRANSFER_STREAM_TIMEOUT_MILLIS = 300_000L;
 
     private static final Comparator<MetaCategoryDef> CATEGORY_TREE_ORDER = Comparator
             .comparing((MetaCategoryDef def) -> def.getDepth() == null ? Short.MAX_VALUE : def.getDepth())
@@ -110,6 +117,7 @@ public class MetaCategoryCrudService {
     private final MetaCodeRuleSetService metaCodeRuleSetService;
     private final TransactionTemplate requiresNewTxTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AsyncTaskExecutor batchTransferStreamExecutor = new SimpleAsyncTaskExecutor("meta-category-batch-transfer-stream-");
 
     private enum BusinessDomain {
         PRODUCT,
@@ -645,6 +653,66 @@ public class MetaCategoryCrudService {
         return buildTopologyResponse(plan);
     }
 
+    public SseEmitter batchTransferStream(MetaCategoryBatchTransferRequestDto request) {
+        return createBatchTransferStream("batch-transfer", request == null ? null : request.getAction(), () -> batchTransfer(request));
+    }
+
+    public SseEmitter batchTransferTopologyStream(MetaCategoryBatchTransferTopologyRequestDto request) {
+        return createBatchTransferStream("batch-transfer-topology", request == null ? null : request.getAction(), () -> batchTransferTopology(request));
+    }
+
+    private <T> SseEmitter createBatchTransferStream(String streamType, String action, Supplier<T> execution) {
+        SseEmitter emitter = new SseEmitter(BATCH_TRANSFER_STREAM_TIMEOUT_MILLIS);
+        emitter.onTimeout(emitter::complete);
+        emitter.onError(ex -> emitter.complete());
+        batchTransferStreamExecutor.execute(() -> executeBatchTransferStream(emitter, streamType, action, execution));
+        return emitter;
+    }
+
+    private <T> void executeBatchTransferStream(SseEmitter emitter,
+                                                String streamType,
+                                                String action,
+                                                Supplier<T> execution) {
+        try {
+            sendSseEvent(emitter, "started", buildStreamLifecyclePayload(streamType, action, "started"));
+            T response = execution.get();
+            sendSseEvent(emitter, "completed", response);
+            emitter.complete();
+        } catch (RuntimeException ex) {
+            try {
+                sendSseEvent(emitter, "failed", buildStreamErrorPayload(streamType, action, ex));
+                emitter.complete();
+            } catch (RuntimeException streamEx) {
+                emitter.completeWithError(streamEx);
+            }
+        }
+    }
+
+    private Map<String, Object> buildStreamLifecyclePayload(String streamType, String action, String phase) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("timestamp", OffsetDateTime.now().toString());
+        payload.put("streamType", streamType);
+        payload.put("phase", phase);
+        payload.put("action", action);
+        return payload;
+    }
+
+    private Map<String, Object> buildStreamErrorPayload(String streamType, String action, RuntimeException ex) {
+        Map<String, Object> payload = buildStreamLifecyclePayload(streamType, action, "failed");
+        payload.put("code", resolveBatchErrorCode(ex));
+        payload.put("message", ex == null ? "unknown error" : ex.getMessage());
+        appendExceptionDetails(payload, ex);
+        return payload;
+    }
+
+    private void sendSseEvent(SseEmitter emitter, String eventName, Object data) {
+        try {
+            emitter.send(SseEmitter.event().name(eventName).data(data));
+        } catch (IOException ex) {
+            throw new IllegalStateException("failed to send batch-transfer SSE event", ex);
+        }
+    }
+
     @Transactional(readOnly = true)
     public MetaCategoryDetailDto detail(UUID id) {
         MetaCategoryDef def = loadExisting(id);
@@ -1140,7 +1208,7 @@ public class MetaCategoryCrudService {
                 TransferExecutionOutcome outcome = requiresNewTxTemplate.execute(status -> executeTransfer(plan, item));
                 results.add(buildTransferSuccessResult(item, outcome));
             } catch (RuntimeException ex) {
-                results.add(buildTransferFailureResult(item, resolveBatchErrorCode(ex), ex.getMessage()));
+                results.add(buildTransferFailureResult(item, resolveBatchErrorCode(ex), ex.getMessage(), ex));
             }
         }
         return buildTransferResponse(plan, results);
@@ -1449,6 +1517,7 @@ public class MetaCategoryCrudService {
                     result.setSuccess(Boolean.FALSE);
                     result.setCode(resolveBatchErrorCode(failedException));
                     result.setMessage(failedException == null ? "unknown error" : failedException.getMessage());
+                    appendExceptionDetails(result, failedException);
                 } else if (rolledBackItems.contains(item)) {
                     result.setSuccess(Boolean.FALSE);
                     result.setCode(CODE_ATOMIC_ROLLBACK);
@@ -1538,7 +1607,7 @@ public class MetaCategoryCrudService {
             List<MetaCategoryBatchTransferItemResultDto> results = new ArrayList<>();
             for (TransferPlanItem item : plan.items) {
                 if (item == failedAt[0]) {
-                    results.add(buildTransferFailureResult(item, resolveBatchErrorCode(failedException[0]), failedException[0].getMessage()));
+                    results.add(buildTransferFailureResult(item, resolveBatchErrorCode(failedException[0]), failedException[0].getMessage(), failedException[0]));
                 } else if (executedItems.contains(item)) {
                     results.add(buildTransferFailureResult(item, CODE_ATOMIC_ROLLBACK, "atomic rollback triggered by failure in same batch"));
                 } else {
@@ -2202,15 +2271,70 @@ public class MetaCategoryCrudService {
     }
 
     private MetaCategoryBatchTransferItemResultDto buildTransferFailureResult(TransferPlanItem item, String code, String message) {
+        return buildTransferFailureResult(item, code, message, null);
+    }
+
+    private MetaCategoryBatchTransferItemResultDto buildTransferFailureResult(TransferPlanItem item,
+                                                                              String code,
+                                                                              String message,
+                                                                              RuntimeException ex) {
         MetaCategoryBatchTransferItemResultDto result = baseTransferResult(item);
         result.setSuccess(Boolean.FALSE);
         result.setAffectedNodeCount(0);
         result.setCode(code);
         result.setMessage(message == null ? "unknown error" : message);
+        appendExceptionDetails(result, ex);
         if (!item.warnings.isEmpty()) {
             result.setWarning(item.warnings);
         }
         return result;
+    }
+
+    private void appendExceptionDetails(MetaCategoryBatchTransferItemResultDto result, RuntimeException ex) {
+        if (result == null || ex == null) {
+            return;
+        }
+        result.setExceptionType(ex.getClass().getName());
+        Throwable rootCause = resolveRootCause(ex);
+        if (rootCause != null) {
+            result.setRootCauseType(rootCause.getClass().getName());
+            result.setRootCauseMessage(rootCause.getMessage());
+        }
+    }
+
+    private void appendExceptionDetails(MetaCategoryBatchTransferTopologyItemResultDto result, RuntimeException ex) {
+        if (result == null || ex == null) {
+            return;
+        }
+        result.setExceptionType(ex.getClass().getName());
+        Throwable rootCause = resolveRootCause(ex);
+        if (rootCause != null) {
+            result.setRootCauseType(rootCause.getClass().getName());
+            result.setRootCauseMessage(rootCause.getMessage());
+        }
+    }
+
+    private void appendExceptionDetails(Map<String, Object> payload, RuntimeException ex) {
+        if (payload == null || ex == null) {
+            return;
+        }
+        payload.put("exceptionType", ex.getClass().getName());
+        Throwable rootCause = resolveRootCause(ex);
+        if (rootCause != null) {
+            payload.put("rootCauseType", rootCause.getClass().getName());
+            payload.put("rootCauseMessage", rootCause.getMessage());
+        }
+    }
+
+    private Throwable resolveRootCause(Throwable throwable) {
+        if (throwable == null) {
+            return null;
+        }
+        Throwable current = throwable;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private MetaCategoryBatchTransferItemResultDto baseTransferResult(TransferPlanItem item) {

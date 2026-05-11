@@ -23,37 +23,65 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<?> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest request) {
-        return build(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", ex.getMessage(), request);
+        return build(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", ex.getMessage(), request, ex);
     }
 
     @ExceptionHandler(CategoryConflictException.class)
     public ResponseEntity<?> handleCategoryConflict(CategoryConflictException ex, HttpServletRequest request) {
-        return build(HttpStatus.CONFLICT, ex.getCode(), ex.getMessage(), request);
+        return build(HttpStatus.CONFLICT, ex.getCode(), ex.getMessage(), request, ex);
     }
 
     @ExceptionHandler(CategoryNotFoundException.class)
     public ResponseEntity<?> handleCategoryNotFound(CategoryNotFoundException ex, HttpServletRequest request) {
-        return build(HttpStatus.NOT_FOUND, "CATEGORY_NOT_FOUND", ex.getMessage(), request);
+        return build(HttpStatus.NOT_FOUND, "CATEGORY_NOT_FOUND", ex.getMessage(), request, ex);
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<?> handleGeneric(Exception ex, HttpServletRequest request) {
-        return build(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", ex.getMessage(), request);
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", ex.getMessage(), request, ex);
     }
 
     private ResponseEntity<?> build(HttpStatus status, String code, String message, HttpServletRequest request) {
+        return build(status, code, message, request, null);
+    }
+
+    private ResponseEntity<?> build(HttpStatus status, String code, String message, HttpServletRequest request, Throwable throwable) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("timestamp", OffsetDateTime.now().toString());
         body.put("status", status.value());
         body.put("error", status.getReasonPhrase());
         body.put("code", code);
         body.put("message", message);
+        appendExceptionDetails(body, throwable);
         if (isEventStreamRequest(request)) {
             return ResponseEntity.status(status)
                     .contentType(MediaType.TEXT_EVENT_STREAM)
                     .body(toEventStreamBody(body));
         }
         return new ResponseEntity<>(body, status);
+    }
+
+    private void appendExceptionDetails(Map<String, Object> body, Throwable throwable) {
+        if (body == null || throwable == null) {
+            return;
+        }
+        body.put("exceptionType", throwable.getClass().getName());
+        Throwable rootCause = resolveRootCause(throwable);
+        if (rootCause != null) {
+            body.put("rootCauseType", rootCause.getClass().getName());
+            body.put("rootCauseMessage", rootCause.getMessage());
+        }
+    }
+
+    private Throwable resolveRootCause(Throwable throwable) {
+        if (throwable == null) {
+            return null;
+        }
+        Throwable current = throwable;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private boolean isEventStreamRequest(HttpServletRequest request) {

@@ -50,13 +50,17 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(
@@ -501,6 +505,69 @@ public class MetaCategoryControllerIT {
                 .andExpect(jsonPath("$.content[0].dataType").value("string"));
     }
 
+    @Test
+    void batchTransfer_execute_shouldExposeStructuredExceptionDetailsWhenExecutionFails() throws Exception {
+        String suffix = uniqueSuffix();
+
+        MetaCategoryDef brokenSource = inNewTransaction(() -> createCommittedCategoryDefWithoutLatestVersion(
+                "MATERIAL",
+                "CAT-COPY-ATTR-BROKEN-" + suffix,
+                null));
+        MetaCategoryDetailDto targetParent = inNewTransaction(() -> createCommittedCategory(
+                "MATERIAL",
+                "CAT-COPY-ATTR-TARGET-ERR-" + suffix,
+                "Copy Attr Target Err " + suffix,
+                null));
+
+        MetaCategoryBatchTransferRequestDto request = new MetaCategoryBatchTransferRequestDto();
+        request.setBusinessDomain("MATERIAL");
+        request.setAction("COPY");
+        request.setAtomic(Boolean.FALSE);
+        request.setDryRun(Boolean.FALSE);
+        request.setOperator("transfer-user");
+        request.setTargetParentId(targetParent.getId());
+        request.setOperations(List.of(transferOperation("copy-broken-op", brokenSource.getId(), null)));
+
+        mockMvc.perform(post("/api/meta/categories/batch-transfer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failureCount").value(1))
+                .andExpect(jsonPath("$.results[0].success").value(false))
+                .andExpect(jsonPath("$.results[0].code").value("INVALID_ARGUMENT"))
+                .andExpect(jsonPath("$.results[0].message", containsString("category has no latest version")))
+                .andExpect(jsonPath("$.results[0].exceptionType").value("java.lang.IllegalArgumentException"))
+                .andExpect(jsonPath("$.results[0].rootCauseType").value("java.lang.IllegalArgumentException"))
+                .andExpect(jsonPath("$.results[0].rootCauseMessage", containsString("category has no latest version")));
+    }
+
+    @Test
+    void batchTransfer_stream_shouldEmitFailedEventWithStructuredExceptionDetails() throws Exception {
+        MetaCategoryBatchTransferRequestDto request = new MetaCategoryBatchTransferRequestDto();
+        request.setAction("COPY");
+        request.setAtomic(Boolean.FALSE);
+        request.setDryRun(Boolean.FALSE);
+        request.setOperator("transfer-user");
+        request.setOperations(List.of());
+
+        MvcResult asyncResult = mockMvc.perform(post("/api/meta/categories/batch-transfer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.TEXT_EVENT_STREAM)
+                        .content(objectMapper.writeValueAsBytes(request)))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        asyncResult.getAsyncResult(5000L);
+
+        String body = asyncResult.getResponse().getContentAsString();
+        assertTrue(MediaType.TEXT_EVENT_STREAM_VALUE.equals(asyncResult.getResponse().getContentType()));
+        assertTrue(body.contains("event:started"), body);
+        assertTrue(body.contains("event:failed"), body);
+        assertTrue(body.contains("\"code\":\"INVALID_ARGUMENT\""), body);
+        assertTrue(body.contains("\"exceptionType\":\"java.lang.IllegalArgumentException\""), body);
+        assertTrue(body.contains("\"rootCauseType\":\"java.lang.IllegalArgumentException\""), body);
+    }
+
     private MetaCategoryDetailDto createCategory(String businessDomain, String code, String name, UUID parentId) {
         CreateCategoryRequestDto request = new CreateCategoryRequestDto();
         request.setBusinessDomain(businessDomain);
@@ -523,6 +590,21 @@ public class MetaCategoryControllerIT {
                 request.setDescription(name + " description");
                 request.setSort(1);
                 return categoryCrudService.create(request, "it-controller-commit");
+        }
+
+        private MetaCategoryDef createCommittedCategoryDefWithoutLatestVersion(String businessDomain, String code, UUID parentId) {
+                MetaCategoryDef def = new MetaCategoryDef();
+                def.setBusinessDomain(businessDomain);
+                def.setCodeKey(code);
+                def.setStatus("active");
+                def.setParent(parentId == null ? null : categoryDefRepository.findById(parentId).orElseThrow());
+                def.setDepth(parentId == null ? (short) 0 : (short) 1);
+                def.setSortOrder(1);
+                def.setIsLeaf(Boolean.TRUE);
+                def.setPath("/" + code);
+                def.setFullPathName(code);
+                def.setCreatedBy("it-controller-commit");
+                return categoryDefRepository.save(def);
         }
 
     private MetaCategoryBatchTransferOperationDto transferOperation(String clientOperationId, UUID sourceNodeId, UUID targetParentId) {

@@ -14,4 +14,7 @@ public class MetaCategoryBatchTransferTopologyItemResultDto {
     private Boolean success;
     private String code;
     private String message;
+    private String exceptionType;
+    private String rootCauseType;
+    private String rootCauseMessage;
 }

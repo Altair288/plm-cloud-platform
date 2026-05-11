@@ -1,6 +1,6 @@
 # 分类批量移动/复制接口专项文档
 
-更新时间：2026-03-18
+更新时间：2026-05-11
 适用模块：plm-attribute-service
 
 ---
@@ -17,6 +17,12 @@
 - 前端批量复制多个分类节点到同一目标父节点或不同目标父节点
 - 前端在正式提交前先执行 dryRun 预检
 - 前端需要按 operation 维度展示成功、失败、归一化、回滚结果
+- 前端需要在 CI/CD 或弱网络环境下通过 SSE 实时获取 started/completed/failed 事件与实际异常信息
+
+响应协商：
+
+- `Accept: application/json`：返回普通 JSON 结果
+- `Accept: text/event-stream`：返回 SSE 流，同一路径同一请求体，服务端按事件推送执行状态
 
 ---
 
@@ -81,6 +87,39 @@ copyOptions 字段：
   ]
 }
 ```
+
+### 2.3 SSE 调用方式
+
+当请求头携带 `Accept: text/event-stream` 时，接口会切换为流式返回。
+
+示例：
+
+```http
+POST /api/meta/categories/batch-transfer HTTP/1.1
+Content-Type: application/json
+Accept: text/event-stream
+
+{
+  "businessDomain": "MATERIAL",
+  "action": "COPY",
+  "targetParentId": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
+  "dryRun": false,
+  "atomic": true,
+  "operator": "admin",
+  "operations": [
+    {
+      "clientOperationId": "OP_1710661001_A",
+      "sourceNodeId": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1"
+    }
+  ]
+}
+```
+
+SSE 事件约定：
+
+- `started`：服务端已接收请求并开始执行
+- `completed`：执行完成，`data` 为完整的 `MetaCategoryBatchTransferResponseDto`
+- `failed`：执行失败，`data` 为结构化错误对象
 
 ---
 
@@ -165,7 +204,15 @@ copyOptions 字段：
 | codeMappings | array | oldCode -> newCode 映射 |
 | code | string | 结果码 |
 | message | string | 结果消息 |
+| exceptionType | string | 执行期异常类型，全限定类名；仅失败项返回 |
+| rootCauseType | string | 根因异常类型，全限定类名；仅失败项返回 |
+| rootCauseMessage | string | 根因异常消息；仅失败项返回 |
 | warning | array | 项级 warning |
+
+说明：
+
+- 规划期校验失败（如 source/target 不合法）通常只返回 `code/message`。
+- 执行期失败会额外回填 `exceptionType/rootCauseType/rootCauseMessage`，便于前端区分业务冲突与真实运行时异常。
 
 ### 4.3 响应示例
 
@@ -251,12 +298,106 @@ copyOptions 字段：
 
 ---
 
-## 6. HTTP 语义
+## 6. SSE 事件模型
+
+### 6.1 started 事件示例
+
+```text
+event:started
+data:{"timestamp":"2026-05-11T09:46:05.345086700+08:00","streamType":"batch-transfer","phase":"started","action":"COPY"}
+```
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| timestamp | string | 事件时间，ISO-8601 带时区 |
+| streamType | string | 固定为 `batch-transfer` |
+| phase | string | 固定为 `started` |
+| action | string | 当前批处理动作，MOVE 或 COPY |
+
+### 6.2 completed 事件示例
+
+```text
+event:completed
+data:{"total":1,"successCount":1,"failureCount":0,"normalizedCount":0,"movedCount":0,"copiedCount":2,"atomic":true,"dryRun":false,"warnings":[],"results":[{"clientOperationId":"copy-op","sourceNodeId":"8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1","normalizedSourceNodeId":"8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1","targetParentId":"cae7a410-f951-4780-bad1-3c15ebed4dd4","action":"COPY","success":true,"affectedNodeCount":2,"createdRootId":"c6f55e6a-cd65-4bcb-b37f-c5fb4a6b2f77"}]}
+```
+
+说明：
+
+- `completed` 事件的 `data` 与普通 JSON 模式返回体完全一致。
+- 前端可直接复用现有 JSON 解析模型处理 `completed` 事件。
+
+### 6.3 failed 事件示例
+
+```text
+event:failed
+data:{"timestamp":"2026-05-11T09:46:05.346085400+08:00","streamType":"batch-transfer","phase":"failed","action":"COPY","code":"INVALID_ARGUMENT","message":"businessDomain is required","exceptionType":"java.lang.IllegalArgumentException","rootCauseType":"java.lang.IllegalArgumentException","rootCauseMessage":"businessDomain is required"}
+```
+
+失败事件字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| timestamp | string | 事件时间 |
+| streamType | string | 固定为 `batch-transfer` |
+| phase | string | 固定为 `failed` |
+| action | string | 当前批处理动作 |
+| code | string | 错误码 |
+| message | string | 错误消息 |
+| exceptionType | string | 异常类型，全限定类名 |
+| rootCauseType | string | 根因异常类型，全限定类名 |
+| rootCauseMessage | string | 根因异常消息 |
+
+适用说明：
+
+- 当请求语义校验或执行过程在流式模式下失败时，服务端会发送 `failed` 事件而不是返回最终 JSON 结果体。
+- 若请求在进入控制器前就发生 JSON 反序列化失败、媒体类型不匹配等 Spring MVC 绑定错误，仍可能直接返回标准 HTTP 4xx/5xx，而不会进入 SSE 流。
+
+### 6.4 普通 JSON 失败项示例
+
+```json
+{
+  "total": 1,
+  "successCount": 0,
+  "failureCount": 1,
+  "normalizedCount": 0,
+  "movedCount": 0,
+  "copiedCount": 0,
+  "atomic": false,
+  "dryRun": false,
+  "warnings": [],
+  "results": [
+    {
+      "clientOperationId": "copy-broken-op",
+      "sourceNodeId": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+      "normalizedSourceNodeId": "8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+      "targetParentId": "cae7a410-f951-4780-bad1-3c15ebed4dd4",
+      "action": "COPY",
+      "success": false,
+      "affectedNodeCount": 0,
+      "code": "INVALID_ARGUMENT",
+      "message": "category has no latest version: id=8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1",
+      "exceptionType": "java.lang.IllegalArgumentException",
+      "rootCauseType": "java.lang.IllegalArgumentException",
+      "rootCauseMessage": "category has no latest version: id=8bfe9f28-3f1a-4bb8-a2fd-f033a7a7f0d1"
+    }
+  ]
+}
+```
+
+---
+
+## 7. HTTP 语义
 
 - 200：请求格式合法，服务端已进入逐项处理阶段；即使内部有部分失败也返回 200
 - 400：请求体非法，整批无法开始处理
 - 404：批次级目标节点不存在等无法进入逐项执行的错误
 - 409：atomic 模式下出现整批性冲突
+
+流式模式补充：
+
+- 当 `Accept: text/event-stream` 且请求成功进入控制器后，HTTP 状态通常为 200，实际成功/失败由 `completed` 或 `failed` 事件表达。
 
 当前实现建议前端使用方式：
 

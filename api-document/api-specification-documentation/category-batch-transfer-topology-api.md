@@ -1,6 +1,6 @@
 # 分类拓扑感知批量移动接口专项文档
 
-更新时间：2026-03-18
+更新时间：2026-05-11
 适用模块：plm-attribute-service
 
 ---
@@ -26,6 +26,12 @@
 - 前端已在工作区内完成 virtualRelationMap 规划
 - 需要后端返回 resolvedOrder 和 finalParentMappings 与前端规划结果对账
 - 需要在正式执行前先做拓扑预检
+- 前端需要在长耗时或 CI/CD 场景下通过 SSE 观察 started/completed/failed 事件与结构化异常信息
+
+响应协商：
+
+- `Accept: application/json`：返回普通 JSON 规划/执行结果
+- `Accept: text/event-stream`：返回 SSE 流，同一路径同一请求体
 
 ---
 
@@ -88,6 +94,38 @@
   ]
 }
 ```
+
+### 2.4 SSE 调用方式
+
+```http
+POST /api/meta/categories/batch-transfer/topology HTTP/1.1
+Content-Type: application/json
+Accept: text/event-stream
+
+{
+  "businessDomain": "MATERIAL",
+  "action": "MOVE",
+  "dryRun": false,
+  "atomic": true,
+  "operator": "admin",
+  "planningMode": "TOPOLOGY_AWARE",
+  "orderingStrategy": "CLIENT_ORDER",
+  "strictDependencyValidation": true,
+  "operations": [
+    {
+      "operationId": "op-b-to-y",
+      "sourceNodeId": "9df774b4-1216-4bfa-8a5f-43d35c1f4828",
+      "targetParentId": "11111111-1111-1111-1111-111111111111"
+    }
+  ]
+}
+```
+
+SSE 事件约定：
+
+- `started`：服务端开始处理请求
+- `completed`：返回完整 `MetaCategoryBatchTransferTopologyResponseDto`
+- `failed`：返回结构化失败对象
 
 ---
 
@@ -166,6 +204,9 @@
 | success | boolean | 是否成功 |
 | code | string | 结果码 |
 | message | string | 结果说明 |
+| exceptionType | string | 执行期异常类型，全限定类名；仅失败项返回 |
+| rootCauseType | string | 根因异常类型，全限定类名；仅失败项返回 |
+| rootCauseMessage | string | 根因异常消息；仅失败项返回 |
 
 ### 4.4 dryRun 响应示例
 
@@ -257,6 +298,18 @@
 2. 用户确认后再执行 dryRun=false 的正式请求
 3. 若前端维护 virtualRelationMap，建议使用 operationId 对齐服务端 results
 4. 若需要并发保护，在正式提交时带上 expectedSourceParentId
+
+流式模式补充：
+
+- 当 `Accept: text/event-stream` 时，HTTP 200 表示流已建立，最终成功/失败由 `completed` 或 `failed` 事件表达。
+- `started` 和 `failed` 事件中的 `data` 分别包含 `streamType=batch-transfer-topology`、`phase`、`action` 以及结构化错误字段。
+
+### 6.1 topology failed 事件示例
+
+```text
+event:failed
+data:{"timestamp":"2026-05-11T09:46:05.346085400+08:00","streamType":"batch-transfer-topology","phase":"failed","action":"MOVE","code":"INVALID_ARGUMENT","message":"businessDomain is required","exceptionType":"java.lang.IllegalArgumentException","rootCauseType":"java.lang.IllegalArgumentException","rootCauseMessage":"businessDomain is required"}
+```
 
 ---
 

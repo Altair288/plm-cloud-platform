@@ -1,6 +1,6 @@
 # 分类通用 API 文档（plm-attribute-service）
 
-更新时间：2026-03-18
+更新时间：2026-05-11
 
 > 本文为分类接口正式文档（已完成 taxonomy 移除重构）。
 >
@@ -34,8 +34,8 @@
 | 局部更新 | PATCH /api/meta/categories/{id} | ✅ | 局部更新语义 |
 | 删除分类 | DELETE /api/meta/categories/{id} | ✅ | 软删除，支持可选级联 |
 | 批量删除分类 | POST /api/meta/categories/batch-delete | ✅ | 支持 dryRun、atomic 和逐项结果 |
-| 批量移动/复制分类 | POST /api/meta/categories/batch-transfer | ✅ | 支持 MOVE/COPY、dryRun、atomic、逐项结果；COPY 会同步复制分类下属性 latest version |
-| 拓扑感知批量移动分类 | POST /api/meta/categories/batch-transfer/topology | ✅ | 支持 MOVE、dependsOnOperationIds、descendant-first 拆分、dryRun 规划结果 |
+| 批量移动/复制分类 | POST /api/meta/categories/batch-transfer | ✅ | 支持 MOVE/COPY、dryRun、atomic、逐项结果；COPY 会同步复制分类下属性 latest version；支持 `Accept: text/event-stream` 返回 SSE |
+| 拓扑感知批量移动分类 | POST /api/meta/categories/batch-transfer/topology | ✅ | 支持 MOVE、dependsOnOperationIds、descendant-first 拆分、dryRun 规划结果；支持 `Accept: text/event-stream` 返回 SSE |
 | taxonomy 元数据 | GET /api/meta/taxonomies/{code} | ❌（已下线） | 已移除 |
 
 ---
@@ -44,6 +44,11 @@
 
 - 分类批量移动/复制接口专项文档：./category-batch-transfer-api.md
 - 分类拓扑感知批量移动接口专项文档：./category-batch-transfer-topology-api.md
+
+批量移动/复制相关补充：
+
+- 普通 JSON 模式下，逐项失败结果会包含 `exceptionType`、`rootCauseType`、`rootCauseMessage`，便于前端展示真实错误。
+- SSE 模式下，请求路径不变，仅通过 `Accept: text/event-stream` 切换，事件类型固定为 `started`、`completed`、`failed`。
 
 ---
 

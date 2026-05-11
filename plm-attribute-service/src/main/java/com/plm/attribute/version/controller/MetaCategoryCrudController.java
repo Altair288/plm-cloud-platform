@@ -13,7 +13,9 @@ import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferTopologyRe
 import com.plm.common.api.dto.category.MetaCategoryDetailDto;
 import com.plm.common.api.dto.category.version.MetaCategoryVersionCompareDto;
 import com.plm.common.api.dto.category.UpdateCategoryRequestDto;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -91,15 +93,27 @@ public class MetaCategoryCrudController {
         return crudService.batchDelete(request);
     }
 
-    @PostMapping("/batch-transfer")
+    @PostMapping(value = "/batch-transfer", produces = MediaType.APPLICATION_JSON_VALUE)
     public MetaCategoryBatchTransferResponseDto batchTransfer(
             @RequestBody MetaCategoryBatchTransferRequestDto request) {
         return crudService.batchTransfer(request);
     }
 
-    @PostMapping("/batch-transfer/topology")
+    @PostMapping(value = "/batch-transfer", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter batchTransferStream(
+            @RequestBody MetaCategoryBatchTransferRequestDto request) {
+        return crudService.batchTransferStream(request);
+    }
+
+    @PostMapping(value = "/batch-transfer/topology", produces = MediaType.APPLICATION_JSON_VALUE)
     public MetaCategoryBatchTransferTopologyResponseDto batchTransferTopology(
             @RequestBody MetaCategoryBatchTransferTopologyRequestDto request) {
         return crudService.batchTransferTopology(request);
+    }
+
+    @PostMapping(value = "/batch-transfer/topology", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter batchTransferTopologyStream(
+            @RequestBody MetaCategoryBatchTransferTopologyRequestDto request) {
+        return crudService.batchTransferTopologyStream(request);
     }
 }

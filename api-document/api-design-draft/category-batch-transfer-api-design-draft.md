@@ -1,6 +1,6 @@
 # 分类批量移动/复制接口设计草案
 
-更新时间：2026-03-17
+更新时间：2026-05-11
 阶段：设计草案（本阶段不改代码）
 
 ---
@@ -28,6 +28,7 @@
 - 支持 dryRun 预检、atomic 原子批处理、逐项结果返回。
 - 明确 move 与 copy 的结构变更规则、冲突校验规则与复制语义。
 - 兼容当前分类树、闭包表、版本模型，不破坏既有查询接口。
+- 允许前端通过结构化异常字段与 SSE 事件拿到真实执行错误，便于 CI/CD 场景快速定位。
 
 ---
 
@@ -50,6 +51,14 @@
   - dryRun 与 atomic 语义
 - 接口统一后，前端接入、结果展示、重试逻辑更简单。
 - 后端内部仍可拆为 move executor 与 copy executor，保证实现清晰。
+- 对外继续保持单一路径时，也可通过 `Accept: text/event-stream` 无缝扩展为流式执行结果。
+
+补充结论：
+
+- 同一路径支持两种响应协商：`application/json` 与 `text/event-stream`
+- 普通 JSON 模式保留现有批量返回体
+- SSE 模式统一发送 `started/completed/failed` 事件
+- 执行期异常需以 `exceptionType/rootCauseType/rootCauseMessage` 暴露给前端
 
 说明：
 
