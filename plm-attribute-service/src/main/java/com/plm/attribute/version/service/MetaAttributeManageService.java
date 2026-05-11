@@ -27,11 +27,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -273,10 +275,8 @@ public class MetaAttributeManageService {
         return queryService.detail(categoryDef.getBusinessDomain(), def.getKey(), true);
     }
 
-    /**
-     * 软删属性：仅更新 def.status=deleted，不删除历史版本。
-     * - 幂等：重复调用不会报错
-     */
+    // 软删属性：仅更新 def.status=deleted，不删除历史版本。
+    // 幂等：重复调用不会报错
     @Transactional
     public void delete(String categoryCodeKey, String attrKey, String operator) {
         MetaCategoryDef categoryDef = resolveCategory(null, categoryCodeKey);
@@ -448,7 +448,7 @@ public class MetaAttributeManageService {
 
         MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
         Map<String, String> existingValueCodes = extractExistingLovCodes(latest);
-        String valueJson = buildLovValueJson(categoryDef, def.getKey(), req.getLovValues(), existingValueCodes, operator);
+    String valueJson = buildLovValueJson(categoryDef, lovDef, def.getKey(), req.getLovValues(), existingValueCodes, operator);
         validateLovValueCodesUnique(categoryDef.getBusinessDomain(), lovDef, valueJson);
         String newHash = AttributeLovImportUtils.jsonHash(valueJson);
         if (latest != null && Objects.equals(latest.getHash(), newHash)) {
@@ -472,11 +472,14 @@ public class MetaAttributeManageService {
     }
 
     private String buildLovValueJson(MetaCategoryDef categoryDef,
+                                     MetaLovDef currentLovDef,
                                      String attributeKey,
                                      List<MetaAttributeUpsertRequestDto.LovValueUpsertItem> items,
                                      Map<String, String> existingValueCodes,
                                      String operator) {
         String lovRuleCode = metaCodeRuleSetService.resolveLovRuleCode(categoryDef.getBusinessDomain());
+        Set<String> occupiedCodes = loadExternalLovCodes(categoryDef.getBusinessDomain(), currentLovDef);
+        Set<String> reservedCodes = new LinkedHashSet<>(existingValueCodes == null ? Collections.emptyList() : existingValueCodes.values());
         ObjectNode root = objectMapper.createObjectNode();
         var arr = objectMapper.createArrayNode();
         List<MetaAttributeUpsertRequestDto.LovValueUpsertItem> safeItems = items == null ? new ArrayList<>() : items;
@@ -488,18 +491,25 @@ public class MetaAttributeManageService {
             String name = trimToNull(item.getName());
             if (code == null && name == null)
                 continue;
-                ObjectNode one = objectMapper.createObjectNode();
-                String resolvedManualCode = code != null ? code : existingValueCodes.get(name);
-            MetaCodeRuleService.GeneratedCodeResult generatedValueCode = metaCodeRuleService.generateCode(
-                    lovRuleCode,
-                    "LOV_VALUE",
-                    null,
-                    buildCodeContext(categoryDef, attributeKey),
-                    resolvedManualCode,
-                    operator,
-                    false
-            );
-            one.put("code", generatedValueCode.code());
+            ObjectNode one = objectMapper.createObjectNode();
+            String resolvedManualCode = code != null ? code : existingValueCodes.get(name);
+            String finalCode;
+            if (resolvedManualCode != null) {
+                MetaCodeRuleService.GeneratedCodeResult generatedValueCode = metaCodeRuleService.generateCode(
+                        lovRuleCode,
+                        "LOV_VALUE",
+                        null,
+                        buildCodeContext(categoryDef, attributeKey),
+                        resolvedManualCode,
+                        operator,
+                        false
+                );
+                finalCode = generatedValueCode.code();
+            } else {
+                finalCode = generateUniqueLovValueCode(categoryDef, currentLovDef, attributeKey, lovRuleCode, operator, occupiedCodes, reservedCodes);
+            }
+            reservedCodes.add(finalCode);
+            one.put("code", finalCode);
             one.put("name", name != null ? name : code);
             String label = trimToNull(item.getLabel());
             if (label != null)
@@ -589,6 +599,84 @@ public class MetaAttributeManageService {
                 resolvedPeriodKey,
                 previewItems
         );
+    }
+
+    private String generateUniqueLovValueCode(MetaCategoryDef categoryDef,
+                                              MetaLovDef currentLovDef,
+                                              String attributeKey,
+                                              String lovRuleCode,
+                                              String operator,
+                                              Set<String> occupiedCodes,
+                                              Set<String> reservedCodes) {
+        Map<String, String> context = buildCodeContext(categoryDef, attributeKey);
+        for (int attempt = 0; attempt < 256; attempt++) {
+            MetaCodeRuleService.GeneratedCodeResult generatedValueCode = metaCodeRuleService.generateCode(
+                    lovRuleCode,
+                    "LOV_VALUE",
+                    null,
+                    context,
+                    null,
+                    operator,
+                    false
+            );
+            String candidate = generatedValueCode.code();
+            if (candidate == null) {
+                continue;
+            }
+            if (reservedCodes.contains(candidate)) {
+                continue;
+            }
+            if (occupiedCodes.contains(candidate) || lovValueCodeExistsInBusinessDomain(categoryDef.getBusinessDomain(), currentLovDef, candidate)) {
+                occupiedCodes.add(candidate);
+                continue;
+            }
+            return candidate;
+        }
+        throw new IllegalStateException("failed to allocate unique enum option code after retries: businessDomain="
+                + categoryDef.getBusinessDomain() + ", attributeKey=" + attributeKey);
+    }
+
+    private Set<String> loadExternalLovCodes(String businessDomain, MetaLovDef currentLovDef) {
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        if (isBlank(businessDomain)) {
+            return codes;
+        }
+        for (MetaLovDef lovDef : lovDefRepository.findByBusinessDomain(businessDomain)) {
+            if (lovDef == null || isDeleted(lovDef)) {
+                continue;
+            }
+            if (currentLovDef != null && Objects.equals(lovDef.getId(), currentLovDef.getId())) {
+                continue;
+            }
+            MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+            if (latest == null || isBlank(latest.getValueJson())) {
+                continue;
+            }
+            codes.addAll(extractLovCodeToName(latest.getValueJson()).keySet());
+        }
+        return codes;
+    }
+
+    private boolean lovValueCodeExistsInBusinessDomain(String businessDomain, MetaLovDef currentLovDef, String candidateCode) {
+        if (isBlank(candidateCode) || isBlank(businessDomain)) {
+            return false;
+        }
+        for (MetaLovDef lovDef : lovDefRepository.findByBusinessDomain(businessDomain)) {
+            if (lovDef == null || isDeleted(lovDef)) {
+                continue;
+            }
+            if (currentLovDef != null && Objects.equals(lovDef.getId(), currentLovDef.getId())) {
+                continue;
+            }
+            MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+            if (latest == null || isBlank(latest.getValueJson())) {
+                continue;
+            }
+            if (extractLovCodeToName(latest.getValueJson()).containsKey(candidateCode)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isBlank(String s) {

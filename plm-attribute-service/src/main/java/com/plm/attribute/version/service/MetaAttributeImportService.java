@@ -250,10 +250,10 @@ public class MetaAttributeImportService {
             }
             MetaLovVersion latestLovVer = newlyCreatedLov ? null
                     : lovVersionRepository.findLatestByDef(lovDef).orElse(null);
-                Map<String, String> existingValueCodes = extractExistingLovCodes(latestLovVer);
-                String valueJson = buildLovJson(catDef, attrKey, g.values, existingValueCodes, createdBy);
-                validateLovValueCodesUnique(catDef.getBusinessDomain(), lovDef, valueJson);
-                String valueHash = AttributeLovImportUtils.jsonHash(valueJson);
+            Map<String, String> existingValueCodes = extractExistingLovCodes(latestLovVer);
+            String valueJson = buildLovJson(catDef, lovDef, attrKey, g.values, existingValueCodes, createdBy);
+            validateLovValueCodesUnique(catDef.getBusinessDomain(), lovDef, valueJson);
+            String valueHash = AttributeLovImportUtils.jsonHash(valueJson);
             boolean needNewLovVersion = newlyCreatedLov || latestLovVer == null
                     || (valueHash != null && !valueHash.equals(latestLovVer.getHash()));
             if (needNewLovVersion) {
@@ -344,11 +344,14 @@ public class MetaAttributeImportService {
     }
 
     private String buildLovJson(MetaCategoryDef categoryDef,
+                                MetaLovDef currentLovDef,
                                 String attributeCode,
                                 List<String> values,
                                 Map<String, String> existingValueCodes,
                                 String operator) {
         String lovRuleCode = metaCodeRuleSetService.resolveLovRuleCode(categoryDef.getBusinessDomain());
+        Set<String> occupiedCodes = loadExternalLovCodes(categoryDef.getBusinessDomain(), currentLovDef);
+        Set<String> reservedCodes = new LinkedHashSet<>(existingValueCodes == null ? java.util.Collections.emptyList() : existingValueCodes.values());
         ObjectNode root = objectMapper.createObjectNode();
         var arr = objectMapper.createArrayNode();
         for (int i = 0; i < values.size(); i++) {
@@ -357,18 +360,25 @@ public class MetaAttributeImportService {
                 continue;
             }
             String manualOrExistingCode = existingValueCodes.get(value);
-            MetaCodeRuleService.GeneratedCodeResult generatedValueCode = metaCodeRuleService.generateCode(
-                    lovRuleCode,
-                    "LOV_VALUE",
-                    null,
-                    buildCodeContext(categoryDef, attributeCode),
-                    manualOrExistingCode,
-                    operator,
-                    false
-            );
+            String finalCode;
+            if (manualOrExistingCode != null) {
+                MetaCodeRuleService.GeneratedCodeResult generatedValueCode = metaCodeRuleService.generateCode(
+                        lovRuleCode,
+                        "LOV_VALUE",
+                        null,
+                        buildCodeContext(categoryDef, attributeCode),
+                        manualOrExistingCode,
+                        operator,
+                        false
+                );
+                finalCode = generatedValueCode.code();
+            } else {
+                finalCode = generateUniqueLovValueCode(categoryDef, currentLovDef, attributeCode, lovRuleCode, operator, occupiedCodes, reservedCodes);
+            }
+            reservedCodes.add(finalCode);
 
             ObjectNode one = objectMapper.createObjectNode();
-            one.put("code", generatedValueCode.code());
+            one.put("code", finalCode);
             one.put("name", value);
             one.put("order", i + 1);
             one.put("active", true);
@@ -515,6 +525,84 @@ public class MetaAttributeImportService {
             return new LinkedHashMap<>();
         }
         return codes;
+    }
+
+    private String generateUniqueLovValueCode(MetaCategoryDef categoryDef,
+                                              MetaLovDef currentLovDef,
+                                              String attributeCode,
+                                              String lovRuleCode,
+                                              String operator,
+                                              Set<String> occupiedCodes,
+                                              Set<String> reservedCodes) {
+        Map<String, String> context = buildCodeContext(categoryDef, attributeCode);
+        for (int attempt = 0; attempt < 256; attempt++) {
+            MetaCodeRuleService.GeneratedCodeResult generatedValueCode = metaCodeRuleService.generateCode(
+                    lovRuleCode,
+                    "LOV_VALUE",
+                    null,
+                    context,
+                    null,
+                    operator,
+                    false
+            );
+            String candidate = generatedValueCode.code();
+            if (candidate == null) {
+                continue;
+            }
+            if (reservedCodes.contains(candidate)) {
+                continue;
+            }
+            if (occupiedCodes.contains(candidate) || lovValueCodeExistsInBusinessDomain(categoryDef.getBusinessDomain(), currentLovDef, candidate)) {
+                occupiedCodes.add(candidate);
+                continue;
+            }
+            return candidate;
+        }
+        throw new IllegalStateException("failed to allocate unique enum option code after retries: businessDomain="
+                + categoryDef.getBusinessDomain() + ", attributeCode=" + attributeCode);
+    }
+
+    private Set<String> loadExternalLovCodes(String businessDomain, MetaLovDef currentLovDef) {
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        if (isBlank(businessDomain)) {
+            return codes;
+        }
+        for (MetaLovDef lovDef : lovDefRepository.findByBusinessDomain(businessDomain)) {
+            if (lovDef == null || isDeleted(lovDef.getStatus())) {
+                continue;
+            }
+            if (currentLovDef != null && Objects.equals(lovDef.getId(), currentLovDef.getId())) {
+                continue;
+            }
+            MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+            if (latest == null || isBlank(latest.getValueJson())) {
+                continue;
+            }
+            codes.addAll(extractLovCodeToName(latest.getValueJson()).keySet());
+        }
+        return codes;
+    }
+
+    private boolean lovValueCodeExistsInBusinessDomain(String businessDomain, MetaLovDef currentLovDef, String candidateCode) {
+        if (isBlank(candidateCode) || isBlank(businessDomain)) {
+            return false;
+        }
+        for (MetaLovDef lovDef : lovDefRepository.findByBusinessDomain(businessDomain)) {
+            if (lovDef == null || isDeleted(lovDef.getStatus())) {
+                continue;
+            }
+            if (currentLovDef != null && Objects.equals(lovDef.getId(), currentLovDef.getId())) {
+                continue;
+            }
+            MetaLovVersion latest = lovVersionRepository.findLatestByDef(lovDef).orElse(null);
+            if (latest == null || isBlank(latest.getValueJson())) {
+                continue;
+            }
+            if (extractLovCodeToName(latest.getValueJson()).containsKey(candidateCode)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isDeleted(String status) {

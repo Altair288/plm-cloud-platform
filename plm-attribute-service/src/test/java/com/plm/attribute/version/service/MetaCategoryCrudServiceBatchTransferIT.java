@@ -2,6 +2,8 @@ package com.plm.attribute.version.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plm.common.api.dto.attribute.MetaAttributeUpsertRequestDto;
+import com.plm.common.api.dto.code.CodeRuleSaveRequestDto;
+import com.plm.common.api.dto.code.CodeRuleSetSaveRequestDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferItemResultDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferOperationDto;
 import com.plm.common.api.dto.category.batch.MetaCategoryBatchTransferRequestDto;
@@ -17,10 +19,15 @@ import com.plm.common.version.domain.MetaLovVersion;
 import com.plm.infrastructure.version.repository.CategoryHierarchyRepository;
 import com.plm.infrastructure.version.repository.MetaAttributeDefRepository;
 import com.plm.infrastructure.version.repository.MetaAttributeVersionRepository;
+import com.plm.infrastructure.version.repository.MetaCodeRuleRepository;
+import com.plm.infrastructure.version.repository.MetaCodeRuleSetRepository;
+import com.plm.infrastructure.version.repository.MetaCodeRuleVersionRepository;
 import com.plm.infrastructure.version.repository.MetaLovDefRepository;
 import com.plm.infrastructure.version.repository.MetaLovVersionRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryDefRepository;
 import com.plm.infrastructure.version.repository.MetaCategoryVersionRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -54,6 +61,10 @@ class MetaCategoryCrudServiceBatchTransferIT {
 
     private static final short TEST_ROOT_DEPTH = 1;
     private static final ObjectMapper TEST_OBJECT_MAPPER = new ObjectMapper();
+    private static final String RULESET_TEST_DOMAIN = "EXPERIMENT";
+    private static final String CATEGORY_RULE_CODE = "CATEGORY_EXPERIMENT";
+    private static final String ATTRIBUTE_RULE_CODE = "ATTRIBUTE_EXPERIMENT";
+    private static final String LOV_RULE_CODE = "LOV_EXPERIMENT";
 
     private static final class TransferFixture {
         private UUID sourceRootId;
@@ -87,10 +98,28 @@ class MetaCategoryCrudServiceBatchTransferIT {
     private MetaAttributeManageService attributeManageService;
 
     @Autowired
+    private MetaCodeRuleService codeRuleService;
+
+    @Autowired
+    private MetaCodeRuleSetService codeRuleSetService;
+
+    @Autowired
+    private MetaCodeRuleRepository codeRuleRepository;
+
+    @Autowired
+    private MetaCodeRuleVersionRepository codeRuleVersionRepository;
+
+    @Autowired
+    private MetaCodeRuleSetRepository codeRuleSetRepository;
+
+    @Autowired
     private CategoryHierarchyRepository hierarchyRepository;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @AfterEach
     void cleanupCommittedTestData() {
@@ -138,6 +167,31 @@ class MetaCategoryCrudServiceBatchTransferIT {
             }
 
             defRepository.deleteAll(testDefs);
+
+            codeRuleSetRepository.findByBusinessDomain(RULESET_TEST_DOMAIN).ifPresent(codeRuleSetRepository::delete);
+            List<com.plm.common.version.domain.MetaCodeRule> testRules = codeRuleRepository.findAllByCodeIn(List.of(
+                    CATEGORY_RULE_CODE,
+                    ATTRIBUTE_RULE_CODE,
+                    LOV_RULE_CODE
+            ));
+            if (!testRules.isEmpty()) {
+                entityManager.createNativeQuery("""
+                                delete from plm_meta.meta_code_sequence
+                                where rule_code in (:categoryRuleCode, :attributeRuleCode, :lovRuleCode)
+                                """)
+                        .setParameter("categoryRuleCode", CATEGORY_RULE_CODE)
+                        .setParameter("attributeRuleCode", ATTRIBUTE_RULE_CODE)
+                        .setParameter("lovRuleCode", LOV_RULE_CODE)
+                        .executeUpdate();
+                List<com.plm.common.version.domain.MetaCodeRuleVersion> testRuleVersions = new ArrayList<>();
+                for (com.plm.common.version.domain.MetaCodeRule rule : testRules) {
+                    testRuleVersions.addAll(codeRuleVersionRepository.findByCodeRuleOrderByVersionNoDesc(rule));
+                }
+                if (!testRuleVersions.isEmpty()) {
+                    codeRuleVersionRepository.deleteAll(testRuleVersions);
+                }
+                codeRuleRepository.deleteAll(testRules);
+            }
             return null;
         });
     }
@@ -307,6 +361,56 @@ class MetaCategoryCrudServiceBatchTransferIT {
                 .map(node -> node.path("code").asText())
                 .collect(java.util.stream.Collectors.toSet()));
         }
+
+    @Test
+    void batchTransfer_copy_shouldRegenerateEnumCodesWhenSourceUsesManualCodesOutsideRuleSequence() throws Exception {
+        TransferFixture fixture = inNewTransaction(() -> {
+            ensureRuleSetWithGlobalLovSequence(RULESET_TEST_DOMAIN);
+
+            TransferFixture created = new TransferFixture();
+            MetaCategoryDef sourceRoot = createNode(RULESET_TEST_DOMAIN, uniqueCode("IT-COPY-MANUAL-ENUM-SRC"), null, "active", 1, TEST_ROOT_DEPTH, true);
+            MetaCategoryDef targetParent = createNode(RULESET_TEST_DOMAIN, uniqueCode("IT-COPY-MANUAL-ENUM-TARGET"), null, "active", 2, TEST_ROOT_DEPTH, true);
+            saveClosureRows(List.of(sourceRoot, targetParent));
+
+            createEnumAttribute(
+                RULESET_TEST_DOMAIN,
+                sourceRoot.getCodeKey(),
+                "ATTR_MANUAL_ENUM",
+                "Enum Attribute",
+                "enumField",
+                List.of(lovValue("LOV-000001", "Enabled", "Enabled Label"))
+            );
+
+            created.sourceRootId = sourceRoot.getId();
+            created.targetParentId = targetParent.getId();
+            return created;
+        });
+
+        MetaCategoryBatchTransferRequestDto request = new MetaCategoryBatchTransferRequestDto();
+    request.setBusinessDomain(RULESET_TEST_DOMAIN);
+        request.setAction("COPY");
+        request.setAtomic(false);
+        request.setDryRun(false);
+        request.setOperator("it-transfer");
+        request.setTargetParentId(fixture.targetParentId);
+        request.setOperations(List.of(operation("OP-COPY-MANUAL-ENUM", fixture.sourceRootId, null)));
+
+        MetaCategoryBatchTransferResponseDto response = crudService.batchTransfer(request);
+
+        MetaCategoryBatchTransferItemResultDto result = response.getResults().get(0);
+        Assertions.assertTrue(Boolean.TRUE.equals(result.getSuccess()), () -> "copy failed: code=" + result.getCode() + ", message=" + result.getMessage());
+
+        List<MetaAttributeDef> copiedAttributeDefs = inNewTransaction(() ->
+            attributeDefRepository.findByCategoryDefIdIn(result.getCreatedIds()));
+        List<MetaLovDef> copiedLovDefs = inNewTransaction(() -> lovDefRepository.findByAttributeDefIn(copiedAttributeDefs));
+        List<MetaLovVersion> copiedLovVersions = inNewTransaction(() -> lovVersionRepository.findByLovDefInAndIsLatestTrue(copiedLovDefs));
+
+        Assertions.assertEquals(1, copiedLovVersions.size());
+        var values = TEST_OBJECT_MAPPER.readTree(copiedLovVersions.get(0).getValueJson()).path("values");
+        Assertions.assertEquals(1, values.size());
+        Assertions.assertNotEquals("LOV-000001", values.get(0).path("code").asText());
+        Assertions.assertEquals("Enabled", values.get(0).path("name").asText());
+    }
 
     @Test
     void batchTransfer_copy_shouldAllocateFirstAvailableSuffixFromPrefetchedCodes() {
@@ -521,6 +625,92 @@ class MetaCategoryCrudServiceBatchTransferIT {
         item.setName(name);
         item.setLabel(label);
         return item;
+    }
+
+    private void ensureRuleSetWithGlobalLovSequence(String businessDomain) {
+        String normalizedBusinessDomain = businessDomain == null ? null : businessDomain.trim().toUpperCase();
+        if (normalizedBusinessDomain == null) {
+            throw new IllegalArgumentException("businessDomain is required");
+        }
+        if (codeRuleSetRepository.existsByBusinessDomain(normalizedBusinessDomain)) {
+            return;
+        }
+
+        createRule(normalizedBusinessDomain, CATEGORY_RULE_CODE, "category", normalizedBusinessDomain + "-CAT-{SEQ}", Map.of(
+            "pattern", normalizedBusinessDomain + "-CAT-{SEQ}",
+            "hierarchyMode", "NONE",
+            "subRules", Map.of(
+                "category", Map.of(
+                    "separator", "-",
+                    "segments", List.of(
+                        Map.of("type", "STRING", "value", normalizedBusinessDomain + "-CAT"),
+                        Map.of("type", "SEQUENCE", "length", 3, "startValue", 1, "step", 1, "resetRule", "NEVER", "scopeKey", "GLOBAL")
+                    ),
+                    "allowedVariableKeys", List.of("BUSINESS_DOMAIN", "PARENT_CODE")
+                )
+            ),
+            "validation", Map.of("maxLength", 128, "regex", "^[A-Z][A-Z0-9_-]{0,127}$", "allowManualOverride", true)
+        ));
+        createRule(normalizedBusinessDomain, ATTRIBUTE_RULE_CODE, "attribute", "ATTR-{CATEGORY_CODE}-{SEQ}", Map.of(
+            "pattern", "ATTR-{CATEGORY_CODE}-{SEQ}",
+            "hierarchyMode", "NONE",
+            "subRules", Map.of(
+                "attribute", Map.of(
+                    "separator", "-",
+                    "segments", List.of(
+                        Map.of("type", "STRING", "value", "ATTR"),
+                        Map.of("type", "VARIABLE", "variableKey", "CATEGORY_CODE"),
+                        Map.of("type", "SEQUENCE", "length", 3, "startValue", 1, "step", 1, "resetRule", "PER_PARENT", "scopeKey", "CATEGORY_CODE")
+                    ),
+                    "allowedVariableKeys", List.of("BUSINESS_DOMAIN", "CATEGORY_CODE")
+                )
+            ),
+            "validation", Map.of("maxLength", 128, "regex", "^[A-Z][A-Z0-9_-]{0,127}$", "allowManualOverride", true)
+        ));
+        createRule(normalizedBusinessDomain, LOV_RULE_CODE, "lov", "LOV-{SEQ}", Map.of(
+            "pattern", "LOV-{SEQ}",
+            "hierarchyMode", "NONE",
+            "subRules", Map.of(
+                "enum", Map.of(
+                    "separator", "-",
+                    "segments", List.of(
+                        Map.of("type", "STRING", "value", "LOV"),
+                        Map.of("type", "SEQUENCE", "length", 6, "startValue", 1, "step", 1, "resetRule", "NEVER", "scopeKey", "GLOBAL")
+                    ),
+                    "allowedVariableKeys", List.of("BUSINESS_DOMAIN", "CATEGORY_CODE", "ATTRIBUTE_CODE")
+                )
+            ),
+            "validation", Map.of("maxLength", 128, "regex", "^[A-Z][A-Z0-9_-]{0,127}$", "allowManualOverride", true)
+        ));
+
+        CodeRuleSetSaveRequestDto request = new CodeRuleSetSaveRequestDto();
+        request.setBusinessDomain(normalizedBusinessDomain);
+        request.setName(normalizedBusinessDomain + " Rule Set");
+        request.setRemark("it-transfer");
+        request.setCategoryRuleCode(CATEGORY_RULE_CODE);
+        request.setAttributeRuleCode(ATTRIBUTE_RULE_CODE);
+        request.setLovRuleCode(LOV_RULE_CODE);
+        codeRuleSetService.create(request, "it-transfer");
+        codeRuleSetService.publish(normalizedBusinessDomain, "it-transfer");
+    }
+
+    private void createRule(String businessDomain,
+                            String ruleCode,
+                            String targetType,
+                            String pattern,
+                            Map<String, Object> ruleJson) {
+        CodeRuleSaveRequestDto request = new CodeRuleSaveRequestDto();
+        request.setBusinessDomain(businessDomain);
+        request.setRuleCode(ruleCode);
+        request.setName(ruleCode);
+        request.setTargetType(targetType);
+        request.setScopeType("GLOBAL");
+        request.setPattern(pattern);
+        request.setAllowManualOverride(Boolean.TRUE);
+        request.setRegexPattern("^[A-Z][A-Z0-9_-]{0,127}$");
+        request.setMaxLength(128);
+        request.setRuleJson(ruleJson);
+        codeRuleService.create(request, "it-transfer");
     }
 
     private void saveClosureRows(List<MetaCategoryDef> nodes) {
