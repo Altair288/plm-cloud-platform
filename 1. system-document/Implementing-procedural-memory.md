@@ -158,3 +158,45 @@
 - 当前 dev 环境已新增 `plm.auth.platform-admin.bootstrap.*` 配置；服务启动时会幂等创建默认管理员账号、密码凭据与平台角色绑定，避免每次本地联调手工造数。
 - 本轮联调中暴露出一个表结构对齐问题：`platform_role` 现有表只有 `created_at` / `created_by`，没有 `updated_at` / `updated_by`，新增实体必须严格按 migration 落地字段建模，否则应用启动期就会因 Hibernate 读不存在列而失败。
 - 当前 VS Code 内置测试结果：`AuthFlowControllerIT 30 passed / 0 failed`。
+
+## 2026-06-04 Workspace 统一 MinIO 对象存储设计草案
+
+- 已新增 `workspace-minio-object-storage-design-draft.md`，作为平台统一配置 MinIO、每个 Workspace 一个 Bucket、数据库维护元数据、后端统一鉴权、Presigned URL 上传下载的基础设计稿。
+- 当前建议将 MinIO 集群配置与 Workspace Bucket 绑定元数据放在 `plm_platform`，将对象文件元数据与上传会话放在 `plm_runtime`，继续保持控制面与运行态分离。
+- 当前建议每个存储集群额外维护一个仅平台管理员可访问的私有测试 Bucket，用于初次配置后的连接验证、测试上传和测试下载，不复用任何 Workspace Bucket。
+- 当前建议补充平台管理员专用测试接口：连接测试、测试上传申请、测试上传完成、测试下载 URL、测试对象清理；这些接口只能走平台登录态，不允许 Workspace token 调用。
+- 当前建议管理员测试上传/下载会话单独落在 `plm_platform.storage_cluster_test_session`，不与 Workspace 业务对象元数据混用。
+- 当前建议 Workspace 创建与 Bucket 创建解耦：先提交 Workspace，再异步申请 Bucket，并通过 `PENDING / READY / FAILED / FROZEN / DELETING / DELETED` 管理 Bucket 生命周期。
+- 当前建议上传链路采用 `upload intent -> Presigned PUT -> complete` 三段式，下载链路采用后端鉴权后签发短时 Presigned GET URL，前端不直接持有对象存储长期凭证。
+- 当前建议 Bucket 名基于不可变 `workspace_id` 生成，而不是 `workspace_name` 或可变业务编码，避免 rename 漂移与碰撞风险。
+
+## 2026-06-04 对象存储管理员模块与 Workspace Bucket 申请落地
+
+- 已通过 `V39__platform_storage_control_plane.sql` 落地存储控制面与运行态基础表，并新增 `V40__workspace_storage_bucket_pending_unassigned.sql`，允许 `workspace_storage_bucket` 在 `PENDING` 阶段先不绑定 `cluster_id` / `bucket_name`，修正“先登记 pending、后选择 active cluster”与表结构的偏差。
+- `plm-infrastructure` 已接入 MinIO Java SDK，并落地 `StorageGateway` / `MinioStorageGateway` / `StorageSecretResolver`，当前支持管理员连接验证、测试 Bucket 检查、测试上传下载签名、对象 stat、对象删除。
+- `plm-auth-service` 已落地平台管理员对象存储配置与测试接口，当前覆盖：集群新增/更新/列表、连接测试、测试上传申请、测试上传完成、测试下载 URL、测试对象清理。
+- 管理员集群保存逻辑已修正为“先以 `INACTIVE` 落库，再停用旧 active，最后切换为 `ACTIVE`”，避免触发数据库层“同一时刻仅一个 active cluster”的唯一约束冲突。
+- `WorkspaceCommandService` 当前已接入 `WorkspaceStorageBootstrapService`，在 Workspace 创建成功后登记 `workspace_storage_bucket`，并通过 after-commit 回调触发 `WorkspaceBucketProvisioningService` 做 Bucket 申请与状态回写。
+- `WorkspaceBucketProvisioningService` 当前实现的热点路径为 `O(1)`：按 `workspace_storage_bucket.id` 唯一查询、读取一个 active cluster、生成一个 bucket 名、执行一次 gateway 调用、回写一次状态；成功时写成 `READY`，失败时写成 `FAILED` 并持久化错误码。
+- 当前 Workspace Bucket 命名规则已落地为 `{bucket_prefix}-ws-{workspaceIdNoDash}`，由 `WorkspaceBucketNamingPolicy` 统一生成，避免后续在 service 内到处拼字符串。
+- 已补并通过 VS Code 内置集成测试：`PlatformAdminStorageControllerIT` 与 `WorkspaceStorageProvisioningIT`，当前合计结果为 `7 passed / 0 failed`。
+- `WorkspaceStorageProvisioningIT` 当前覆盖三条主分支：存在 active cluster 时 Bucket 进入 `READY`；不存在 active cluster 时 Bucket 进入 `FAILED` 且错误码为 `STORAGE_CLUSTER_NOT_CONFIGURED`；gateway 建 Bucket 失败时 Bucket 进入 `FAILED` 且错误码为 `WORKSPACE_BUCKET_PROVISION_FAILED`。
+
+## 2026-06-04 Workspace 对象上传下载删除主链路落地
+
+- 已新增 `V41__workspace_storage_permissions.sql`，补齐平台对象存储管理/测试权限，以及 `storage.bucket.read`、`storage.object.upload`、`storage.object.download`、`storage.object.delete`、`storage.object.manage` 等 workspace 权限，并把它们绑定到现有内建角色。
+- `WorkspaceCommandService` 当前已把对象存储权限并入 `workspace_owner` / `workspace_admin` / `workspace_member` / `workspace_viewer` 的默认权限集合，保证新建 workspace 直接具备草案要求的最小对象访问能力。
+- 已在 `plm-common` 新增运行态对象存储 DTO，并在 `plm-auth-service` 落地 `WorkspaceObjectStorageController` 与 `WorkspaceObjectStorageService`，当前已支持：申请上传、完成上传、申请下载 URL、删除对象。
+- 运行态热点路径当前保持 `O(1)`：一次 workspace 权限校验、一次 bucket/cluster 唯一查询、一次对象或上传会话唯一查询、一次 MinIO gateway 调用、一次元数据回写；未引入消息队列，继续保持当前 after-commit 方案。
+- `ObjectAsset` 当前已按上传完成回写 `ACTIVE / UPLOAD_FAILED / DELETED`，并同步更新 `WorkspaceStorageBucket.used_bytes` 与 `object_count`，形成最小可闭环的对象元数据统计。
+- 平台管理员测试链路的集群测试结果状态已从 `SUCCESS` 统一为 `PASSED`，与设计草案状态文案保持一致。
+- 已补并通过 VS Code 内置集成测试：`PlatformAdminStorageControllerIT`、`WorkspaceStorageProvisioningIT`、`WorkspaceObjectStorageControllerIT`，当前合计结果为 `10 passed / 0 failed`。
+
+## 2026-06-05 平台管理员存储显式权限与测试会话自动清理落地
+
+- `PlatformAdminAuthService` 当前已新增显式平台权限校验能力，`PlatformStorageAdminService` 已按草案拆分为 `platform.storage.cluster.manage` 与 `platform.storage.cluster.test` 两条权限控制路径，不再只依赖“平台管理员身份”。
+- 已新增 `V42__platform_storage_admin_permissions.sql`，把 `platform.storage.cluster.manage`、`platform.storage.cluster.test` 落库并绑定到内建平台角色：`platform_super_admin`、`platform_admin`、`platform_operator`。
+- `PlatformAdminStorageControllerIT` 已补拒绝分支，确认缺失管理权限时不能创建/查询集群，缺失测试权限时不能执行连通性测试。
+- auth-service 当前已开启 scheduling，并新增 `PlatformStorageAdminCleanupService`，按 `expires_at` 扫描过期测试会话，以 `O(n)` 方式做 best-effort 对象删除并把会话状态回写为 `EXPIRED`。
+- `application-dev.yml` 已新增 `plm.storage.admin.test-session-cleanup-interval-ms`，默认 300000ms，用于控制测试会话自动清理频率。
+- 已通过 VS Code 内置测试：`PlatformAdminStorageControllerIT` 与 `PlatformStorageAdminCleanupServiceIT`，当前合计结果为 `8 passed / 0 failed`。

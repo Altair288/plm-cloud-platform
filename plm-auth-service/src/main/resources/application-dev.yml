@@ -46,6 +46,12 @@ plm:
         subject: PLM Cloud Email Verification Code
         expire-in-seconds: 600
         resend-cooldown-seconds: 60
+  storage:
+    admin:
+      upload-url-expire-seconds: ${PLM_STORAGE_ADMIN_UPLOAD_URL_EXPIRE_SECONDS:900}
+      download-url-expire-seconds: ${PLM_STORAGE_ADMIN_DOWNLOAD_URL_EXPIRE_SECONDS:900}
+      test-session-expire-seconds: ${PLM_STORAGE_ADMIN_TEST_SESSION_EXPIRE_SECONDS:1800}
+      test-session-cleanup-interval-ms: ${PLM_STORAGE_ADMIN_TEST_SESSION_CLEANUP_INTERVAL_MS:300000}
 
 spring:
   data:

@@ -45,6 +45,7 @@ public class WorkspaceCommandService {
     private final UserWorkspaceStateService userWorkspaceStateService;
     private final WorkspaceDictionaryService workspaceDictionaryService;
     private final WorkspaceCodeGenerationService workspaceCodeGenerationService;
+    private final WorkspaceStorageBootstrapService workspaceStorageBootstrapService;
 
     public WorkspaceCommandService(UserAccountRepository userAccountRepository,
                                    WorkspaceRepository workspaceRepository,
@@ -56,7 +57,8 @@ public class WorkspaceCommandService {
                                    WorkspaceSessionService workspaceSessionService,
                                    UserWorkspaceStateService userWorkspaceStateService,
                                    WorkspaceDictionaryService workspaceDictionaryService,
-                                   WorkspaceCodeGenerationService workspaceCodeGenerationService) {
+                                   WorkspaceCodeGenerationService workspaceCodeGenerationService,
+                                   WorkspaceStorageBootstrapService workspaceStorageBootstrapService) {
         this.userAccountRepository = userAccountRepository;
         this.workspaceRepository = workspaceRepository;
         this.workspaceMemberRepository = workspaceMemberRepository;
@@ -68,6 +70,7 @@ public class WorkspaceCommandService {
         this.userWorkspaceStateService = userWorkspaceStateService;
         this.workspaceDictionaryService = workspaceDictionaryService;
         this.workspaceCodeGenerationService = workspaceCodeGenerationService;
+        this.workspaceStorageBootstrapService = workspaceStorageBootstrapService;
     }
 
     @Transactional
@@ -131,6 +134,7 @@ public class WorkspaceCommandService {
             workspaceSessionService.markDefaultWorkspace(userId, member);
         }
 
+        workspaceStorageBootstrapService.registerPendingBucket(workspace, userId.toString());
         userWorkspaceStateService.syncUserWorkspaceState(user);
 
         return workspaceSessionService.openWorkspaceSession(workspace, member, List.of(AuthDomainConstants.ROLE_CODE_WORKSPACE_OWNER));
@@ -172,7 +176,12 @@ public class WorkspaceCommandService {
                         "workspace.config.read",
                         "workspace.config.update",
                         "runtime.import.execute",
-                        "runtime.export.execute"
+                    "runtime.export.execute",
+                    AuthDomainConstants.PERMISSION_STORAGE_BUCKET_READ,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_UPLOAD,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_DOWNLOAD,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_DELETE,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_MANAGE
                 ),
                 AuthDomainConstants.ROLE_CODE_WORKSPACE_ADMIN, List.of(
                         "workspace.member.read",
@@ -184,19 +193,29 @@ public class WorkspaceCommandService {
                         "workspace.config.read",
                         "workspace.config.update",
                         "runtime.import.execute",
-                        "runtime.export.execute"
+                    "runtime.export.execute",
+                    AuthDomainConstants.PERMISSION_STORAGE_BUCKET_READ,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_UPLOAD,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_DOWNLOAD,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_DELETE,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_MANAGE
                 ),
                 AuthDomainConstants.ROLE_CODE_WORKSPACE_MEMBER, List.of(
                         "workspace.member.read",
                         "workspace.profile.read",
                         "workspace.config.read",
                         "runtime.import.execute",
-                        "runtime.export.execute"
+                    "runtime.export.execute",
+                    AuthDomainConstants.PERMISSION_STORAGE_BUCKET_READ,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_UPLOAD,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_DOWNLOAD
                 ),
                 AuthDomainConstants.ROLE_CODE_WORKSPACE_VIEWER, List.of(
                         "workspace.member.read",
                         "workspace.profile.read",
-                        "workspace.config.read"
+                    "workspace.config.read",
+                    AuthDomainConstants.PERMISSION_STORAGE_BUCKET_READ,
+                    AuthDomainConstants.PERMISSION_STORAGE_OBJECT_DOWNLOAD
                 )
         );
 

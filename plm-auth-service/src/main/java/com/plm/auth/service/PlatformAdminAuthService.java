@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -132,6 +133,14 @@ public class PlatformAdminAuthService {
 
     @Transactional(readOnly = true)
     public AuthPlatformAdminSessionResponseDto getCurrentAdminSession() {
+        AuthAdminSummaryDto admin = requireCurrentAdmin();
+        AuthPlatformAdminSessionResponseDto response = new AuthPlatformAdminSessionResponseDto();
+        response.setAdmin(admin);
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public AuthAdminSummaryDto requireCurrentAdmin() {
         UUID userId = AuthStpKit.requirePlatformUserId();
         UserAccount user = userAccountRepository.findById(userId)
                 .orElseThrow(() -> new AuthBusinessException("AUTH_NOT_LOGGED_IN", HttpStatus.UNAUTHORIZED, "not logged in"));
@@ -142,16 +151,34 @@ public class PlatformAdminAuthService {
         if (roleCodes.isEmpty()) {
             throw new AuthBusinessException("PLATFORM_ADMIN_REQUIRED", HttpStatus.FORBIDDEN, "platform admin role is required");
         }
+        return toAdminSummary(user, roleCodes);
+    }
 
-        AuthPlatformAdminSessionResponseDto response = new AuthPlatformAdminSessionResponseDto();
-        response.setAdmin(toAdminSummary(user, roleCodes));
-        return response;
+    @Transactional(readOnly = true)
+    public AdminAccessContext requireCurrentAdminPermission(String permissionCode) {
+        AuthAdminSummaryDto admin = requireCurrentAdmin();
+        List<String> permissionCodes = loadActivePlatformPermissionCodes(admin.getId());
+        if (permissionCode != null && permissionCodes.stream().noneMatch(code -> code.equalsIgnoreCase(permissionCode))) {
+            throw new AuthBusinessException("PLATFORM_PERMISSION_DENIED", HttpStatus.FORBIDDEN,
+                    "missing platform permission: " + permissionCode);
+        }
+        return new AdminAccessContext(admin, permissionCodes);
     }
 
     private List<String> loadActivePlatformRoleCodes(UUID userId) {
         return platformUserRoleRepository.findRoleCodesByUserIdAndRoleStatus(
                 userId,
                 AuthDomainConstants.PLATFORM_ROLE_STATUS_ACTIVE);
+    }
+
+    private List<String> loadActivePlatformPermissionCodes(UUID userId) {
+        return platformUserRoleRepository.findPermissionCodesByUserIdAndRoleStatus(
+                userId,
+                AuthDomainConstants.PLATFORM_ROLE_STATUS_ACTIVE).stream()
+                .map(code -> code == null ? null : code.toLowerCase(Locale.ROOT))
+                .filter(code -> code != null && !code.isBlank())
+                .distinct()
+                .toList();
     }
 
     private AuthAdminSummaryDto toAdminSummary(UserAccount user, List<String> roleCodes) {
@@ -205,5 +232,9 @@ public class PlatformAdminAuthService {
             throw new IllegalStateException("login token expireInSeconds must be > 0");
         }
         return tokenExpireInSeconds;
+    }
+
+    public record AdminAccessContext(AuthAdminSummaryDto admin,
+                                     List<String> permissionCodes) {
     }
 }

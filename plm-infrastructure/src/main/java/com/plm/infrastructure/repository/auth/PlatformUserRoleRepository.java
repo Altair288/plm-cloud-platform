@@ -24,4 +24,17 @@ public interface PlatformUserRoleRepository extends JpaRepository<PlatformUserRo
             """)
     List<String> findRoleCodesByUserIdAndRoleStatus(@Param("userId") UUID userId,
                                                     @Param("roleStatus") String roleStatus);
+
+    @Query(value = """
+            select distinct p.permission_code
+            from plm_platform.platform_user_role pur
+            join plm_platform.platform_role pr on pr.id = pur.role_id
+            join plm_platform.platform_role_permission prp on prp.role_id = pr.id
+            join plm_platform.permission p on p.id = prp.permission_id
+            where pur.user_id = :userId
+              and lower(coalesce(pr.role_status, '')) = lower(:roleStatus)
+            order by p.permission_code asc
+            """, nativeQuery = true)
+    List<String> findPermissionCodesByUserIdAndRoleStatus(@Param("userId") UUID userId,
+                                                          @Param("roleStatus") String roleStatus);
 }
