@@ -10,7 +10,10 @@ public final class AuthDomainConstants {
     public static final String LOGIN_RESULT_FAILED = "FAILED";
     public static final String PLATFORM_ROLE_STATUS_ACTIVE = "ACTIVE";
     public static final String WORKSPACE_STATUS_ACTIVE = "ACTIVE";
+    public static final String WORKSPACE_STATUS_FROZEN = "FROZEN";
+    public static final String WORKSPACE_STATUS_DELETED = "DELETED";
     public static final String WORKSPACE_MEMBER_STATUS_ACTIVE = "ACTIVE";
+    public static final String WORKSPACE_MEMBER_STATUS_INACTIVE = "INACTIVE";
     public static final String WORKSPACE_JOIN_TYPE_OWNER = "OWNER";
     public static final String WORKSPACE_JOIN_TYPE_INVITE = "INVITE";
     public static final String WORKSPACE_JOIN_TYPE_INVITE_LINK = "INVITE_LINK";
@@ -27,6 +30,7 @@ public final class AuthDomainConstants {
     public static final String ROLE_CODE_WORKSPACE_MEMBER = "workspace_member";
     public static final String ROLE_CODE_WORKSPACE_VIEWER = "workspace_viewer";
     public static final String PERMISSION_WORKSPACE_MEMBER_INVITE = "workspace.member.invite";
+    public static final String PERMISSION_WORKSPACE_CONFIG_UPDATE = "workspace.config.update";
     public static final String PERMISSION_STORAGE_BUCKET_READ = "storage.bucket.read";
     public static final String PERMISSION_STORAGE_OBJECT_UPLOAD = "storage.object.upload";
     public static final String PERMISSION_STORAGE_OBJECT_DOWNLOAD = "storage.object.download";

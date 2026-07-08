@@ -72,7 +72,9 @@ public class AuthQueryService {
     }
 
     public AuthWorkspaceOptionDto getDefaultWorkspace(UUID userId) {
-        Optional<WorkspaceMember> memberOptional = workspaceMemberRepository.findByUserIdAndIsDefaultWorkspaceTrue(userId);
+        Optional<WorkspaceMember> memberOptional = workspaceMemberRepository.findByUserIdAndIsDefaultWorkspaceTrueAndMemberStatus(
+                userId,
+                AuthDomainConstants.WORKSPACE_MEMBER_STATUS_ACTIVE);
         if (memberOptional.isEmpty()) {
             return null;
         }

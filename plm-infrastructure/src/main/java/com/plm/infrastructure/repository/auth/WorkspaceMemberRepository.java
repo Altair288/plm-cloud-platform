@@ -20,6 +20,8 @@ public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember
 
     Optional<WorkspaceMember> findByUserIdAndWorkspaceId(UUID userId, UUID workspaceId);
 
+    List<WorkspaceMember> findByWorkspaceId(UUID workspaceId);
+
     @Query("""
             select count(wm) > 0
             from WorkspaceMember wm
@@ -35,7 +37,11 @@ public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember
 
     Optional<WorkspaceMember> findByUserIdAndIsDefaultWorkspaceTrue(UUID userId);
 
+    Optional<WorkspaceMember> findByUserIdAndIsDefaultWorkspaceTrueAndMemberStatus(UUID userId, String memberStatus);
+
     boolean existsByUserIdAndIsDefaultWorkspaceTrue(UUID userId);
+
+    boolean existsByUserIdAndIsDefaultWorkspaceTrueAndMemberStatus(UUID userId, String memberStatus);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

@@ -15,8 +15,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -51,9 +54,15 @@ public class WorkspaceAccessService {
 
     @Transactional(readOnly = true)
     public Workspace requireActiveWorkspace(UUID workspaceId) {
+        return requireWorkspaceInStatuses(workspaceId, Set.of(AuthDomainConstants.WORKSPACE_STATUS_ACTIVE));
+    }
+
+    @Transactional(readOnly = true)
+    public Workspace requireWorkspaceInStatuses(UUID workspaceId, Collection<String> allowedStatuses) {
         Workspace workspace = workspaceRepository.findById(workspaceId)
                 .orElseThrow(() -> new AuthBusinessException("WORKSPACE_NOT_FOUND", HttpStatus.NOT_FOUND, "workspace not found"));
-        if (!AuthDomainConstants.WORKSPACE_STATUS_ACTIVE.equalsIgnoreCase(workspace.getWorkspaceStatus())) {
+        Set<String> normalizedAllowedStatuses = normalizeStatuses(allowedStatuses);
+        if (!normalizedAllowedStatuses.contains(normalizeStatus(workspace.getWorkspaceStatus()))) {
             throw new AuthBusinessException("WORKSPACE_NOT_ACTIVE", HttpStatus.CONFLICT, "workspace is not active");
         }
         return workspace;
@@ -85,12 +94,48 @@ public class WorkspaceAccessService {
         UserAccount user = requireActiveUser(userId);
         Workspace workspace = requireActiveWorkspace(workspaceId);
         WorkspaceMember member = requireActiveWorkspaceMember(userId, workspaceId);
+        return requireWorkspacePermission(user, workspace, member, permissionCode);
+    }
+
+    @Transactional(readOnly = true)
+    public WorkspaceAccessContext requireWorkspacePermissionInStatuses(UUID userId,
+                                                                       UUID workspaceId,
+                                                                       String permissionCode,
+                                                                       Collection<String> allowedStatuses) {
+        UserAccount user = requireActiveUser(userId);
+        Workspace workspace = requireWorkspaceInStatuses(workspaceId, allowedStatuses);
+        WorkspaceMember member = requireActiveWorkspaceMember(userId, workspaceId);
+        return requireWorkspacePermission(user, workspace, member, permissionCode);
+    }
+
+    private WorkspaceAccessContext requireWorkspacePermission(UserAccount user,
+                                                              Workspace workspace,
+                                                              WorkspaceMember member,
+                                                              String permissionCode) {
         List<String> permissionCodes = workspaceRolePermissionRepository.findPermissionCodesByWorkspaceMemberId(member.getId());
         if (permissionCode != null && permissionCodes.stream().noneMatch(code -> code.equalsIgnoreCase(permissionCode))) {
             throw new AuthBusinessException("WORKSPACE_PERMISSION_DENIED", HttpStatus.FORBIDDEN,
                     "missing workspace permission: " + permissionCode);
         }
         return new WorkspaceAccessContext(user, workspace, member, permissionCodes);
+    }
+
+    private Set<String> normalizeStatuses(Collection<String> allowedStatuses) {
+        if (allowedStatuses == null || allowedStatuses.isEmpty()) {
+            return Set.of(AuthDomainConstants.WORKSPACE_STATUS_ACTIVE);
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String status : allowedStatuses) {
+            normalized.add(normalizeStatus(status));
+        }
+        return normalized;
+    }
+
+    private String normalizeStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return AuthDomainConstants.WORKSPACE_STATUS_ACTIVE;
+        }
+        return status.trim().toUpperCase(Locale.ROOT);
     }
 
     public String normalizeRoleCode(String roleCode) {

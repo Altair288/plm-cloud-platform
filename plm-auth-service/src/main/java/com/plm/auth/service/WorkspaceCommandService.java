@@ -129,7 +129,9 @@ public class WorkspaceCommandService {
         workspaceMemberRoleRepository.save(memberRole);
 
         boolean shouldRememberAsDefault = Boolean.TRUE.equals(request.getRememberAsDefault())
-                || !workspaceMemberRepository.existsByUserIdAndIsDefaultWorkspaceTrue(userId);
+            || !workspaceMemberRepository.existsByUserIdAndIsDefaultWorkspaceTrueAndMemberStatus(
+            userId,
+            AuthDomainConstants.WORKSPACE_MEMBER_STATUS_ACTIVE);
         if (shouldRememberAsDefault) {
             workspaceSessionService.markDefaultWorkspace(userId, member);
         }

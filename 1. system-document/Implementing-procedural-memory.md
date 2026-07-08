@@ -200,3 +200,31 @@
 - auth-service 当前已开启 scheduling，并新增 `PlatformStorageAdminCleanupService`，按 `expires_at` 扫描过期测试会话，以 `O(n)` 方式做 best-effort 对象删除并把会话状态回写为 `EXPIRED`。
 - `application-dev.yml` 已新增 `plm.storage.admin.test-session-cleanup-interval-ms`，默认 300000ms，用于控制测试会话自动清理频率。
 - 已通过 VS Code 内置测试：`PlatformAdminStorageControllerIT` 与 `PlatformStorageAdminCleanupServiceIT`，当前合计结果为 `8 passed / 0 failed`。
+
+## 2026-06-08 Workspace 冻结上传限制与 Bucket 统计对账落地
+
+- `WorkspaceStorageContextResolver` 当前已拆分为“可写存储”和“可访问存储”两条 `O(1)` 路径：`FROZEN` bucket 会拒绝新的上传申请，但仍允许现有对象在当前阶段继续完成上传、下载和删除，作为冻结期的最小可用策略。
+- `WorkspaceObjectStorageControllerIT` 已新增冻结 bucket 场景，确认 `FROZEN` 状态下新上传返回 `WORKSPACE_BUCKET_NOT_READY`，但已存在对象仍可申请下载 URL。
+- auth-service 已新增 `WorkspaceBucketStatsReconciliationService`，按固定周期对 `READY`/`FROZEN` bucket 做元数据对账，基于 `ObjectAsset` 的 `ACTIVE` 聚合结果回写 `used_bytes` 与 `object_count`。
+- `ObjectAssetRepository` 已补 `bucket_id` 维度的聚合查询，`WorkspaceStorageBucketRepository` 已补按 bucket 状态筛选方法；当前对账路径为一次聚合查询 + 一次 bucket 列表查询 + 变更 bucket 批量保存，整体保持 `O(n + m)`。
+- `application-dev.yml` 已新增 `plm.storage.workspace.stats-reconciliation-interval-ms`，默认 900000ms。
+- 已通过 VS Code 内置测试：`WorkspaceObjectStorageControllerIT`、`PlatformStorageAdminCleanupServiceIT`、`WorkspaceBucketStatsReconciliationServiceIT`，当前合计结果为 `10 passed / 0 failed`。
+
+## 2026-06-26 Workspace 删除生命周期与默认空间漂移修正落地
+
+- auth-service 已新增 `WorkspaceLifecycleService`、`WorkspaceDeletionExecutionService` 与 `WorkspaceDeletionCleanupService`，把 Workspace 生命周期拆成“冻结/标记删除的主事务”和“后台删除清理服务收尾”的两段式，避免把外部 MinIO 副作用继续塞回删除请求主事务。
+- `AuthSessionController` 已新增 `POST /auth/workspaces/{workspaceId}/freeze` 与 `DELETE /auth/workspaces/{workspaceId}` 两个入口；当前删除路径要求具备 `workspace.config.update`，主线复杂度保持为 `O(1)` 状态切换 + `O(n)` 成员停用，删除请求返回时状态稳定落在 `FROZEN/DELETING`，再由后台清理服务按对象数量线性收尾。
+- `WorkspaceDeletionExecutionService` 当前会在删除执行阶段取消非终态上传会话、逐个删除 bucket 下的非 `DELETED` 对象，再执行 bucket 物理删除，最后把 `workspace.workspace_status` 与 `workspace_storage_bucket.bucket_status` 一并收口到 `DELETED`；`WorkspaceDeletionCleanupService` 负责定时扫描 `DELETING` bucket 并触发这条执行链路。
+- `StorageGateway` / `MinioStorageGateway` 已补 `deleteBucket`，用于在对象清理完成后真正删除 Workspace bucket。
+- 默认 Workspace 漂移问题已同步修正：`AuthQueryService`、`WorkspaceCommandService`、`WorkspaceInvitationService` 现在只把“活跃成员上的默认空间”视为有效默认空间，避免删除后残留在 inactive member 上的默认标记继续影响 `/auth/me`、新建空间和邀请接受逻辑。
+- 本轮通过 VS Code 编辑器侧 Java 测试命令确认 `WorkspaceLifecycleControllerIT` 已通过；同时生命周期相关源码文件当前编辑器诊断为 0 错误，并已通过一次 `mvn -pl plm-auth-service -am -DskipTests compile` 编译刷新，避免 Java Test Runner 使用旧产物。
+
+## 2026-06-26 MinIO Gateway Bucket 治理与 API 文档收口
+
+- `plm-infrastructure` 已新增 `StorageBucketGovernanceProperties`、`MinioClientFactory` 与 `DefaultMinioClientFactory`，将 MinIO client 创建与 gateway 逻辑解耦，便于后续单元测试和多后端扩展。
+- `MinioStorageGateway.ensureBucketExists(...)` 当前已在建 bucket 后统一应用 bucket 治理：强制空 statement 私有 policy、未完成 multipart 上传自动清理 lifecycle、测试 bucket 的 `__cluster_test__/` 前缀对象过期规则，以及可选的 SSE-S3 默认加密开关。
+- `application-dev.yml` 已补 `plm.storage.governance.*` 配置项，当前默认开启私有 policy、multipart 1 天清理、测试对象 1 天过期，SSE 开关默认关闭但能力已具备。
+- `plm-infrastructure` 已新增 `MinioStorageGatewayTest`，覆盖 bucket 创建后治理动作、workspace/test bucket lifecycle 规则生成，以及可选 SSE 配置构建逻辑；当前测试文件已落库，源码诊断为 0 错误。
+- 已新增 `api-document/api-specification-documentation/object-storage-api.md`，作为对象存储接口正式对接文档，覆盖平台管理员集群配置/测试接口、Workspace 对象上传下载删除接口，以及 freeze/delete 生命周期接口的路径、请求体、响应体与样例。
+- `plm-gateway` 当前已补 `/api/storage/** -> http://localhost:8081` 路由，前端本地联调入口可统一收敛到 `http://localhost:8080`；`GatewayRoutingConfigIT` 已同步扩展为校验 auth/storage/meta 三条路由配置。
+- 基于 `workspace-minio-object-storage-design-draft.md` 当前阶段定义的实现目标，平台统一 MinIO 集群配置、管理员测试链路、Workspace bucket 生命周期、对象上传下载删除、冻结删除、容量统计、测试对象清理、bucket 治理与 API 对接文档现已全部完成；当前剩余项均属于增强能力而非本阶段闭环缺口。

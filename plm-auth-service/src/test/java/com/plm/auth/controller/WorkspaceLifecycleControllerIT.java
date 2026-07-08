@@ -3,6 +3,8 @@ package com.plm.auth.controller;
 import cn.dev33.satoken.exception.SaTokenContextException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plm.auth.service.RegisterEmailSender;
+import com.plm.auth.service.WorkspaceDeletionExecutionService;
+import com.plm.auth.service.WorkspaceDeletionCleanupService;
 import com.plm.auth.support.AuthStpKit;
 import com.plm.common.api.dto.auth.AuthCreateWorkspaceRequestDto;
 import com.plm.common.api.dto.auth.AuthPasswordEncryptionKeyResponseDto;
@@ -13,16 +15,18 @@ import com.plm.common.api.dto.auth.AuthSendRegisterEmailCodeRequestDto;
 import com.plm.common.api.dto.auth.AuthSendRegisterEmailCodeResponseDto;
 import com.plm.common.api.dto.auth.AuthWorkspaceSessionResponseDto;
 import com.plm.common.api.dto.storage.StorageObjectCompleteUploadRequestDto;
-import com.plm.common.api.dto.storage.StorageObjectDownloadUrlResponseDto;
-import com.plm.common.api.dto.storage.StorageObjectResponseDto;
 import com.plm.common.api.dto.storage.StorageObjectUploadIntentRequestDto;
 import com.plm.common.api.dto.storage.StorageObjectUploadIntentResponseDto;
+import com.plm.common.domain.auth.UserAccount;
+import com.plm.common.domain.auth.Workspace;
+import com.plm.common.domain.auth.WorkspaceMember;
 import com.plm.common.domain.storage.ObjectAsset;
-import com.plm.common.domain.storage.ObjectUploadSession;
 import com.plm.common.domain.storage.StorageCluster;
 import com.plm.common.domain.storage.WorkspaceStorageBucket;
+import com.plm.infrastructure.repository.auth.UserAccountRepository;
+import com.plm.infrastructure.repository.auth.WorkspaceMemberRepository;
+import com.plm.infrastructure.repository.auth.WorkspaceRepository;
 import com.plm.infrastructure.repository.storage.ObjectAssetRepository;
-import com.plm.infrastructure.repository.storage.ObjectUploadSessionRepository;
 import com.plm.infrastructure.repository.storage.StorageClusterRepository;
 import com.plm.infrastructure.repository.storage.WorkspaceStorageBucketRepository;
 import com.plm.infrastructure.storage.StorageGateway;
@@ -49,7 +53,6 @@ import java.security.PublicKey;
 import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.UUID;
 
@@ -72,7 +75,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("dev")
-class WorkspaceObjectStorageControllerIT {
+class WorkspaceLifecycleControllerIT {
 
     @Autowired
     private MockMvc mockMvc;
@@ -87,10 +90,22 @@ class WorkspaceObjectStorageControllerIT {
     private WorkspaceStorageBucketRepository workspaceStorageBucketRepository;
 
     @Autowired
+    private WorkspaceRepository workspaceRepository;
+
+    @Autowired
+    private WorkspaceMemberRepository workspaceMemberRepository;
+
+    @Autowired
     private ObjectAssetRepository objectAssetRepository;
 
     @Autowired
-    private ObjectUploadSessionRepository objectUploadSessionRepository;
+    private UserAccountRepository userAccountRepository;
+
+    @Autowired
+    private WorkspaceDeletionCleanupService workspaceDeletionCleanupService;
+
+    @Autowired
+    private WorkspaceDeletionExecutionService workspaceDeletionExecutionService;
 
     @MockBean
     private RegisterEmailSender registerEmailSender;
@@ -114,135 +129,59 @@ class WorkspaceObjectStorageControllerIT {
     }
 
     @Test
-    void workspaceObjectStorage_shouldCompleteUploadDownloadAndDeleteFlow() throws Exception {
+    void workspaceLifecycle_shouldFreezeWorkspaceAndBlockNewUpload() throws Exception {
         deactivateActiveCluster();
         doNothing().when(storageGateway).ensureBucketExists(any(), anyString());
-        doNothing().when(storageGateway).deleteObject(any(), anyString(), anyString());
-        when(storageGateway.createPresignedUploadUrl(any(), anyString(), anyString(), any(Duration.class)))
-                .thenReturn("http://minio.local/workspace-upload");
-        when(storageGateway.createPresignedDownloadUrl(any(), anyString(), anyString(), any(Duration.class)))
-                .thenReturn("http://minio.local/workspace-download");
-        when(storageGateway.statObject(any(), anyString(), anyString()))
-                .thenReturn(new StorageObjectStat("etag-workspace-1", 128L));
-        saveActiveCluster("objects-" + uniqueSuffix(), "plm-obj");
+        saveActiveCluster("freeze-" + uniqueSuffix(), "plm-freeze");
 
         AuthPasswordLoginResponseDto loginResponse = registerAndLogin(uniqueSuffix());
-        AuthWorkspaceSessionResponseDto workspaceSession = createWorkspace(loginResponse, "Object Workspace " + uniqueSuffix());
+        AuthWorkspaceSessionResponseDto workspaceSession = createWorkspace(loginResponse, "Freeze Workspace " + uniqueSuffix());
 
-        StorageObjectUploadIntentRequestDto uploadRequest = new StorageObjectUploadIntentRequestDto();
-        uploadRequest.setBizType("DOCUMENT");
-        uploadRequest.setFileName("manual.pdf");
-        uploadRequest.setContentType("application/pdf");
-        uploadRequest.setExpectedSize(128L);
-
-        StorageObjectUploadIntentResponseDto uploadIntent = readValue(
-                mockMvc.perform(post("/api/storage/workspaces/{workspaceId}/objects/upload-intents", workspaceSession.getWorkspaceId())
-                                .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken())
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsBytes(uploadRequest)))
-                        .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.presignedUploadUrl").value("http://minio.local/workspace-upload"))
-                        .andExpect(jsonPath("$.bucketName").isNotEmpty())
-                        .andReturn(),
-                StorageObjectUploadIntentResponseDto.class);
-
-        ObjectAsset createdObject = objectAssetRepository.findById(uploadIntent.getObjectId()).orElseThrow();
-        Assertions.assertEquals("PENDING_UPLOAD", createdObject.getObjectStatus());
-        Assertions.assertEquals("DOCUMENT", createdObject.getBizType());
-        ObjectUploadSession uploadSession = objectUploadSessionRepository.findByUploadToken(uploadIntent.getUploadToken())
-                .orElseThrow();
-        Assertions.assertEquals(createdObject.getId(), uploadSession.getObjectId());
-
-        StorageObjectCompleteUploadRequestDto completeRequest = new StorageObjectCompleteUploadRequestDto();
-        completeRequest.setUploadToken(uploadIntent.getUploadToken());
-
-        StorageObjectResponseDto completedObject = readValue(
-                mockMvc.perform(post("/api/storage/workspaces/{workspaceId}/objects/{objectId}/complete",
-                                workspaceSession.getWorkspaceId(),
-                                uploadIntent.getObjectId())
-                                .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken())
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsBytes(completeRequest)))
-                        .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.objectStatus").value("ACTIVE"))
-                        .andExpect(jsonPath("$.etag").value("etag-workspace-1"))
-                        .andReturn(),
-                StorageObjectResponseDto.class);
-        Assertions.assertEquals(128L, completedObject.getFileSize());
-
-        WorkspaceStorageBucket bucket = workspaceStorageBucketRepository.findByWorkspaceId(workspaceSession.getWorkspaceId())
-                .orElseThrow();
-        Assertions.assertEquals(128L, bucket.getUsedBytes());
-        Assertions.assertEquals(1L, bucket.getObjectCount());
-
-        StorageObjectDownloadUrlResponseDto downloadUrl = readValue(
-                mockMvc.perform(post("/api/storage/workspaces/{workspaceId}/objects/{objectId}/download-url",
-                                workspaceSession.getWorkspaceId(),
-                                uploadIntent.getObjectId())
-                                .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken()))
-                        .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.downloadUrl").value("http://minio.local/workspace-download"))
-                        .andReturn(),
-                StorageObjectDownloadUrlResponseDto.class);
-        Assertions.assertNotNull(downloadUrl.getExpireAt());
-
-        mockMvc.perform(delete("/api/storage/workspaces/{workspaceId}/objects/{objectId}",
-                        workspaceSession.getWorkspaceId(),
-                        uploadIntent.getObjectId())
+        mockMvc.perform(post("/auth/workspaces/{workspaceId}/freeze", workspaceSession.getWorkspaceId())
                         .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken()))
                 .andExpect(status().isNoContent());
 
-        ObjectAsset deletedObject = objectAssetRepository.findById(uploadIntent.getObjectId()).orElseThrow();
-        Assertions.assertEquals("DELETED", deletedObject.getObjectStatus());
-        WorkspaceStorageBucket bucketAfterDelete = workspaceStorageBucketRepository.findByWorkspaceId(workspaceSession.getWorkspaceId())
-                .orElseThrow();
-        Assertions.assertEquals(0L, bucketAfterDelete.getUsedBytes());
-        Assertions.assertEquals(0L, bucketAfterDelete.getObjectCount());
+        Workspace workspace = workspaceRepository.findById(workspaceSession.getWorkspaceId()).orElseThrow();
+        WorkspaceStorageBucket bucket = workspaceStorageBucketRepository.findByWorkspaceId(workspaceSession.getWorkspaceId()).orElseThrow();
+        Assertions.assertEquals("FROZEN", workspace.getWorkspaceStatus());
+        Assertions.assertEquals("FROZEN", workspace.getLifecycleStage());
+        Assertions.assertEquals("FROZEN", bucket.getBucketStatus());
 
-        verify(storageGateway).createPresignedUploadUrl(any(), eq(bucket.getBucketName()), eq(uploadIntent.getObjectKey()), any(Duration.class));
-        verify(storageGateway).statObject(any(), eq(bucket.getBucketName()), eq(uploadIntent.getObjectKey()));
-        verify(storageGateway).createPresignedDownloadUrl(any(), eq(bucket.getBucketName()), eq(uploadIntent.getObjectKey()), any(Duration.class));
-        verify(storageGateway).deleteObject(any(), eq(bucket.getBucketName()), eq(uploadIntent.getObjectKey()));
-    }
-
-    @Test
-    void workspaceObjectStorage_shouldRejectUploadIntentWhenBucketProvisionFailed() throws Exception {
-        deactivateActiveCluster();
-        AuthPasswordLoginResponseDto loginResponse = registerAndLogin(uniqueSuffix());
-        AuthWorkspaceSessionResponseDto workspaceSession = createWorkspace(loginResponse, "Failed Bucket Upload " + uniqueSuffix());
+        mockMvc.perform(get("/auth/workspace-session/current")
+                        .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken()))
+                .andExpect(status().isNoContent());
 
         StorageObjectUploadIntentRequestDto uploadRequest = new StorageObjectUploadIntentRequestDto();
         uploadRequest.setBizType("DOCUMENT");
-        uploadRequest.setFileName("manual.pdf");
-        uploadRequest.setExpectedSize(128L);
+        uploadRequest.setFileName("freeze.txt");
+        uploadRequest.setExpectedSize(64L);
 
         mockMvc.perform(post("/api/storage/workspaces/{workspaceId}/objects/upload-intents", workspaceSession.getWorkspaceId())
                         .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(uploadRequest)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("WORKSPACE_BUCKET_PROVISION_FAILED"));
+                .andExpect(jsonPath("$.code").value("WORKSPACE_NOT_ACTIVE"));
     }
 
     @Test
-    void workspaceObjectStorage_shouldRejectNewUploadButAllowDownloadWhenBucketFrozen() throws Exception {
+    void workspaceLifecycle_shouldDeleteWorkspaceAndBucketAfterCleanup() throws Exception {
         deactivateActiveCluster();
         doNothing().when(storageGateway).ensureBucketExists(any(), anyString());
+        doNothing().when(storageGateway).deleteObject(any(), anyString(), anyString());
+        doNothing().when(storageGateway).deleteBucket(any(), anyString());
         when(storageGateway.createPresignedUploadUrl(any(), anyString(), anyString(), any(Duration.class)))
-                .thenReturn("http://minio.local/workspace-upload");
-        when(storageGateway.createPresignedDownloadUrl(any(), anyString(), anyString(), any(Duration.class)))
-                .thenReturn("http://minio.local/workspace-download");
+                .thenReturn("http://minio.local/delete-upload");
         when(storageGateway.statObject(any(), anyString(), anyString()))
-                .thenReturn(new StorageObjectStat("etag-workspace-frozen", 128L));
-        saveActiveCluster("frozen-" + uniqueSuffix(), "plm-frozen");
+                .thenReturn(new StorageObjectStat("etag-delete-1", 128L));
+        saveActiveCluster("delete-" + uniqueSuffix(), "plm-delete");
 
         AuthPasswordLoginResponseDto loginResponse = registerAndLogin(uniqueSuffix());
-        AuthWorkspaceSessionResponseDto workspaceSession = createWorkspace(loginResponse, "Frozen Workspace " + uniqueSuffix());
+        AuthWorkspaceSessionResponseDto workspaceSession = createWorkspace(loginResponse, "Delete Workspace " + uniqueSuffix());
 
         StorageObjectUploadIntentRequestDto uploadRequest = new StorageObjectUploadIntentRequestDto();
         uploadRequest.setBizType("DOCUMENT");
-        uploadRequest.setFileName("frozen.pdf");
-        uploadRequest.setContentType("application/pdf");
+        uploadRequest.setFileName("delete.txt");
         uploadRequest.setExpectedSize(128L);
 
         StorageObjectUploadIntentResponseDto uploadIntent = readValue(
@@ -256,36 +195,52 @@ class WorkspaceObjectStorageControllerIT {
 
         StorageObjectCompleteUploadRequestDto completeRequest = new StorageObjectCompleteUploadRequestDto();
         completeRequest.setUploadToken(uploadIntent.getUploadToken());
-
         mockMvc.perform(post("/api/storage/workspaces/{workspaceId}/objects/{objectId}/complete",
-                        workspaceSession.getWorkspaceId(),
-                        uploadIntent.getObjectId())
+                        workspaceSession.getWorkspaceId(), uploadIntent.getObjectId())
                         .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(completeRequest)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.objectStatus").value("ACTIVE"));
 
-        WorkspaceStorageBucket bucket = workspaceStorageBucketRepository.findByWorkspaceId(workspaceSession.getWorkspaceId())
-                .orElseThrow();
-        bucket.setBucketStatus("FROZEN");
-        bucket.setFrozenAt(OffsetDateTime.now());
-        bucket.setUpdatedBy("TEST");
-        workspaceStorageBucketRepository.save(bucket);
+        WorkspaceStorageBucket bucketBeforeDelete = workspaceStorageBucketRepository.findByWorkspaceId(workspaceSession.getWorkspaceId()).orElseThrow();
 
-        mockMvc.perform(post("/api/storage/workspaces/{workspaceId}/objects/upload-intents", workspaceSession.getWorkspaceId())
-                        .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsBytes(uploadRequest)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("WORKSPACE_BUCKET_NOT_READY"));
-
-        mockMvc.perform(post("/api/storage/workspaces/{workspaceId}/objects/{objectId}/download-url",
-                        workspaceSession.getWorkspaceId(),
-                        uploadIntent.getObjectId())
+        mockMvc.perform(delete("/auth/workspaces/{workspaceId}", workspaceSession.getWorkspaceId())
                         .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.downloadUrl").value("http://minio.local/workspace-download"));
+                .andExpect(status().isNoContent());
+
+        Workspace deletingWorkspace = workspaceRepository.findById(workspaceSession.getWorkspaceId()).orElseThrow();
+        WorkspaceStorageBucket deletingBucket = workspaceStorageBucketRepository.findByWorkspaceId(workspaceSession.getWorkspaceId()).orElseThrow();
+        Assertions.assertEquals("FROZEN", deletingWorkspace.getWorkspaceStatus());
+        Assertions.assertEquals("DELETING", deletingWorkspace.getLifecycleStage());
+        Assertions.assertEquals("DELETING", deletingBucket.getBucketStatus());
+
+        workspaceDeletionExecutionService.executeDeletion(workspaceSession.getWorkspaceId(), deletingWorkspace.getOwnerUserId());
+
+        Workspace workspace = workspaceRepository.findById(workspaceSession.getWorkspaceId()).orElseThrow();
+        WorkspaceStorageBucket bucket = workspaceStorageBucketRepository.findByWorkspaceId(workspaceSession.getWorkspaceId()).orElseThrow();
+        ObjectAsset objectAsset = objectAssetRepository.findById(uploadIntent.getObjectId()).orElseThrow();
+        WorkspaceMember member = workspaceMemberRepository.findById(workspaceSession.getWorkspaceMemberId()).orElseThrow();
+        UserAccount user = userAccountRepository.findById(member.getUserId()).orElseThrow();
+
+        Assertions.assertEquals("DELETED", workspace.getWorkspaceStatus());
+        Assertions.assertEquals("DELETED", workspace.getLifecycleStage());
+        Assertions.assertEquals("DELETED", bucket.getBucketStatus());
+        Assertions.assertNotNull(bucket.getDeletedAt());
+        Assertions.assertEquals(0L, bucket.getUsedBytes());
+        Assertions.assertEquals(0L, bucket.getObjectCount());
+        Assertions.assertEquals("DELETED", objectAsset.getObjectStatus());
+        Assertions.assertEquals("INACTIVE", member.getMemberStatus());
+        Assertions.assertFalse(Boolean.TRUE.equals(member.getIsDefaultWorkspace()));
+        Assertions.assertEquals(0, user.getWorkspaceCount());
+        Assertions.assertEquals(Boolean.FALSE, user.getIsFirstLogin());
+
+        mockMvc.perform(get("/auth/workspace-session/current")
+                        .header(loginResponse.getPlatformTokenName(), loginResponse.getPlatformToken()))
+                .andExpect(status().isNoContent());
+
+        verify(storageGateway).deleteObject(any(), eq(bucketBeforeDelete.getBucketName()), eq(uploadIntent.getObjectKey()));
+        verify(storageGateway).deleteBucket(any(), eq(bucketBeforeDelete.getBucketName()));
     }
 
     private StorageCluster saveActiveCluster(String clusterCode, String bucketPrefix) {
@@ -314,13 +269,13 @@ class WorkspaceObjectStorageControllerIT {
 
     private AuthPasswordLoginResponseDto registerAndLogin(String suffix) throws Exception {
         AuthRegisterRequestDto request = new AuthRegisterRequestDto();
-        request.setUsername("object_user_" + suffix);
-        request.setDisplayName("Object User " + suffix);
+        request.setUsername("lifecycle_user_" + suffix);
+        request.setDisplayName("Lifecycle User " + suffix);
         applyEncryptedRegisterPasswords(request, "Password123!", "Password123!");
         String email = suffix + "@example.com";
         request.setEmail(email);
         request.setEmailVerificationCode(sendRegisterEmailCode(email));
-        request.setPhone("1380000" + suffix.substring(0, 4));
+        request.setPhone("1370000" + suffix.substring(0, 4));
 
         mockMvc.perform(post("/auth/public/register")
                         .contentType(MediaType.APPLICATION_JSON)

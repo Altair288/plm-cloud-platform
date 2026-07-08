@@ -22,4 +22,6 @@ public interface StorageGateway {
     StorageObjectStat statObject(StorageCluster cluster, String bucketName, String objectKey);
 
     void deleteObject(StorageCluster cluster, String bucketName, String objectKey);
+
+    void deleteBucket(StorageCluster cluster, String bucketName);
 }

@@ -63,7 +63,7 @@ public class WorkspaceObjectStorageService {
     public StorageObjectUploadIntentResponseDto createUploadIntent(UUID userId,
                                                                    UUID workspaceId,
                                                                    StorageObjectUploadIntentRequestDto request) {
-        WorkspaceStorageContextResolver.ResolvedWorkspaceStorage storage = workspaceStorageContextResolver.requireReadyStorage(
+        WorkspaceStorageContextResolver.ResolvedWorkspaceStorage storage = workspaceStorageContextResolver.requireWritableStorage(
                 userId,
                 workspaceId,
                 AuthDomainConstants.PERMISSION_STORAGE_OBJECT_UPLOAD);
@@ -79,7 +79,7 @@ public class WorkspaceObjectStorageService {
                                                    UUID workspaceId,
                                                    UUID objectId,
                                                    StorageObjectCompleteUploadRequestDto request) {
-        WorkspaceStorageContextResolver.ResolvedWorkspaceStorage storage = workspaceStorageContextResolver.requireReadyStorage(
+        WorkspaceStorageContextResolver.ResolvedWorkspaceStorage storage = workspaceStorageContextResolver.requireAccessibleStorage(
                 userId,
                 workspaceId,
                 AuthDomainConstants.PERMISSION_STORAGE_OBJECT_UPLOAD);
@@ -108,7 +108,7 @@ public class WorkspaceObjectStorageService {
 
     @Transactional(readOnly = true)
     public StorageObjectDownloadUrlResponseDto createDownloadUrl(UUID userId, UUID workspaceId, UUID objectId) {
-        WorkspaceStorageContextResolver.ResolvedWorkspaceStorage storage = workspaceStorageContextResolver.requireReadyStorage(
+        WorkspaceStorageContextResolver.ResolvedWorkspaceStorage storage = workspaceStorageContextResolver.requireAccessibleStorage(
                 userId,
                 workspaceId,
                 AuthDomainConstants.PERMISSION_STORAGE_OBJECT_DOWNLOAD);
@@ -131,7 +131,7 @@ public class WorkspaceObjectStorageService {
 
     @Transactional
     public void deleteObject(UUID userId, UUID workspaceId, UUID objectId) {
-        WorkspaceStorageContextResolver.ResolvedWorkspaceStorage storage = workspaceStorageContextResolver.requireReadyStorage(
+        WorkspaceStorageContextResolver.ResolvedWorkspaceStorage storage = workspaceStorageContextResolver.requireAccessibleStorage(
                 userId,
                 workspaceId,
                 AuthDomainConstants.PERMISSION_STORAGE_OBJECT_DELETE);

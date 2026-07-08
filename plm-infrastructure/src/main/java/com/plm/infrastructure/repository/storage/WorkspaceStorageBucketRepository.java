@@ -4,6 +4,8 @@ import com.plm.common.domain.storage.WorkspaceStorageBucket;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -12,4 +14,6 @@ public interface WorkspaceStorageBucketRepository extends JpaRepository<Workspac
     Optional<WorkspaceStorageBucket> findByWorkspaceId(UUID workspaceId);
 
     Optional<WorkspaceStorageBucket> findByBucketName(String bucketName);
+
+    List<WorkspaceStorageBucket> findByBucketStatusIn(Collection<String> bucketStatuses);
 }

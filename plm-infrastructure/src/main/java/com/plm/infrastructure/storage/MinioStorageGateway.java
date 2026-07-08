@@ -2,23 +2,51 @@ package com.plm.infrastructure.storage;
 
 import com.plm.common.domain.storage.StorageCluster;
 import io.minio.BucketExistsArgs;
+import io.minio.DeleteBucketEncryptionArgs;
+import io.minio.DeleteBucketPolicyArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
+import io.minio.RemoveBucketArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.SetBucketEncryptionArgs;
+import io.minio.SetBucketLifecycleArgs;
+import io.minio.SetBucketPolicyArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import io.minio.http.Method;
+import io.minio.messages.AbortIncompleteMultipartUpload;
+import io.minio.messages.Expiration;
+import io.minio.messages.LifecycleConfiguration;
+import io.minio.messages.LifecycleRule;
+import io.minio.messages.RuleFilter;
+import io.minio.messages.SseAlgorithm;
+import io.minio.messages.SseConfiguration;
+import io.minio.messages.SseConfigurationRule;
+import io.minio.messages.Status;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Component
 public class MinioStorageGateway implements StorageGateway {
-    private final StorageSecretResolver storageSecretResolver;
+        static final String PRIVATE_BUCKET_POLICY = """
+                        {
+                            \"Version\": \"2012-10-17\",
+                            \"Statement\": []
+                        }
+                        """;
 
-    public MinioStorageGateway(StorageSecretResolver storageSecretResolver) {
-        this.storageSecretResolver = storageSecretResolver;
+        private final MinioClientFactory minioClientFactory;
+        private final StorageBucketGovernanceProperties storageBucketGovernanceProperties;
+
+        public MinioStorageGateway(MinioClientFactory minioClientFactory,
+                                                             StorageBucketGovernanceProperties storageBucketGovernanceProperties) {
+                this.minioClientFactory = minioClientFactory;
+                this.storageBucketGovernanceProperties = storageBucketGovernanceProperties;
     }
 
     @Override
@@ -36,6 +64,7 @@ public class MinioStorageGateway implements StorageGateway {
             if (!exists) {
                 client.makeBucket(MakeBucketArgs.builder().bucket(bucketName).build());
             }
+            applyBucketGovernance(client, cluster, bucketName);
             return null;
         }, "failed to ensure bucket exists");
     }
@@ -73,6 +102,14 @@ public class MinioStorageGateway implements StorageGateway {
         }, "failed to delete storage object");
     }
 
+    @Override
+    public void deleteBucket(StorageCluster cluster, String bucketName) {
+        execute(cluster, false, client -> {
+            client.removeBucket(RemoveBucketArgs.builder().bucket(bucketName).build());
+            return null;
+        }, "failed to delete storage bucket");
+    }
+
     private String createPresignedUrl(StorageCluster cluster,
                                       String bucketName,
                                       String objectKey,
@@ -95,18 +132,62 @@ public class MinioStorageGateway implements StorageGateway {
         return (int) expirySeconds;
     }
 
-    private MinioClient buildClient(StorageCluster cluster, boolean usePublicEndpoint) {
-        StorageCredentials credentials = storageSecretResolver.resolve(cluster.getSecretRef());
-        String endpoint = usePublicEndpoint && cluster.getPublicEndpoint() != null && !cluster.getPublicEndpoint().isBlank()
-                ? cluster.getPublicEndpoint().trim()
-                : cluster.getEndpoint().trim();
-        MinioClient.Builder builder = MinioClient.builder()
-                .endpoint(endpoint)
-                .credentials(credentials.accessKey(), credentials.secretKey());
-        if (cluster.getRegionName() != null && !cluster.getRegionName().isBlank()) {
-            builder.region(cluster.getRegionName().trim());
+    void applyBucketGovernance(MinioClient client, StorageCluster cluster, String bucketName) throws Exception {
+        if (storageBucketGovernanceProperties.isEnforcePrivateBucketPolicy()) {
+            client.setBucketPolicy(SetBucketPolicyArgs.builder()
+                    .bucket(bucketName)
+                    .config(PRIVATE_BUCKET_POLICY)
+                    .build());
         }
-        return builder.build();
+        client.setBucketLifecycle(SetBucketLifecycleArgs.builder()
+                .bucket(bucketName)
+                .config(buildLifecycleConfiguration(isTestBucket(cluster, bucketName)))
+                .build());
+        if (storageBucketGovernanceProperties.isEnableServerSideEncryption()) {
+            client.setBucketEncryption(SetBucketEncryptionArgs.builder()
+                    .bucket(bucketName)
+                    .config(buildSseConfiguration())
+                    .build());
+        } else {
+            client.deleteBucketEncryption(DeleteBucketEncryptionArgs.builder()
+                    .bucket(bucketName)
+                    .build());
+        }
+    }
+
+    LifecycleConfiguration buildLifecycleConfiguration(boolean testBucket) {
+        List<LifecycleRule> rules = new ArrayList<>();
+        if (storageBucketGovernanceProperties.getAbortIncompleteMultipartAfterDays() > 0) {
+            rules.add(new LifecycleRule(
+                    Status.ENABLED,
+                    new AbortIncompleteMultipartUpload(storageBucketGovernanceProperties.getAbortIncompleteMultipartAfterDays()),
+                    null,
+                    new RuleFilter(""),
+                    "abort-incomplete-multipart",
+                    null,
+                    null,
+                    null));
+        }
+        if (testBucket && storageBucketGovernanceProperties.getTestObjectExpireDays() > 0) {
+            rules.add(new LifecycleRule(
+                    Status.ENABLED,
+                    null,
+                    new Expiration((ZonedDateTime) null, storageBucketGovernanceProperties.getTestObjectExpireDays(), null),
+                    new RuleFilter(storageBucketGovernanceProperties.getTestObjectPrefix()),
+                    "expire-cluster-test-objects",
+                    null,
+                    null,
+                    null));
+        }
+        return new LifecycleConfiguration(rules);
+    }
+
+    SseConfiguration buildSseConfiguration() {
+        return new SseConfiguration(new SseConfigurationRule(SseAlgorithm.AES256, null));
+    }
+
+    boolean isTestBucket(StorageCluster cluster, String bucketName) {
+        return cluster.getTestBucketName() != null && cluster.getTestBucketName().equalsIgnoreCase(bucketName);
     }
 
     private <T> T execute(StorageCluster cluster,
@@ -114,7 +195,7 @@ public class MinioStorageGateway implements StorageGateway {
                           StorageClientOperation<T> operation,
                           String failureMessage) {
         try {
-            return operation.apply(buildClient(cluster, usePublicEndpoint));
+            return operation.apply(minioClientFactory.create(cluster, usePublicEndpoint));
         } catch (Exception ex) {
             throw new StorageGatewayException(failureMessage + ": " + ex.getMessage(), ex);
         }

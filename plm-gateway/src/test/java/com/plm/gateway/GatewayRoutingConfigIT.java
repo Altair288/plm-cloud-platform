@@ -37,7 +37,7 @@ class GatewayRoutingConfigIT {
     @Test
     void gatewayShouldExposeExpectedLocalRoutes() {
         Assertions.assertEquals("8080", environment.getProperty("server.port"));
-        Assertions.assertEquals(2, gatewayProperties.getRoutes().size());
+                Assertions.assertEquals(3, gatewayProperties.getRoutes().size());
 
         var authRoute = gatewayProperties.getRoutes().stream()
                 .filter(route -> "auth-service".equals(route.getId()))
@@ -47,6 +47,15 @@ class GatewayRoutingConfigIT {
         Assertions.assertTrue(authRoute.getPredicates().stream()
                 .anyMatch(predicate -> predicate.getName().equals("Path")
                         && predicate.getArgs().values().stream().anyMatch(value -> "/auth/**".equals(value))));
+
+        var storageRoute = gatewayProperties.getRoutes().stream()
+                .filter(route -> "auth-storage-service".equals(route.getId()))
+                .findFirst()
+                .orElseThrow();
+        Assertions.assertEquals("http://localhost:8081", storageRoute.getUri().toString());
+        Assertions.assertTrue(storageRoute.getPredicates().stream()
+                .anyMatch(predicate -> predicate.getName().equals("Path")
+                        && predicate.getArgs().values().stream().anyMatch(value -> "/api/storage/**".equals(value))));
 
         var attributeRoute = gatewayProperties.getRoutes().stream()
                 .filter(route -> "attribute-service".equals(route.getId()))

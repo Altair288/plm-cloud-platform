@@ -701,7 +701,7 @@ Schema：`plm_runtime`
 
 ## 12. 生命周期与运维建议
 
-### 12.1 Bucket 生命周期
+### 12.1 Bucket 生命周期 [已完成]
 
 建议每个 Bucket 默认应用以下治理：
 
@@ -710,7 +710,7 @@ Schema：`plm_runtime`
 - 可选：开启服务端加密。
 - 可选：设置临时上传前缀生命周期规则。
 
-### 12.2 Workspace 冻结与删除
+### 12.2 Workspace 冻结与删除 [已完成]
 
 当 Workspace 被冻结或归档时：
 
@@ -724,7 +724,7 @@ Schema：`plm_runtime`
 - 再异步执行对象清理和 Bucket 删除。
 - 最后把 Bucket 元数据改为 `DELETED`。
 
-### 12.3 容量统计
+### 12.3 容量统计 [已完成]
 
 当前建议：
 

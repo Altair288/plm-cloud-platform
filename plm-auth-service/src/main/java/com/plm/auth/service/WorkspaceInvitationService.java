@@ -248,7 +248,9 @@ public class WorkspaceInvitationService {
         invitation.setUpdatedBy(userId.toString());
         workspaceInvitationRepository.save(invitation);
 
-        if (!workspaceMemberRepository.existsByUserIdAndIsDefaultWorkspaceTrue(userId)) {
+        if (!workspaceMemberRepository.existsByUserIdAndIsDefaultWorkspaceTrueAndMemberStatus(
+            userId,
+            AuthDomainConstants.WORKSPACE_MEMBER_STATUS_ACTIVE)) {
             workspaceSessionService.markDefaultWorkspace(userId, membership.member());
         }
         userWorkspaceStateService.syncUserWorkspaceState(user);
@@ -401,7 +403,9 @@ public class WorkspaceInvitationService {
             workspaceInvitationLinkAcceptLogRepository.save(acceptLog);
         }
 
-        if (!workspaceMemberRepository.existsByUserIdAndIsDefaultWorkspaceTrue(userId)) {
+        if (!workspaceMemberRepository.existsByUserIdAndIsDefaultWorkspaceTrueAndMemberStatus(
+            userId,
+            AuthDomainConstants.WORKSPACE_MEMBER_STATUS_ACTIVE)) {
             workspaceSessionService.markDefaultWorkspace(userId, membership.member());
         }
         userWorkspaceStateService.syncUserWorkspaceState(user);

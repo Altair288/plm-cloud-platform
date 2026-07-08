@@ -47,11 +47,20 @@ plm:
         expire-in-seconds: 600
         resend-cooldown-seconds: 60
   storage:
+    governance:
+      enforce-private-bucket-policy: ${PLM_STORAGE_GOVERNANCE_ENFORCE_PRIVATE_BUCKET_POLICY:true}
+      abort-incomplete-multipart-after-days: ${PLM_STORAGE_GOVERNANCE_ABORT_INCOMPLETE_MULTIPART_AFTER_DAYS:1}
+      test-object-expire-days: ${PLM_STORAGE_GOVERNANCE_TEST_OBJECT_EXPIRE_DAYS:1}
+      test-object-prefix: ${PLM_STORAGE_GOVERNANCE_TEST_OBJECT_PREFIX:__cluster_test__/}
+      enable-server-side-encryption: ${PLM_STORAGE_GOVERNANCE_ENABLE_SERVER_SIDE_ENCRYPTION:false}
     admin:
       upload-url-expire-seconds: ${PLM_STORAGE_ADMIN_UPLOAD_URL_EXPIRE_SECONDS:900}
       download-url-expire-seconds: ${PLM_STORAGE_ADMIN_DOWNLOAD_URL_EXPIRE_SECONDS:900}
       test-session-expire-seconds: ${PLM_STORAGE_ADMIN_TEST_SESSION_EXPIRE_SECONDS:1800}
       test-session-cleanup-interval-ms: ${PLM_STORAGE_ADMIN_TEST_SESSION_CLEANUP_INTERVAL_MS:300000}
+    workspace:
+      stats-reconciliation-interval-ms: ${PLM_STORAGE_WORKSPACE_STATS_RECONCILIATION_INTERVAL_MS:900000}
+      deletion-cleanup-interval-ms: ${PLM_STORAGE_WORKSPACE_DELETION_CLEANUP_INTERVAL_MS:300000}
 
 spring:
   data:

@@ -5,6 +5,7 @@ import com.plm.auth.service.AuthQueryService;
 import com.plm.auth.service.PlatformAdminAuthService;
 import com.plm.auth.service.WorkspaceCommandService;
 import com.plm.auth.service.WorkspaceInvitationService;
+import com.plm.auth.service.WorkspaceLifecycleService;
 import com.plm.auth.service.WorkspaceSessionService;
 import com.plm.auth.support.AuthStpKit;
 import com.plm.common.api.dto.auth.AuthCreateWorkspaceRequestDto;
@@ -38,6 +39,7 @@ public class AuthSessionController {
     private final PlatformAdminAuthService platformAdminAuthService;
     private final AuthQueryService authQueryService;
     private final WorkspaceCommandService workspaceCommandService;
+    private final WorkspaceLifecycleService workspaceLifecycleService;
     private final WorkspaceSessionService workspaceSessionService;
     private final WorkspaceInvitationService workspaceInvitationService;
 
@@ -45,12 +47,14 @@ public class AuthSessionController {
                                  PlatformAdminAuthService platformAdminAuthService,
                                  AuthQueryService authQueryService,
                                  WorkspaceCommandService workspaceCommandService,
+                                 WorkspaceLifecycleService workspaceLifecycleService,
                                  WorkspaceSessionService workspaceSessionService,
                                  WorkspaceInvitationService workspaceInvitationService) {
         this.authLoginService = authLoginService;
         this.platformAdminAuthService = platformAdminAuthService;
         this.authQueryService = authQueryService;
         this.workspaceCommandService = workspaceCommandService;
+        this.workspaceLifecycleService = workspaceLifecycleService;
         this.workspaceSessionService = workspaceSessionService;
         this.workspaceInvitationService = workspaceInvitationService;
     }
@@ -82,6 +86,20 @@ public class AuthSessionController {
     public ResponseEntity<AuthWorkspaceSessionResponseDto> createWorkspace(@RequestBody AuthCreateWorkspaceRequestDto request) {
         UUID userId = AuthStpKit.requirePlatformUserId();
         return ResponseEntity.ok(workspaceCommandService.createWorkspace(userId, request));
+    }
+
+    @PostMapping("/auth/workspaces/{workspaceId}/freeze")
+    public ResponseEntity<Void> freezeWorkspace(@PathVariable("workspaceId") UUID workspaceId) {
+        UUID userId = AuthStpKit.requirePlatformUserId();
+        workspaceLifecycleService.freezeWorkspace(userId, workspaceId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/auth/workspaces/{workspaceId}")
+    public ResponseEntity<Void> deleteWorkspace(@PathVariable("workspaceId") UUID workspaceId) {
+        UUID userId = AuthStpKit.requirePlatformUserId();
+        workspaceLifecycleService.deleteWorkspace(userId, workspaceId);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/auth/workspace-invitations/email-batch")
